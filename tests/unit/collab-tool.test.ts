@@ -1,0 +1,204 @@
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { compileScript, parse } from '@vue/compiler-sfc'
+import { createRenderer, h, nextTick, ref, type App, type Component } from 'vue'
+import { parseCollabTool } from '../../src/lib/collab-tool'
+
+const call = (fields: Record<string, unknown> = {}) => ({
+  id: 'call-1', type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'completed',
+  senderThreadId: 'parent', receiverThreadIds: ['child'], prompt: '检查队列同步\n先核对协议。',
+  model: 'model-a', reasoningEffort: 'high', agentsStates: { child: { status: 'running', message: null } },
+  ...fields,
+})
+
+// Compile the actual SFC to a temporary module, including its toggle handler, without a browser or TCP.
+// InlineImage is the only stub; it is outside the collab/reasoning branches under test.
+let MessageItem: Component
+beforeAll(async () => {
+  const file = new URL('../../src/components/MessageItem.vue', import.meta.url)
+  const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
+  const script = compileScript(descriptor, { id: 'collab-tool-test', inlineTemplate: true })
+  const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
+    .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
+    .replace(/from (["'])([^"']+)\1/g, (_match, _quote, specifier: string) =>
+      'from ' + JSON.stringify(specifier.startsWith('.') ? new URL(specifier + '.ts', file).href : import.meta.resolve(specifier)))
+  const directory = await mkdtemp(join(tmpdir(), 'codex-remote-collab-tool-'))
+  try {
+    const modulePath = join(directory, 'MessageItem.mjs')
+    await Bun.write(modulePath, js)
+    MessageItem = (await import(pathToFileURL(modulePath).href)).default
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+type Node = { type: string; text: string; props: Record<string, unknown>; children: Node[]; parent?: Node }
+const node = (type: string, text = ''): Node => ({ type, text, props: {}, children: [] })
+const renderer = createRenderer<Node, Node>({
+  createElement: type => node(type), createText: text => node('#text', text), createComment: text => node('#comment', text),
+  setText: (target, text) => { target.text = text }, setElementText: (target, text) => { target.text = text; target.children = [] },
+  patchProp: (target, key, _old, value) => { target.props[key] = value },
+  insert: (target, parent, anchor) => {
+    if (target.parent) target.parent.children = target.parent.children.filter(child => child !== target)
+    target.parent = parent
+    const index = anchor ? parent.children.indexOf(anchor) : -1
+    if (index < 0) parent.children.push(target); else parent.children.splice(index, 0, target)
+  },
+  remove: target => { if (target.parent) target.parent.children = target.parent.children.filter(child => child !== target) },
+  parentNode: target => target.parent ?? null,
+  nextSibling: target => target.parent?.children[target.parent.children.indexOf(target) + 1] ?? null,
+})
+const apps: App<Node>[] = []
+afterEach(() => { for (const app of apps.splice(0)) app.unmount() })
+function descendants(target: Node): Node[] { return [target, ...target.children.flatMap(descendants)] }
+function mount(item: Record<string, unknown>) {
+  const current = ref(item), root = node('root')
+  const app = renderer.createApp({ setup: () => () => h(MessageItem, { item: current.value, now: 15_000 }) })
+  apps.push(app); app.mount(root)
+  return {
+    root,
+    text: () => descendants(root).filter(target => target.type !== '#comment').map(target => target.text).join(' '),
+    async update(next: Record<string, unknown>) { current.value = next; await nextTick() },
+    async open() {
+      const details = descendants(root).find(target => target.type === 'details')!
+      ;(details.props.onToggle as (event: { target: { open: boolean } }) => void)({ target: { open: true } })
+      await nextTick()
+    },
+  }
+}
+
+describe('collab tool presentation', () => {
+  test.each([
+    ['spawnAgent', '创建子代理', '任务说明'], ['sendInput', '向子代理发送指令', '指令内容'],
+    ['resumeAgent', '恢复子代理', '补充说明'], ['wait', '等待子代理', '补充说明'],
+    ['closeAgent', '关闭子代理', '补充说明'], ['sendMessage', '向子代理发送消息', '消息内容'],
+    ['followupTask', '分配后续任务', '后续任务'], ['interruptAgent', '中断子代理', '补充说明'],
+    ['listAgents', '查看子代理列表', '补充说明'],
+  ])('translates the native %s tool', (tool, title, promptLabel) => {
+    expect(parseCollabTool(call({ tool }))).toMatchObject({ title, promptLabel })
+  })
+
+  test.each([
+    ['inProgress', '进行中', false, false], ['completed', '已完成', false, true],
+    ['failed', '失败', true, false], ['interrupted', '已中断', false, false],
+  ] as const)('keeps call status %s distinct from agent status', (status, label, failed, completed) => {
+    const parsed = parseCollabTool(call({ status }))!
+    expect(parsed).toMatchObject({ status: label, failed, completed })
+    expect(parsed.agents[0].status).toBe('执行中')
+  })
+
+  test.each([
+    ['pendingInit', '初始化中', false], ['running', '执行中', false], ['interrupted', '已中断', false],
+    ['completed', '任务完成', false], ['errored', '执行出错', true], ['shutdown', '已关闭', false], ['notFound', '未找到代理', true],
+  ] as const)('translates native agent state %s', (status, label, failed) => {
+    const parsed = parseCollabTool(call({ tool: 'wait', agentsStates: { child: { status, message: null } } }))!
+    expect(parsed.agents[0]).toMatchObject({ id: 'child', status: label, failed })
+  })
+
+  test('describes a successful spawn without claiming the agent finished its task', () => {
+    expect(parseCollabTool(call())).toEqual({
+      title: '创建子代理', status: '已完成', failed: false, completed: true,
+      promptLabel: '任务说明', prompt: '检查队列同步\n先核对协议。',
+      sender: 'parent', model: 'model-a', effort: '高',
+      agents: [{ id: 'child', status: '执行中', failed: false, message: undefined, messageLabel: '消息' }],
+    })
+  })
+
+  test('deduplicates targets and includes state-only agents with their result or error text', () => {
+    const parsed = parseCollabTool(call({ tool: 'wait', receiverThreadIds: ['a', 'a', 'b'], agentsStates: {
+      a: { status: 'completed', message: '检查完成\n没有冲突。' }, c: { status: 'errored', message: '连接断开' },
+    } }))!
+    expect(parsed.agents).toEqual([
+      { id: 'a', status: '任务完成', failed: false, message: '检查完成\n没有冲突。', messageLabel: '执行结果' },
+      { id: 'b', status: '', failed: false, message: undefined, messageLabel: '消息' },
+      { id: 'c', status: '执行出错', failed: true, message: '连接断开', messageLabel: '错误说明' },
+    ])
+  })
+
+  test('keeps empty agent lists empty without explanatory placeholders', () => {
+    for (const fields of [{ status: 'inProgress' }, { tool: 'wait' }, { tool: 'listAgents' }]) {
+      const parsed = parseCollabTool(call({ ...fields, receiverThreadIds: [], agentsStates: {} }))!
+      expect(parsed.agents).toEqual([])
+      expect(parsed).not.toHaveProperty('description')
+      expect(parsed).not.toHaveProperty('emptyAgents')
+    }
+  })
+
+  test.each(['futureTool', 'constructor', '__proto__', '', null, { name: 'spawnAgent' }])('unknown or malformed tools have a readable fallback: %j', tool => {
+    const parsed = parseCollabTool(call({ tool, result: { privatePayload: 'do not dump' } }))!
+    expect(parsed.title).toBe(typeof tool === 'string' && tool.trim() ? `子代理协作 · ${tool}` : '子代理协作')
+    expect(parsed.prompt).toBe('检查队列同步\n先核对协议。')
+    expect(parsed.agents[0].id).toBe('child')
+    expect(JSON.stringify(parsed)).not.toContain('privatePayload')
+  })
+
+  test('tolerates absent fields, malformed states, and future enums without coercing objects to text', () => {
+    const parsed = parseCollabTool({ type: 'collabAgentToolCall', status: 'newStatus',
+      prompt: { text: 'not a protocol string' }, senderThreadId: 5, model: [], reasoningEffort: 'future',
+      receiverThreadIds: ['child', '', 1, null], agentsStates: { child: { status: 'future', message: {} }, extra: null },
+    })!
+    expect(parsed).toMatchObject({ title: '子代理协作', status: '状态未知', completed: false, failed: false, effort: '未识别的强度' })
+    expect(parsed.prompt).toBeUndefined(); expect(parsed.sender).toBeUndefined(); expect(parsed.model).toBeUndefined()
+    expect(parsed.agents.map(agent => [agent.id, agent.status, agent.message])).toEqual([['child', '状态未知', undefined], ['extra', '', undefined]])
+    expect(parseCollabTool({ type: 'collabAgentToolCall', receiverThreadIds: {}, agentsStates: [] })).toMatchObject({ status: '', failed: false, completed: false, agents: [] })
+  })
+
+  test('leaves empty optional text absent and preserves literal user text without interpreting JSON or HTML', () => {
+    expect(parseCollabTool(call({ prompt: '  ', model: null, reasoningEffort: null }))).toMatchObject({ prompt: undefined, model: undefined, effort: undefined })
+    const prompt = '<script>alert(1)</script>\n{"task":"inspect this literal JSON"}'
+    expect(parseCollabTool(call({ prompt }))?.prompt).toBe(prompt)
+    for (const value of [null, [], 'text', { type: 'reasoning' }, { type: 'mcpToolCall', tool: 'spawnAgent' }]) expect(parseCollabTool(value)).toBeUndefined()
+  })
+})
+
+describe('collab tool cards and reasoning visibility', () => {
+  test('expands the existing activity card into readable task, target, and agent-result text', async () => {
+    const view = mount(call({ agentsStates: { child: { status: 'completed', message: '核对完成，无缺项。' } } }))
+    expect(view.text()).toContain('创建子代理')
+    expect(view.text()).not.toContain('spawnAgent')
+    expect(view.text()).not.toContain('collabAgentToolCall')
+    expect(descendants(view.root).find(target => target.type === 'details')?.props.class).toContain('activity')
+    await view.open()
+    for (const text of ['任务说明', '检查队列同步', '发起代理', 'parent', 'child', '任务完成', '执行结果', '核对完成，无缺项。', '模型', 'model-a', '思考强度', '高']) expect(view.text()).toContain(text)
+    expect(descendants(view.root).some(target => target.type === 'pre')).toBe(false)
+  })
+
+  test('renders unknown tools as collaboration text and never falls through to the raw JSON branch', async () => {
+    const view = mount(call({ tool: 'newTool', result: { secretPayload: 'do not show' }, status: 'futureStatus' }))
+    await view.open()
+    expect(view.text()).toContain('子代理协作')
+    expect(view.text()).not.toContain('状态未知')
+    expect(view.text()).toContain('newTool')
+    expect(view.text()).not.toContain('secretPayload')
+    expect(descendants(view.root).some(target => target.type === 'pre')).toBe(false)
+  })
+
+  test('updates partial live cards and keeps tool-provided markup as literal text', async () => {
+    const view = mount(call({ status: 'inProgress', receiverThreadIds: [], agentsStates: {}, prompt: null, senderThreadId: '', model: null, reasoningEffort: null }))
+    await view.open()
+    expect(view.text().replace(/\s+/g, ' ').trim()).toBe('创建子代理')
+    const prompt = '<script>alert(1)</script>', message = '<img src=x onerror=alert(1)>'
+    await view.update(call({ prompt, agentsStates: { child: { status: 'errored', message } }, status: 'failed' }))
+    expect(view.text()).toContain('失败'); expect(view.text()).toContain('执行出错')
+    expect(view.text()).toContain(prompt); expect(view.text()).toContain(message)
+    expect(descendants(view.root).some(target => ['script', 'img'].includes(target.type) || target.props.innerHTML)).toBe(false)
+  })
+
+  test.each([
+    ['missing', { status: 'inProgress', startedAtMs: 1_000 }],
+    ['empty', { summary: [], content: [] }],
+    ['whitespace', { summary: ['  '], content: ['\n'], text: ' ' }],
+  ])('does not display reasoning with %s body text', (_name, fields) => {
+    const view = mount({ id: 'reasoning', type: 'reasoning', ...fields as object })
+    expect(view.text().trim()).toBe('')
+    expect(descendants(view.root).some(target => target.type === 'details')).toBe(false)
+  })
+
+  test('still displays reasoning when real body text arrives', () => {
+    const view = mount({ id: 'reasoning', type: 'reasoning', summary: [], content: ['已有实际思考正文'], status: 'inProgress' })
+    expect(view.text()).toContain('思考中')
+    expect(view.text()).toContain('已有实际思考正文')
+  })
+})
