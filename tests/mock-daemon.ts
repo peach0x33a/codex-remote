@@ -348,7 +348,7 @@ const server = Bun.serve<Peer>({
       }
       if (method === 'turn/interrupt') {
         const thread = threads.get(String(p.threadId))!, turn = thread.turns.find(t => t.id === p.turnId)!
-        clearInterval(timers.get(turn.id)); timers.delete(turn.id); turn.status = 'interrupted'; thread.status = { type: 'idle' }; respond({}); emit(thread.id, 'turn/completed', { turn }); return
+        clearInterval(timers.get(turn.id)); timers.delete(turn.id); turn.status = 'interrupted'; finishTiming(turn); thread.status = { type: 'idle' }; respond({}); emit(thread.id, 'turn/completed', { turn }); return
       }
       if (method === 'turn/start') {
         const thread = threads.get(String(p.threadId))!

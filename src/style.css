@@ -558,3 +558,5 @@
   .workspace[data-background="none"] .suggestions > button,
   .workspace[data-background="image"] .suggestions > button { background: var(--surface); border-color: var(--line); backdrop-filter: none; }
 }
+
+.turn-stopped-duration { margin: 6px 0 20px 42px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; font-variant-numeric: tabular-nums; }

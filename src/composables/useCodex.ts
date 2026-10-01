@@ -6,6 +6,7 @@ import { loadProfiles, STORAGE_KEY } from '../lib/profiles'
 import { ProfileApiError, fetchProfiles, importServerProfile, removeServerProfile, saveServerProfile, selectServerProfile } from '../lib/profile-api'
 import type { ProfileInput, ProfileSnapshot } from '../../shared/profiles'
 import { deviceDirectory, prepareDeviceDirectory } from '../lib/working-directory'
+import { turnDurationSeconds } from '../lib/turn-duration'
 import { readUiPreferences } from '../lib/ui-preferences'
 import { RpcClient, RpcError } from '../lib/rpc'
 import { retryStatusMessage } from '../lib/turn-failure'
@@ -181,6 +182,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   const reasoningTimings = new Map<string, Map<string, { startedAtMs?: number; completedAtMs?: number }>>()
   const clockNow = ref(Date.now())
   const turnStartedAt = ref(new Map<string, number>())
+  const observedTurnStarts = new Map<string, number>()
   const currentQueue = computed(() => queuedMessages.value.filter(job => job.deviceId === selectedId.value && job.threadId === active.value?.id))
   const queuePaused = computed(() => !!active.value && pausedQueues.value.has(queueKey(active.value.id)))
   const settingsSnapshot = (): ComposerSettings => ({ model: model.value, effort: effort.value, permission: permission.value, serviceTier: serviceTier.value })
@@ -235,7 +237,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       .map(message => ({ id: message.id, type: 'userMessage', content: message.input } as Item))
     if (pending.length) {
       const last = turns.at(-1)
-      if (last) last.items.push(...pending)
+      if (last?.status === 'inProgress') last.items.push(...pending)
       else turns.push({ id: 'pending-' + thread.id, status: 'inProgress', items: pending })
     }
     return turns
@@ -483,6 +485,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     clearInterval(queueRefreshTimer); clearTimeout(settingsTimer); pendingSettings.clear(); settingsWrites.clear()
     queuedMessages.value = queuedMessages.value.filter(job => job.source !== 'server' || job.deviceId !== selectedId.value)
     for (const job of queuedMessages.value) if (job.deviceId === selectedId.value) { pausedQueues.value.add(queueKey(job.threadId)); if (job.state === 'sending') { job.state = 'failed'; job.error = '连接中断，发送结果未确认。请查看会话后重试。' } }
+    observedTurnStarts.clear()
     runningTurns.value.clear(); pendingTurnStarts.clear(); terminalTurns.clear(); turnDiffs.value.clear(); turnFailures.value.clear(); submissionFailures.value.clear(); steering.value = false
     retries.value.clear()
     clearInterval(clockTimer); clockTimer = undefined
@@ -511,6 +514,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     else { resetGoals(); serverQueue?.dispose(); clearInterval(queueRefreshTimer); clearTimeout(settingsTimer); pendingSettings.clear(); settingsWrites.clear(); client?.disconnect(); approvals.value = [] }
     // A reconnect may have missed patch notifications. Do not offer an older
     // snapshot as the current net patch until this connection observes it.
+    observedTurnStarts.clear()
     turnDiffs.value.clear(); pendingTurnStarts.clear(); steering.value = false
     const epoch = ++generation
     selectedId.value = profile.id; persistSelection()
@@ -1413,11 +1417,25 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
         updateThreadMetadata(id, { updatedAt: activity, recencyAt: activity })
         const key = queueKey(id) + '/' + turn.id
         if (!turnStartedAt.value.has(key)) turnStartedAt.value.set(key, Date.now())
+        if (!observedTurnStarts.has(key)) observedTurnStarts.set(key, Date.now())
+        if (observedTurnStarts.size > 500) observedTurnStarts.delete(observedTurnStarts.keys().next().value!)
         if (!terminalTurns.has(turn.id)) runningTurns.value.set(id, turn.id)
       }
       else {
+        const key = queueKey(id) + '/' + turn.id
+        const previous = active.value?.id === id ? active.value.turns.find(item => item.id === turn.id) : undefined
+        const timing = { startedAt: turn.startedAt ?? previous?.startedAt, completedAt: turn.completedAt ?? previous?.completedAt, durationMs: turn.durationMs ?? previous?.durationMs }
+        const observed = observedTurnStarts.get(key)
+        if (turn.status === 'interrupted' && !terminalTurns.has(turn.id) && turnDurationSeconds(timing) === undefined && (observed !== undefined || previous?.status === 'inProgress')) {
+          // Freeze a live stop only. Never count page-join time as a whole historical turn.
+          const nativeStart = timestamp(timing.startedAt), nativeEnd = timestamp(timing.completedAt)
+          const start = nativeStart !== undefined ? nativeStart * 1000 : observed
+          const end = nativeEnd !== undefined ? nativeEnd * 1000 : Date.now()
+          if (start !== undefined && end >= start) turn.durationMs = end - start
+        }
+        observedTurnStarts.delete(key)
         completeReasoning(id, turn.id)
-        turnStartedAt.value.delete(queueKey(id) + '/' + turn.id)
+        turnStartedAt.value.delete(key)
         const completesCurrentTurn = !runningTurns.value.has(id) || runningTurns.value.get(id) === turn.id
         if (completesCurrentTurn) runningTurns.value.delete(id)
         terminalTurns.add(turn.id)

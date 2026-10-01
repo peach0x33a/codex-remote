@@ -2,8 +2,8 @@
 import { ref } from 'vue'
 import { PhArchive, PhArrowSquareOut, PhCaretLeft, PhCaretRight, PhChats, PhClock, PhCopy, PhDotsThree, PhGitBranch, PhPencilSimple, PhPushPin } from '@phosphor-icons/vue'
 import ComposerPopover from './ComposerPopover.vue'
-const props = defineProps<{ disabled?: boolean; connected: boolean; pinned: boolean; canCopy: boolean; hasCompletedTurn: boolean; sessionId: string }>()
-const emit = defineEmits<{ rename: []; pin: []; side: []; fork: [completedOnly: boolean]; copy: [all: boolean]; copySession: [id: string]; openWindow: []; archive: [] }>()
+const props = defineProps<{ disabled?: boolean; connected: boolean; pinned: boolean; canCopy: boolean; hasCompletedTurn: boolean }>()
+const emit = defineEmits<{ rename: []; pin: []; side: []; fork: [completedOnly: boolean]; copy: [all: boolean]; openWindow: []; archive: [] }>()
 const popover = ref<InstanceType<typeof ComposerPopover>>(), page = ref<'main' | 'copy' | 'fork'>('main')
 function run(action: 'rename' | 'pin' | 'side' | 'openWindow' | 'archive') {
   if (props.disabled) return
@@ -12,12 +12,7 @@ function run(action: 'rename' | 'pin' | 'side' | 'openWindow' | 'archive') {
   actions[action]()
 }
 async function submenu(value: 'main' | 'copy' | 'fork') { page.value = value; await popover.value?.focusInitial() }
-function copySession() {
-  const id = props.sessionId
-  if (props.disabled || !id) return
-  popover.value?.hide()
-  emit('copySession', id)
-}
+
 </script>
 <template>
   <ComposerPopover ref="popover" label="会话操作" trigger-class="conversation-actions-trigger" placement="bottom" align="end" :width="268" :disabled="disabled" @change="page = 'main'">
@@ -30,7 +25,7 @@ function copySession() {
       <button type="button" class="composer-menu-item" role="menuitem" :disabled="!connected" @click="submenu('fork')"><PhGitBranch :size="18" /><span>分叉</span><PhCaretRight :size="14" /></button>
       <button type="button" class="composer-menu-item" role="menuitem" disabled title="当前 Codex App Server 未提供计划任务接口"><PhClock :size="18" /><span>添加计划任务…</span></button>
       <div class="menu-separator" />
-      <button type="button" class="composer-menu-item" role="menuitem" :disabled="!canCopy && !sessionId" @click="submenu('copy')"><PhCopy :size="18" /><span>复制</span><PhCaretRight :size="14" /></button>
+      <button type="button" class="composer-menu-item" role="menuitem" :disabled="!canCopy" @click="submenu('copy')"><PhCopy :size="18" /><span>复制</span><PhCaretRight :size="14" /></button>
       <div class="menu-separator" />
       <button type="button" class="composer-menu-item" role="menuitem" @click="run('openWindow')"><PhArrowSquareOut :size="18" /><span>在新窗口中打开</span></button>
       <div class="menu-separator" />
@@ -38,7 +33,7 @@ function copySession() {
     </div>
     <div v-else role="menu" :aria-label="page === 'copy' ? '复制对话' : '分叉对话'">
       <button type="button" class="composer-menu-item" role="menuitem" @click="submenu('main')"><PhCaretLeft :size="17" /><span>返回</span></button>
-      <template v-if="page === 'copy'"><button type="button" class="composer-menu-item" role="menuitem" :disabled="!sessionId" @click="copySession">复制 Session ID</button><div class="menu-separator" /><button type="button" class="composer-menu-item" role="menuitem" :disabled="!canCopy" @click="popover?.hide(); emit('copy', false)">复制最近一条回复</button><button type="button" class="composer-menu-item" role="menuitem" :disabled="!canCopy" @click="popover?.hide(); emit('copy', true)">复制已加载的对话</button></template>
+      <template v-if="page === 'copy'"><button type="button" class="composer-menu-item" role="menuitem" :disabled="!canCopy" @click="popover?.hide(); emit('copy', false)">复制最近一条回复</button><button type="button" class="composer-menu-item" role="menuitem" :disabled="!canCopy" @click="popover?.hide(); emit('copy', true)">复制已加载的对话</button></template>
       <template v-else><button type="button" class="composer-menu-item" role="menuitem" @click="popover?.hide(); emit('fork', false)">从最新位置分叉</button><button type="button" class="composer-menu-item" role="menuitem" :disabled="!hasCompletedTurn" @click="popover?.hide(); emit('fork', true)">从上一轮完成处分叉</button></template>
     </div>
   </ComposerPopover>

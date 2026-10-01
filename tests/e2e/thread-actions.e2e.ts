@@ -45,14 +45,20 @@ test.beforeEach(async ({ page, request }) => {
   await expect(page.locator('.message-list')).toContainText('这是保存在远端的会话。')
 })
 
-test('copies the current Session ID from the copy submenu and follows conversation switches', async ({ page, request }) => {
+test('copies Session ID only from context capacity and follows conversation switches', async ({ page, request }) => {
   await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__copiedSession = text } }, configurable: true }) })
+  await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: '复制 Session ID', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
   for (const [name, id] of [['已有项目分析', 'existing-thread'], ['第二个会话', 'second-thread']]) {
     await openThread(page, name)
-    await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
-    await page.getByRole('menu', { name: '复制对话', exact: true }).getByRole('menuitem', { name: '复制 Session ID', exact: true }).click()
+    await page.getByRole('button', { name: '上下文用量', exact: true }).click()
+    const context = page.getByRole('dialog', { name: '上下文用量', exact: true })
+    await expect(context.getByRole('textbox', { name: 'Session ID', exact: true })).toHaveValue(id)
+    await context.getByRole('button', { name: '复制 Session ID', exact: true }).click()
     await expect.poll(() => page.evaluate(() => (window as any).__copiedSession)).toBe(id)
-    await expect(page.getByRole('menu', { name: '复制对话', exact: true })).toHaveCount(0)
+    await expect(context).toBeVisible()
+    await page.keyboard.press('Escape')
   }
   expect(generationCalls((await metrics(request)).requests)).toHaveLength(0)
 })
@@ -78,10 +84,10 @@ test('allows copying the Session ID even when the conversation has no messages',
   await openThread(page)
   await expect(page.locator('.empty-thread')).toBeVisible()
   await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__copiedSession = text } }, configurable: true }) })
-  await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
-  const menu = page.getByRole('menu', { name: '复制对话', exact: true })
-  await expect(menu.getByRole('menuitem', { name: '复制已加载的对话', exact: true })).toBeDisabled()
-  await menu.getByRole('menuitem', { name: '复制 Session ID', exact: true }).click()
+  await page.getByRole('button', { name: '上下文用量', exact: true }).click()
+  const context = page.getByRole('dialog', { name: '上下文用量', exact: true })
+  await expect(context.getByRole('textbox', { name: 'Session ID', exact: true })).toHaveValue('existing-thread')
+  await context.getByRole('button', { name: '复制 Session ID', exact: true }).click()
   await expect.poll(() => page.evaluate(() => (window as any).__copiedSession)).toBe('existing-thread')
 })
 
@@ -127,23 +133,33 @@ test('opens an independent side chat from a native fork and sends only after exp
   expect((await metrics(request)).requests.filter(call => call.method === 'turn/start').map(call => call.params.threadId)).toEqual([fork.id, 'existing-thread'])
 })
 
-test('shows a selectable Session ID in the context window when the clipboard API is unavailable', async ({ page, request }, testInfo) => {
-  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }) })
-  await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
-  await page.getByRole('menu', { name: '复制对话', exact: true }).getByRole('menuitem', { name: '复制 Session ID', exact: true }).click()
+test('HTTP copy stays in the context window and failures never open a popup or select the displayed ID', async ({ page, request }, testInfo) => {
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+    document.execCommand = (command: string) => {
+      if (command !== 'copy') return false
+      ;(window as any).__copiedSession = (document.activeElement as HTMLTextAreaElement)?.value
+      return true
+    }
+  })
+  await page.getByRole('button', { name: '上下文用量', exact: true }).click()
   const context = page.getByRole('dialog', { name: '上下文用量', exact: true })
   const id = context.getByRole('textbox', { name: 'Session ID', exact: true })
-  await expect(context).toBeVisible(); await expect(id).toHaveValue('existing-thread')
-  await expect(id).toHaveAttribute('readonly', '')
-  await expect(id).toBeFocused()
-  expect(await id.evaluate(element => {
-    const field = element as HTMLTextAreaElement
-    return field.value.slice(field.selectionStart, field.selectionEnd)
-  })).toBe('existing-thread')
-  await expect(page.getByText('已选中 Session ID，可手动复制。', { exact: true })).toBeVisible()
-  await context.screenshot({ path: testInfo.outputPath('context-session-id.png') })
-  await page.keyboard.press('Escape'); await openThread(page, '第二个会话')
-  await page.getByRole('button', { name: '上下文用量', exact: true }).click()
-  await expect(id).toHaveValue('second-thread')
+  await expect(id).toHaveValue('existing-thread'); await expect(id).toHaveAttribute('readonly', '')
+  await id.evaluate(element => { (element as HTMLTextAreaElement).setSelectionRange(3, 3) })
+  await context.getByRole('button', { name: '复制 Session ID', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedSession)).toBe('existing-thread')
+  await expect(context).toBeVisible()
+  expect(await id.evaluate(element => [(element as HTMLTextAreaElement).selectionStart, (element as HTMLTextAreaElement).selectionEnd])).toEqual([3, 3])
+  await context.screenshot({ path: testInfo.outputPath('context-session-copy-button.png') })
+  await page.evaluate(() => { document.execCommand = () => false })
+  await context.getByRole('button', { name: '复制 Session ID', exact: true }).click()
+  await expect(page.getByText('复制失败，请手动选择文字复制。', { exact: true })).toBeVisible()
+  expect(await id.evaluate(element => [(element as HTMLTextAreaElement).selectionStart, (element as HTMLTextAreaElement).selectionEnd])).toEqual([3, 3])
+  await page.keyboard.press('Escape')
+  await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
+  await page.getByRole('menuitem', { name: '复制最近一条回复', exact: true }).click()
+  await expect(context).toHaveCount(0)
+  await expect(page.getByText('复制失败，请手动选择文字复制。', { exact: true })).toBeVisible()
   expect(generationCalls((await metrics(request)).requests)).toHaveLength(0)
 })

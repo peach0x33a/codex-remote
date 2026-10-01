@@ -6,10 +6,14 @@ import { CredentialError, CredentialStore, credentialEndpoint, credentialId, cre
 
 type Options = { host?: string; port?: number; origins: string[]; accessKey?: string; allowedHosts?: string[]; allowUnix?: boolean; staticDir?: string; credentialFile?: string }
 type Ticket = { endpoint: string; token: string; expires: number; session: string }
-type Peer = { ticket: Ticket; upstream?: Upstream; queue: string[]; queuedBytes: number; closed: boolean }
+type Peer = { ticket: Ticket; upstream?: Upstream; queue: string[]; queuedBytes: number; closed: boolean; browserBlocked?: boolean; browserQueue?: string[]; browserQueuedBytes?: number; browserFlushing?: boolean; browserBuffered?: number; browserStall?: ReturnType<typeof setTimeout> }
 const COOKIE = 'codex_remote_session'
 const MAX_MESSAGE = 4 * 1024 * 1024
 const MAX_BODY = 16 * 1024
+const MAX_BROWSER_BUFFER = 16 * 1024 * 1024
+const BROWSER_STALL_MS = 30_000
+// Account for frame/bookkeeping overhead as well, so empty frames cannot grow an unbounded queue.
+const browserFrameBytes = (message: string) => Buffer.byteLength(message) + 16
 
 async function requestJson(request: Request) {
   if (Number(request.headers.get('content-length')) > MAX_BODY) throw new CredentialError('请求体过大。', 413)
@@ -58,10 +62,73 @@ export function createBridge(options: Options) {
   const configurationError = (error: unknown) => error instanceof CredentialError
     ? json({ error: error.message }, error.status)
     : json({ error: '无法处理连接配置。' }, 500)
-  const failPeer = (peer: ServerWebSocket<Peer>, message: string) => {
+  const clearBrowserStall = (peer: ServerWebSocket<Peer>) => {
+    clearTimeout(peer.data.browserStall); peer.data.browserStall = undefined
+    peer.data.browserBlocked = false; peer.data.browserBuffered = undefined
+  }
+  const failPeer = (peer: ServerWebSocket<Peer>, message: string, code = 1011) => {
     if (peer.data.closed) return
+    peer.data.closed = true; clearBrowserStall(peer)
+    peer.data.browserQueue = []; peer.data.browserQueuedBytes = 0
     peer.send(JSON.stringify({ method: 'bridge/error', params: { message } }))
-    peer.close(1011, 'Upstream connection failed')
+    peer.close(code, 'Bridge connection interrupted')
+    const upstream = peer.data.upstream
+    if (upstream && upstream.readyState !== Upstream.CLOSED) upstream.terminate()
+  }
+  function waitForBrowser(peer: ServerWebSocket<Peer>) {
+    peer.data.browserBuffered = peer.getBufferedAmount()
+    const check = () => {
+      clearTimeout(peer.data.browserStall); peer.data.browserStall = undefined
+      if (peer.data.closed || !peer.data.browserBlocked) return
+      const remaining = peer.getBufferedAmount()
+      if (remaining === 0) { clearBrowserStall(peer); flushBrowser(peer); return }
+      // A slow connection that is making progress is not a stalled connection.
+      if (remaining < (peer.data.browserBuffered ?? remaining)) {
+        peer.data.browserBuffered = remaining
+        peer.data.browserStall = setTimeout(check, BROWSER_STALL_MS)
+        peer.data.browserStall.unref()
+        return
+      }
+      failPeer(peer, '发往浏览器的数据缓冲长时间没有发送进展，请重新连接以同步会话。', 1013)
+    }
+    peer.data.browserStall = setTimeout(check, BROWSER_STALL_MS)
+    peer.data.browserStall.unref()
+  }
+  function flushBrowser(peer: ServerWebSocket<Peer>) {
+    if (peer.data.closed || peer.data.browserBlocked || peer.data.browserFlushing) return
+    peer.data.browserFlushing = true
+    try {
+      const queue = peer.data.browserQueue ?? []
+      while (!peer.data.closed && !peer.data.browserBlocked && queue.length) {
+        const message = queue.shift()!
+        peer.data.browserQueuedBytes = (peer.data.browserQueuedBytes ?? 0) - browserFrameBytes(message)
+        const sent = peer.send(message)
+        if (sent === 0) { failPeer(peer, '浏览器连接未能接收消息，请重新连接以同步会话。'); return }
+        if (sent === -1 && peer.getBufferedAmount() > 0) {
+          // -1 means accepted into Bun's queue. Do not replay this frame.
+          // Bun 1.3.14's ws.pause/resume are stubs, so buffer subsequent frames
+          // ourselves within one combined byte limit and flush them on drain.
+          peer.data.browserBlocked = true
+          waitForBrowser(peer)
+        }
+      }
+    } finally { peer.data.browserFlushing = false }
+  }
+  const resumeBrowserFlow = (peer: ServerWebSocket<Peer>) => {
+    if (peer.data.closed) return
+    clearBrowserStall(peer); flushBrowser(peer)
+  }
+  const sendToBrowser = (peer: ServerWebSocket<Peer>, message: string): boolean => {
+    if (peer.data.closed) return false
+    const bytes = browserFrameBytes(message)
+    if (peer.getBufferedAmount() + (peer.data.browserQueuedBytes ?? 0) + bytes > MAX_BROWSER_BUFFER) {
+      failPeer(peer, '发往浏览器的数据缓冲已满，请重新连接以同步会话。', 1013); return false
+    }
+    ;(peer.data.browserQueue ??= []).push(message)
+    peer.data.browserQueuedBytes = (peer.data.browserQueuedBytes ?? 0) + bytes
+    if (peer.data.browserBlocked && peer.getBufferedAmount() === 0) clearBrowserStall(peer)
+    flushBrowser(peer)
+    return !peer.data.closed
   }
   const clean = setInterval(() => {
     const now = Date.now()
@@ -183,6 +250,7 @@ export function createBridge(options: Options) {
     },
     websocket: {
       maxPayloadLength: MAX_MESSAGE, idleTimeout: 120, sendPings: true,
+      backpressureLimit: MAX_BROWSER_BUFFER, closeOnBackpressureLimit: false,
       open(peer) {
         peers.add(peer)
         const { endpoint, token } = peer.data.ticket
@@ -196,39 +264,43 @@ export function createBridge(options: Options) {
           peer.data.upstream = upstream
           upstream.on('open', () => {
             if (peer.data.closed) { upstream.close(); return }
-            peer.send(JSON.stringify({ method: 'bridge/ready', params: {} }))
+            if (!sendToBrowser(peer, JSON.stringify({ method: 'bridge/ready', params: {} }))) return
             for (const message of peer.data.queue) upstream.send(message)
             peer.data.queue = []; peer.data.queuedBytes = 0
           })
           upstream.on('message', data => {
             if (peer.data.closed) return
-            if (peer.send(data.toString()) === -1) failPeer(peer, '浏览器接收过慢，请重新连接以同步会话。')
+            sendToBrowser(peer, data.toString())
           })
           upstream.on('error', error => failPeer(peer, /401|403/.test(error.message) ? 'App Server 拒绝了连接，请检查访问令牌和服务器认证配置。' : '无法连接 App Server。请检查服务是否运行、地址、TLS 证书或 Unix socket 权限。'))
           upstream.on('close', () => { if (!peer.data.closed) peer.close(1011, 'App Server disconnected') })
         } catch { failPeer(peer, '连接地址或传输配置无效。') }
       },
+      drain(peer) { resumeBrowserFlow(peer) },
       message(peer, raw) {
+        if (peer.data.closed) return
         const message = typeof raw === 'string' ? raw : raw.toString()
         const upstream = peer.data.upstream
         if (upstream?.readyState === Upstream.OPEN) {
-          if (upstream.bufferedAmount > MAX_MESSAGE) { failPeer(peer, 'App Server 接收过慢，请稍后重试。'); return }
+          if (upstream.bufferedAmount > MAX_MESSAGE) { failPeer(peer, '发往 App Server 的数据缓冲已满，请稍后重试。'); return }
           upstream.send(message)
         } else if (upstream?.readyState === Upstream.CONNECTING) {
-          peer.data.queuedBytes += message.length
+          peer.data.queuedBytes += Buffer.byteLength(message)
           if (peer.data.queuedBytes > 64 * 1024) { failPeer(peer, '连接等待队列已满。'); return }
           peer.data.queue.push(message)
         }
       },
       close(peer) {
+        clearBrowserStall(peer)
         peer.data.closed = true
         peer.data.ticket.token = ''
         peer.data.queue = []
+        peer.data.browserQueue = []; peer.data.browserQueuedBytes = 0
         const upstream = peer.data.upstream
         if (upstream && upstream.readyState !== Upstream.CLOSED) upstream.terminate()
         peers.delete(peer)
       },
     },
   })
-  return { server, stop() { clearInterval(clean); for (const peer of peers) peer.close(1001, 'Server stopping'); server.stop(true); tickets.clear(); sessions.clear() } }
+  return { server, stop() { clearInterval(clean); for (const peer of peers) { clearBrowserStall(peer); peer.data.closed = true; peer.close(1001, 'Server stopping') }; server.stop(true); tickets.clear(); sessions.clear() } }
 }

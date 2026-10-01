@@ -45,3 +45,17 @@ export function formatWorkDuration(seconds: number | undefined): string | undefi
   }
   return `工作了 ${parts.length ? parts.join(' ') : '0 秒'}`
 }
+
+export type StoppedTurnFooter = { key: string; turnId: string; stoppedLabel: string }
+
+/** Append a stopped-turn footer at its boundary, even with no assistant answer. */
+export function withStoppedTurnFooters<Row extends { key: string }>(turns: readonly Turn[], render: (turn: Turn) => Row[]): (Row | StoppedTurnFooter)[] {
+  const result: (Row | StoppedTurnFooter)[] = []
+  for (const turn of turns) {
+    result.push(...render(turn))
+    if (turn.status !== 'interrupted') continue
+    const duration = formatWorkDuration(turnDurationSeconds(turn))
+    result.push({ key: 'stopped-turn:' + turn.id, turnId: turn.id, stoppedLabel: duration ? '已停止 · ' + duration : '已停止' })
+  }
+  return result
+}

@@ -176,3 +176,14 @@ describe('MessageItem completed-work footer', () => {
     expect(view.button()).toBeDefined()
   })
 })
+
+test('stopped turns keep their duration at the turn boundary without requiring a final answer', async () => {
+  const { withStoppedTurnFooters } = await import('../../src/lib/turn-duration')
+  const stopped = turn({ id: 'stopped', status: 'interrupted', durationMs: 138000, items: [{ id: 'tool-only', type: 'commandExecution' }] })
+  const next = turn({ id: 'next', status: 'inProgress', items: [{ id: 'next-input', type: 'userMessage' }] })
+  const rows = withStoppedTurnFooters([stopped, next], turn => turn.items.map(item => ({ key: item.id, item })))
+  expect(rows.map(row => row.key)).toEqual(['tool-only', 'stopped-turn:stopped', 'next-input'])
+  expect(rows[1]).toMatchObject({ stoppedLabel: '已停止 · 工作了 2 分 18 秒' })
+  expect(completedTurnDurations([stopped]).size).toBe(0)
+  expect(withStoppedTurnFooters([turn({ status: 'interrupted', items: [] })], () => [])).toEqual([{ key: 'stopped-turn:turn', turnId: 'turn', stoppedLabel: '已停止' }])
+})

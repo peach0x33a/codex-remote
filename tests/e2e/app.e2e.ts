@@ -48,13 +48,25 @@ test('waits for explicit approval and handles a server question', async ({ page,
   await expect(page.getByText('已收到你的选择：方案 A', { exact: true })).toBeVisible()
 })
 
-test('interrupts an in-progress turn', async ({ page }) => {
+test('interrupts a turn and retains its frozen work time through later messages and reload', async ({ page, request }) => {
+  await request.get(MOCK_URL + '/test/scenario?name=work-duration')
   await configure(page)
   await send(page, '长任务')
   await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible()
   await page.getByRole('button', { name: '停止生成' }).click()
   await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0)
   await expect(page.getByText('Codex 正在工作', { exact: true })).toHaveCount(0)
+  const footer = page.locator('.turn-stopped-duration')
+  await expect(footer).toHaveText('已停止 · 工作了 2 分 18 秒')
+  await page.clock.install(); await page.clock.fastForward(10_000)
+  await expect(footer).toHaveText('已停止 · 工作了 2 分 18 秒')
+  await send(page, '下一轮继续')
+  await expect(page.locator('.message-user')).toHaveCount(2)
+  expect(await footer.evaluate(element => !!(element.compareDocumentPosition(document.querySelectorAll('.message-user')[1]!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true)
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
+  await page.reload(); await expect(page.getByTestId('selected-device')).toContainText('已连接')
+  await showSidebar(page); await page.locator('.sidebar').getByRole('button', { name: '长任务', exact: true }).click()
+  await expect(footer).toHaveText('已停止 · 工作了 2 分 18 秒')
 })
 
 test('sanitizes assistant Markdown and never loads remote images', async ({ page }) => {

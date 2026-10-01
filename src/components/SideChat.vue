@@ -11,13 +11,13 @@ import QueuePane from './QueuePane.vue'
 import { hasPrompt, readImages, type PromptPart } from '../lib/prompt'
 import type { ConnectionProfile } from '../../shared/protocol'
 import { conversationInputs } from '../lib/input-history'
-import { completedTurnDurations } from '../lib/turn-duration'
+import { completedTurnDurations, withStoppedTurnFooters } from '../lib/turn-duration'
 import type { TaskNotice } from '../lib/task-notifications'
 const props = defineProps<{ threadId: string; profile: ConnectionProfile; token: string }>()
 const emit = defineEmits<{ close: []; notice: [event: TaskNotice]; copy: [text: string]; busy: [boolean] }>()
 const codex = useCodex({ autoConnect: false, persistConnection: false })
 const fileTarget = ref<FileLinkTarget | null>(null)
-const draft = ref<PromptPart[]>([]), ready = ref(false), inheritedIds = new Set<string>()
+const draft = ref<PromptPart[]>([]), ready = ref(false), inheritedIds = new Set<string>(), inheritedTurnIds = new Set<string>()
 const opening = ref(false), submitting = ref(false), attaching = ref(false), queueEditing = ref(false)
 const openError = ref(''), draftError = ref('')
 const editor = ref<InstanceType<typeof PromptEditor>>(), messages = ref<HTMLElement>()
@@ -25,11 +25,13 @@ const atBottom = ref(true)
 // Capture only confirmed history, once. Reconnects must not hide side-chat replies.
 function retainInheritedHistory() {
   if (disposed || ready.value || !codex.connected.value || codex.loadingThread.value || codex.threadLoadError.value || codex.active.value?.id !== props.threadId) return
-  for (const turn of codex.active.value.turns) for (const item of turn.items) inheritedIds.add(item.id)
+  for (const turn of codex.active.value.turns) { inheritedTurnIds.add(turn.id); for (const item of turn.items) inheritedIds.add(item.id) }
   ready.value = true
 }
-const visible = computed(() => ready.value && codex.active.value?.id === props.threadId
-  ? codex.displayTurns.value.flatMap(turn => turn.items).filter(item => !inheritedIds.has(item.id)) : [])
+const visibleTurns = computed(() => ready.value && codex.active.value?.id === props.threadId
+  ? codex.displayTurns.value.map(turn => ({ ...turn, items: turn.items.filter(item => !inheritedIds.has(item.id)) })).filter(turn => turn.items.length || !inheritedTurnIds.has(turn.id)) : [])
+const visible = computed(() => visibleTurns.value.flatMap(turn => turn.items))
+const transcript = computed(() => withStoppedTurnFooters(visibleTurns.value, turn => turn.items.map(item => ({ key: item.id, item }))))
 const workDurations = computed(() => completedTurnDurations(codex.displayTurns.value))
 const inputHistory = computed(() => conversationInputs([{ id: props.threadId, status: 'inProgress', items: visible.value }]))
 const blocked = computed(() => !ready.value || opening.value || !codex.connected.value || codex.active.value?.id !== props.threadId || codex.loadingThread.value || !!codex.threadLoadError.value || codex.revising.value || codex.sending.value || codex.steering.value || submitting.value || attaching.value)
@@ -113,7 +115,7 @@ watch([visible, statusMessage, connectionError, codex.currentTurnFailure], async
     <WorkspaceFilePanel floating :target="fileTarget" :cwd="codex.active.value?.cwd || profile.cwd" :device-name="profile.name" :connected="codex.connected.value" :run="codex.runWorkspaceCommand" @close="fileTarget = null" @copy="emit('copy', $event)" />
     <header><div><strong>侧边聊天</strong><small>{{ profile.name }}</small></div><button type="button" class="icon-button" aria-label="关闭侧边聊天" @click="emit('close')"><PhX :size="18" /></button></header>
     <div ref="messages" class="side-chat-messages" @scroll.passive="onScroll">
-      <MessageItem @open-file="fileTarget = $event" :work-duration-seconds="workDurations.get(item.id)" v-for="item in visible" :key="item.id" :item="item" :now="codex.clockNow.value" actions-disabled @copy="emit('copy', $event)" />
+      <template v-for="row in transcript" :key="row.key"><p v-if="'stoppedLabel' in row" class="turn-stopped-duration" :data-turn-id="row.turnId">{{ row.stoppedLabel }}</p><MessageItem v-else @open-file="fileTarget = $event" :work-duration-seconds="workDurations.get(row.item.id)" :item="row.item" :now="codex.clockNow.value" actions-disabled @copy="emit('copy', $event)" /></template>
       <p v-if="codex.currentTurnFailure.value" class="side-chat-error" role="alert">{{ codex.currentTurnFailure.value }}</p>
       <p v-if="connectionError" class="side-chat-error" role="alert">{{ connectionError }}</p>
       <p v-if="statusMessage" role="status" aria-live="polite" aria-atomic="true">{{ statusMessage }}</p>

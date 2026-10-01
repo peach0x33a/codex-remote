@@ -2041,3 +2041,28 @@ describe('default directory preparation does not gate connectivity', () => {
     expect(requests.slice(mark).some(call => ['thread/start', 'turn/start'].includes(call.method))).toBe(false)
   })
 })
+
+test('freezes live interrupted work time and keeps the next optimistic input after its own turn boundary', async () => {
+  setSystemTime(new Date('2026-10-01T00:00:00Z'))
+  socket.emit('turn/started', { threadId: 'a', turn: { id: 'stopped-live', status: 'inProgress', items: [] } })
+  await settle()
+  setSystemTime(new Date('2026-10-01T00:00:37Z'))
+  socket.emit('turn/completed', { threadId: 'a', turn: { id: 'stopped-live', status: 'interrupted', items: [] } })
+  await settle()
+  expect(state.displayTurns.value[0]?.durationMs).toBe(37000)
+  setSystemTime(new Date('2026-10-01T00:01:37Z'))
+  socket.emit('turn/completed', { threadId: 'a', turn: { id: 'stopped-live', status: 'interrupted', items: [] } })
+  await settle()
+  expect(state.displayTurns.value[0]?.durationMs).toBe(37000)
+  let release: (() => void) | undefined
+  archiveTransport = (method, _params, reply) => {
+    if (method !== 'turn/start') return false
+    release = () => reply({ turn: { id: 'next-turn', status: 'inProgress', items: [] } }); return true
+  }
+  const next = state.send([{ type: 'text', text: 'next task' }])
+  await eventually(() => !!release, 'next turn should wait for its acknowledgement')
+  expect(state.displayTurns.value[0]?.items).toEqual([])
+  expect(state.displayTurns.value.at(-1)?.status).toBe('inProgress')
+  expect(state.displayTurns.value.at(-1)?.items[0]?.type).toBe('userMessage')
+  release!(); await next
+})
