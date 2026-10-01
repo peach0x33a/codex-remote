@@ -313,6 +313,8 @@ describe('multi-device workspace', () => {
     const first = socketFor(alpha), second = socketFor(beta)
     await state.saveProfile({ ...alpha, name: 'Renamed Alpha', token: '' })
     expect(first.readyState).toBe(1); expect(second.readyState).toBe(1)
+    await state.saveProfile({ ...alpha, cwd: '/next-default', token: '' })
+    expect(first.readyState).toBe(1); expect(second.readyState).toBe(1)
     await state.saveProfile({ ...alpha, endpoint: 'ws://alpha-new.test', token: 'replacement' })
     expect(first.readyState).toBe(3); expect(second.readyState).toBe(1)
     expect(state.selectedId.value).toBe('beta'); expect(state.active.value?.name).toBe(beta.endpoint)

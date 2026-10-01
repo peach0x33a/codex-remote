@@ -111,6 +111,15 @@ const server = Bun.serve<Peer>({
       emit(body.threadId, 'thread/queue/changed', {})
       return Response.json({ ok: true, id })
     }
+    if (path === '/test/goal-status') {
+      const status = new URL(request.url).searchParams.get('status') || ''
+      if (!['paused', 'blocked', 'usageLimited', 'budgetLimited'].includes(status)) return Response.json({ error: 'invalid fixture status' }, { status: 400 })
+      for (const goal of goals.values()) {
+        goal.status = status
+        if (status === 'budgetLimited') { goal.tokenBudget = 1280; goal.tokensUsed = 1280 }
+      }
+      return Response.json({ ok: true })
+    }
     if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'file-links') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '[说明文档](/test/files/README.md) · [AppImage](/test/files/build.AppImage) · [目录](/test/files) · [源代码](src/main.ts:2) · [图片](file:///test/files/pixel.gif) · [网站](https://example.com) · [慢文件](/test/files/slow.md) · [不存在](/test/files/missing.md)' }; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario === 'paged') { const thread = threads.get('existing-thread')!; thread.turns = Array.from({ length: 45 }, (_, i) => ({ id: 'history-turn-' + i, status: 'completed', items: [{ id: 'user-' + i, type: 'userMessage', content: [{ type: 'text', text: '历史问题 ' + i }] }, { id: 'agent-' + i, type: 'agentMessage', text: '历史回答 ' + i }] })) }; return Response.json({ ok: true }) }
     if (path === '/test/finish') { for (const thread of threads.values()) { const turn = thread.turns.find(t => t.status === 'inProgress'); if (turn) { clearInterval(timers.get(turn.id)); timers.delete(turn.id); finish(thread, turn, '当前任务已完成。') } }; return Response.json({ ok: true }) }
     if (path === '/test/upstream-retry' || path === '/test/upstream-resume') {
@@ -149,6 +158,7 @@ const server = Bun.serve<Peer>({
       if (method === 'initialize') { if (ws.data.initialized) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Already initialized' } })); return }; ws.data.initialized = true; respond({ userAgent: 'codex-test/0.159.0', platformFamily: 'unix', platformOs: 'linux' }); return }
       if (method === 'initialized') { ws.data.acknowledged = true; return }
       if (!ws.data.initialized || !ws.data.acknowledged) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Not initialized' } })); return }
+      if (method === 'fs/createDirectory') { if (scenario === 'directory-denied') fail(-32603, 'Permission denied: default directory'); else respond({}); return }
       if (method === 'command/exec' && Array.isArray(p.command) && p.command[3] === 'codex-remote-directory') { respond({ exitCode: 0, stdout: '/mock-home/' + String(p.command[4]).replace(/^~\/?/, ''), stderr: '' }); return }
       if (method === 'command/exec' && scenario === 'file-links') {
         const command = Array.isArray(p.command) ? p.command as string[] : []

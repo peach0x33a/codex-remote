@@ -177,7 +177,7 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
         const profile = profiles.find(item => item.id === id)
         if (!profile) { entry.scope.stop(); entries.delete(id); sessionTokens.delete(id); continue }
         const old = entry.runtime.selected.value
-        if (old && (old.endpoint !== profile.endpoint || old.credentialId !== profile.credentialId || old.cwd !== profile.cwd)) { disconnectEntry(entry); sessionTokens.delete(id) }
+        if (old && (old.endpoint !== profile.endpoint || old.credentialId !== profile.credentialId)) { disconnectEntry(entry); sessionTokens.delete(id) }
         if (JSON.stringify(old) !== JSON.stringify(profile)) entry.runtime.profiles.value = [profile]
       }
       ensureSelected()

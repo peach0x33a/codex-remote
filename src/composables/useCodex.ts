@@ -5,7 +5,7 @@ import { normalizeEndpoint } from '../../shared/endpoint'
 import { loadProfiles, STORAGE_KEY } from '../lib/profiles'
 import { ProfileApiError, fetchProfiles, importServerProfile, removeServerProfile, saveServerProfile, selectServerProfile } from '../lib/profile-api'
 import type { ProfileInput, ProfileSnapshot } from '../../shared/profiles'
-import { deviceDirectory, resolveDeviceDirectory } from '../lib/working-directory'
+import { deviceDirectory, prepareDeviceDirectory } from '../lib/working-directory'
 import { readUiPreferences } from '../lib/ui-preferences'
 import { RpcClient, RpcError } from '../lib/rpc'
 import { retryStatusMessage } from '../lib/turn-failure'
@@ -543,13 +543,11 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (!online.value) throw new Error('当前处于离线状态，联网后可连接 App Server。')
       await rpc.connect(profile.endpoint, tokens.get(profile.id) || '', profile.credentialId)
       if (epoch !== generation) return
-      const directory = await resolveDeviceDirectory(profile.cwd, params => rpc.request('command/exec', params))
-      if (epoch !== generation) return
-      defaultWorkingDirectory.value = directory
-      if (!reconnecting) workingDirectory.value = directory
       initialized = true; status.value = 'connected'; reconnectCount = 0; authenticated.value = true; bridgeReachable.value = true
-      // A slow model listing must not hold the conversation behind a loading screen.
-      void refreshThreads(); void loadModels(rpc, epoch); void loadPermissionCapabilities(rpc, epoch, defaultWorkingDirectory.value)
+      // Connection readiness depends only on the transport and initialize handshake.
+      // Missing directories or unavailable filesystem/command APIs must not disconnect it.
+      const cwd = defaultWorkingDirectory.value
+      void refreshThreads(); void loadModels(rpc, epoch); void loadPermissionCapabilities(rpc, epoch, cwd.startsWith('~') ? undefined : cwd)
       if (epoch !== generation) return
       if (resumeId) await openThread(resumeId)
       if (epoch === generation) queueRefreshTimer = setInterval(() => { if (connected.value && active.value) void refreshServerQueue(active.value.id).catch(() => {}) }, 15_000)
@@ -559,6 +557,27 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (e instanceof RpcError && e.code === 401) { authenticated.value = false; status.value = 'error'; return }
       if (reconnecting) scheduleReconnect(); else status.value = 'error'
     }
+  }
+  async function prepareNewThreadDirectory(rpc: RpcClient, current: () => boolean): Promise<string> {
+    const chosen = workingDirectory.value
+    const configured = deviceDirectory(selected.value?.cwd)
+    // A manually selected project is not an instruction to create a new directory.
+    if (chosen && chosen !== defaultWorkingDirectory.value && chosen !== configured) return chosen
+    const path = chosen || defaultWorkingDirectory.value
+    let prepared: string
+    try {
+      prepared = await prepareDeviceDirectory(path, (method, params) => {
+        if (!current() || workingDirectory.value !== chosen) throw new Error('工作目录已变化，本次操作未提交。')
+        return rpc.request(method, params, { timeoutMs: 10_000 })
+      })
+    } catch (cause) {
+      if (!current() || workingDirectory.value !== chosen) throw new Error('设备、会话或工作目录已变化，本次操作未提交。')
+      throw new Error('设备已连接，但默认工作目录“' + path + '”尚不可用：' + messageOf(cause) + ' 请检查权限后重试，或选择已有项目。')
+    }
+    if (!current() || workingDirectory.value !== chosen) throw new Error('设备、会话或工作目录已变化，本次操作未提交。')
+    defaultWorkingDirectory.value = prepared
+    workingDirectory.value = prepared
+    return prepared
   }
   async function loadModels(rpc: RpcClient, epoch: number) {
     try {
@@ -781,7 +800,9 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
         if (!update?.objective?.trim()) throw new Error('请先填写新对话的目标。')
         if (permission.value === 'custom') throw new Error('新对话请选择明确的权限模式。')
         if (permissionUnavailable.value[permission.value]) throw new Error(permissionUnavailable.value[permission.value])
-        const settings = settingsSnapshot(), cwd = workingDirectory.value, effort = wireSettings(settings).effort
+        const cwd = await prepareNewThreadDirectory(rpc, currentView)
+        if (!currentView()) return false
+        const settings = settingsSnapshot(), effort = wireSettings(settings).effort
         const result = await rpc.request<ThreadResult>('thread/start', { ...wireSettings(settings, true), ...(cwd ? { cwd } : {}), ...(effort ? { config: { model_reasoning_effort: effort } } : {}) })
         if (!currentView()) return false
         if (!isThreadSummary(result.thread)) throw new Error('新对话响应无效，目标未提交。')
@@ -868,13 +889,17 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     let optimisticThreadId = ''
     try {
       if (!threadId) {
+        const current = () => rpc === client && epoch === generation && viewEpoch === threadGeneration && connected.value
+        const cwd = await prepareNewThreadDirectory(rpc, current)
+        if (!current()) throw new Error('对话已切换，消息未发送。')
+        if (permissionUnavailable.value[permission.value]) throw new Error(permissionUnavailable.value[permission.value])
+        settings = settingsSnapshot()
         if (foreground) {
           optimisticThreadId = 'pending-thread-' + randomId()
           active.value = { id: optimisticThreadId, name: null, preview: promptText(parts).trim().slice(0, 200), cwd: workingDirectory.value, createdAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000), status: { type: 'active' }, turns: [] }
           threadId = optimisticThreadId
           pending = addPendingUserMessage(threadId, input)
         }
-        const cwd = workingDirectory.value
         const result = await rpc.request<ThreadResult>('thread/start', { ...wireSettings(settings, true), ...(cwd ? { cwd } : {}) })
         if (epoch !== generation || viewEpoch !== threadGeneration) throw new Error('对话已切换，消息未发送。')
         if (pending) pending.threadId = result.thread.id
@@ -947,7 +972,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   }
   async function send(parts: PromptPart[]) {
     if (!active.value && goalSaving.value) return false
-    if (queueAdding || revising.value || !connected.value || loadingThread.value || threadLoadError.value || !hasPrompt(parts)) return false
+    if (queueAdding || (sending.value && !active.value) || revising.value || !connected.value || loadingThread.value || threadLoadError.value || !hasPrompt(parts)) return false
     if (permissionUnavailable.value[permission.value]) { error.value = permissionUnavailable.value[permission.value]!; return false }
     if (busy.value || currentQueue.value.length) {
       if (!active.value) return false

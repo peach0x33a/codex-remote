@@ -27,7 +27,7 @@ const open = ref(false), objective = ref(''), budget = ref('')
 const statusVisible = ref(false)
 let statusTimer: ReturnType<typeof setTimeout> | undefined
 const baseline = ref({ objective: '', budget: '' })
-const editingExisting = ref(false), confirmingClear = ref(false), attempted = ref(false)
+const editingExisting = ref(false), confirmingClear = ref(false), attempted = ref(false), resumeAfterSave = ref(false)
 const objectiveInput = ref<HTMLTextAreaElement>(), budgetInput = ref<HTMLInputElement>()
 const dialogBody = ref<HTMLElement>(), editButton = ref<HTMLButtonElement>()
 let opener: HTMLElement | null = null
@@ -40,6 +40,8 @@ const canRefresh = computed(() => !props.disabled && !busy.value && !reading.val
 const canMutate = computed(() => !props.disabled && !busy.value && !reading.value && props.supported !== false)
 const canChangeStatus = computed(() => canMutate.value && !confirmingClear.value
   && (props.scopeKey === undefined || props.goal?.threadId === props.scopeKey))
+const resumable = computed(() => !!props.goal && ['paused', 'blocked', 'usageLimited', 'budgetLimited'].includes(props.goal.status))
+const resumeNeedsBudget = computed(() => props.goal?.status === 'budgetLimited' && props.goal.tokenBudget !== null && props.goal.tokensUsed >= props.goal.tokenBudget)
 const removed = computed(() => editingExisting.value && !props.goal && !reading.value)
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 })
 const formatCount = (value: number) => Number.isFinite(value) && value >= 0 ? number.format(value) : '—'
@@ -62,9 +64,9 @@ const compactElapsed = computed(() => {
 })
 const budgetError = computed(() => {
   const value = budget.value.trim()
-  if (!value) return ''
-  return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0
-    ? '' : '请输入正整数 token 预算。'
+  if (value && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0)) return '请输入正整数 token 预算。'
+  if (resumeAfterSave.value && props.goal && (!value || Number(value) <= props.goal.tokensUsed)) return '预算已用尽，请设置高于已用 ' + formatCount(props.goal.tokensUsed) + ' tokens 的预算后恢复。'
+  return ''
 })
 const objectiveError = computed(() => attempted.value && !objective.value.trim() ? '请输入目标。' : '')
 const budgetHint = computed(() => props.goal?.tokenBudget != null
@@ -90,6 +92,7 @@ watch(() => props.scopeKey, (scope, previous) => {
   // Creating a thread while saving changes "new" to its real ID; preserve that draft.
   if (scope === previous || props.saving) return
   open.value = false
+  resumeAfterSave.value = false
   pending.value = null
   confirmingClear.value = false
   synchronizeDraft()
@@ -113,7 +116,8 @@ function showStatus() {
   statusTimer = setTimeout(hideStatus, 8000)
   if (props.supported !== false) void refresh()
 }
-async function show(preset = '') {
+async function show(preset = '', resume = false) {
+  resumeAfterSave.value = resume
   hideStatus()
   if (!open.value) {
     opener = typeof document !== 'undefined' && typeof HTMLElement !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -149,7 +153,7 @@ function finishMutation() {
     void close()
   } else if (operation.kind === 'save' && props.goal && snapshot(props.goal) !== operation.snapshot) {
     const update = operation.update!
-    if (props.goal.objective === update.objective &&
+    if ((update.objective === undefined || props.goal.objective === update.objective) &&
       (update.tokenBudget === undefined || props.goal.tokenBudget === update.tokenBudget)) {
       synchronizeDraft()
       void close()
@@ -174,15 +178,18 @@ function save() {
   attempted.value = true
   if (!objective.value.trim()) { objectiveInput.value?.focus(); return }
   if (budgetError.value) { budgetInput.value?.focus(); return }
-  if (props.goal && !dirty.value) return
-  const update: GoalUpdate = { objective: objective.value.trim(), status: props.goal?.status ?? 'active' }
+  if (resumeAfterSave.value && !resumable.value) return
+  if (props.goal && !dirty.value && !resumeAfterSave.value) return
+  const update: GoalUpdate = { status: resumeAfterSave.value ? 'active' : props.goal?.status ?? 'active' }
+  if (!resumeAfterSave.value || objective.value !== props.goal?.objective) update.objective = objective.value.trim()
   const value = budget.value.trim()
   // Omit a blank budget: null means "keep" in the server protocol, not "clear".
   if (value && Number(value) !== props.goal?.tokenBudget) update.tokenBudget = Number(value)
   void dispatch('save', update)
 }
 function resume() {
-  if (!canChangeStatus.value || props.goal?.status !== 'paused') return
+  if (!canChangeStatus.value || !resumable.value) return
+  if (resumeNeedsBudget.value) { void show('', true).then(() => { if (open.value) budgetInput.value?.focus() }); return }
   void dispatch('status', { status: 'active' })
 }
 function pause() {
@@ -204,7 +211,7 @@ function clear() {
         <span class="goal-heading"><span class="goal-objective">{{ goal.objective }}</span><span class="goal-status" :data-status="goal.status" :title="labels[goal.status]"><span class="goal-status-label">{{ labels[goal.status] }}</span></span><span v-if="elapsed !== '—'" class="goal-time" :title="'已用 ' + elapsed" :aria-label="'已用 ' + elapsed"><span class="goal-time-full">已用 {{ elapsed }}</span><span class="goal-time-compact" aria-hidden="true">{{ compactElapsed }}</span></span></span>
       </button>
       <button v-if="goal.status === 'active'" type="button" class="icon-button goal-status-toggle" aria-label="暂停目标" title="暂停目标" :disabled="!canChangeStatus" @click="pause"><PhPause :size="17" aria-hidden="true" /></button>
-      <button v-else-if="goal.status === 'paused'" type="button" class="icon-button goal-status-toggle" aria-label="恢复目标" title="恢复目标" :disabled="!canChangeStatus" @click="resume"><PhPlay :size="17" aria-hidden="true" /></button>
+      <button v-else-if="resumable" type="button" class="icon-button goal-status-toggle" aria-label="恢复目标" :title="resumeNeedsBudget ? '调整预算后恢复目标' : '恢复目标'" :disabled="!canChangeStatus" @click="resume"><PhPlay :size="17" aria-hidden="true" /></button>
       <button type="button" class="icon-button goal-edit" aria-label="编辑目标" title="编辑目标" :disabled="!canMutate" @click="show()"><PhPencilSimple :size="17" aria-hidden="true" /></button>
       <button type="button" class="icon-button goal-refresh" aria-label="刷新目标" title="刷新目标" :disabled="!canRefresh" @click="refresh"><PhArrowsClockwise :size="17" aria-hidden="true" /></button>
     </div>
@@ -256,7 +263,7 @@ function clear() {
             </label>
             <p v-if="budgetError" :id="`${id}-budget-error`" class="goal-validation" role="alert">{{ budgetError }}</p>
             <div v-if="goal && !confirmingClear" class="goal-controls">
-              <button v-if="goal.status === 'active' || goal.status === 'paused'" type="button" class="text-button" :disabled="!canChangeStatus" @click="goal.status === 'active' ? pause() : resume()"><PhPause v-if="goal.status === 'active'" :size="16" aria-hidden="true" /><PhPlay v-else :size="16" aria-hidden="true" />{{ pending?.kind === 'status' ? '正在更新…' : goal.status === 'active' ? '暂停目标' : '恢复目标' }}</button>
+              <button v-if="goal.status === 'active' || resumable" type="button" class="text-button" :disabled="!canChangeStatus" @click="goal.status === 'active' ? pause() : resume()"><PhPause v-if="goal.status === 'active'" :size="16" aria-hidden="true" /><PhPlay v-else :size="16" aria-hidden="true" />{{ pending?.kind === 'status' ? '正在更新…' : goal.status === 'active' ? '暂停目标' : '恢复目标' }}</button>
               <button type="button" class="text-button danger" :disabled="!canMutate" @click="clear">移除目标</button>
             </div>
             <div v-if="goal && confirmingClear" class="goal-confirm" role="group" :aria-labelledby="`${id}-confirm`">
@@ -267,7 +274,7 @@ function clear() {
         </div>
         <footer class="dialog-actions goal-actions">
           <button type="button" class="button secondary" :disabled="busy" @click="close">关闭</button>
-          <button v-if="supported !== false && !removed" type="submit" class="button primary" :disabled="!canMutate || !!budgetError || confirmingClear || (!!goal && !dirty)">{{ pending?.kind === 'save' ? '正在保存…' : goal ? '保存修改' : '开始目标' }}</button>
+          <button v-if="supported !== false && !removed" type="submit" class="button primary" :disabled="!canMutate || !!budgetError || confirmingClear || (resumeAfterSave && !resumable) || (!!goal && !dirty && !resumeAfterSave)">{{ pending?.kind === 'save' ? '正在保存…' : resumeAfterSave ? '保存并恢复' : goal ? '保存修改' : '开始目标' }}</button>
         </footer>
       </form>
     </BaseDialog>

@@ -126,3 +126,24 @@ test('opens an independent side chat from a native fork and sends only after exp
   await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
   expect((await metrics(request)).requests.filter(call => call.method === 'turn/start').map(call => call.params.threadId)).toEqual([fork.id, 'existing-thread'])
 })
+
+test('shows a selectable Session ID in the context window when the clipboard API is unavailable', async ({ page, request }, testInfo) => {
+  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }) })
+  await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
+  await page.getByRole('menu', { name: '复制对话', exact: true }).getByRole('menuitem', { name: '复制 Session ID', exact: true }).click()
+  const context = page.getByRole('dialog', { name: '上下文用量', exact: true })
+  const id = context.getByRole('textbox', { name: 'Session ID', exact: true })
+  await expect(context).toBeVisible(); await expect(id).toHaveValue('existing-thread')
+  await expect(id).toHaveAttribute('readonly', '')
+  await expect(id).toBeFocused()
+  expect(await id.evaluate(element => {
+    const field = element as HTMLTextAreaElement
+    return field.value.slice(field.selectionStart, field.selectionEnd)
+  })).toBe('existing-thread')
+  await expect(page.getByText('已选中 Session ID，可手动复制。', { exact: true })).toBeVisible()
+  await context.screenshot({ path: testInfo.outputPath('context-session-id.png') })
+  await page.keyboard.press('Escape'); await openThread(page, '第二个会话')
+  await page.getByRole('button', { name: '上下文用量', exact: true }).click()
+  await expect(id).toHaveValue('second-thread')
+  expect(generationCalls((await metrics(request)).requests)).toHaveLength(0)
+})

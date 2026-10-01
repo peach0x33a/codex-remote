@@ -1976,3 +1976,68 @@ test('thinking time advances and stops on turn completion', async () => {
     const item = state.items.value.find(item => item.id === 'thought')!
     expect(item.completedAtMs).toBeGreaterThan(item.startedAtMs!)
   })
+
+describe('default directory preparation does not gate connectivity', () => {
+  async function connectUnprepared() {
+    const profile = { ...primaryDevice, cwd: '~/missing-default' }
+    state.profiles.value = [profile]
+    const start = requests.length
+    await state.connect(profile); await settle()
+    expect(state.connected.value).toBe(true)
+    expect(requests.slice(start).some(request => request.method === 'command/exec' || request.method === 'fs/createDirectory')).toBe(false)
+    return start
+  }
+  test('connects and opens existing history before creating a missing default on the first new task', async () => {
+    let created = false
+    archiveTransport = (method, params, reply, fail) => {
+      if (method === 'command/exec' && params.command?.[3] === 'codex-remote-directory') {
+        expect(params.cwd).toBe('/'); reply({ exitCode: 0, stdout: '/remote/missing-default' }); return true
+      }
+      if (method === 'fs/createDirectory') { expect(params).toEqual({ path: '/remote/missing-default', recursive: true }); created = true; reply({}); return true }
+      if (method === 'thread/start' && params.cwd === '/remote/missing-default' && !created) { fail(-32603, 'ENOENT'); return true }
+      return false
+    }
+    await connectUnprepared(); await state.openThread('a')
+    expect(state.active.value?.id).toBe('a'); expect(created).toBe(false)
+    state.newThread(); const mark = requests.length
+    expect(await state.send([{ type: 'text', text: 'new task' }])).toBe(true)
+    const calls = requests.slice(mark)
+    expect(calls.findIndex(call => call.method === 'fs/createDirectory')).toBeLessThan(calls.findIndex(call => call.method === 'thread/start'))
+    expect(calls.find(call => call.method === 'thread/start')?.params.cwd).toBe('/remote/missing-default')
+    expect(state.defaultWorkingDirectory.value).toBe('/remote/missing-default')
+  })
+  test('directory permission errors keep the connection and history usable, without starting a turn or goal', async () => {
+    archiveTransport = (method, params, reply, fail) => {
+      if (method === 'command/exec' && params.command?.[3] === 'codex-remote-directory') { reply({ exitCode: 0, stdout: '/remote/missing-default' }); return true }
+      if (method === 'fs/createDirectory') { fail(-32603, 'Permission denied'); return true }
+      return false
+    }
+    const mark = await connectUnprepared()
+    expect(await state.send([{ type: 'text', text: 'keep this draft' }])).toBe(false)
+    expect(state.currentTurnFailure.value || state.error.value).toContain('默认工作目录')
+    expect(await state.setGoal({ objective: 'must not run' })).toBe(false)
+    expect(state.goalError.value).toContain('默认工作目录')
+    expect(requests.slice(mark).some(call => ['thread/start', 'turn/start', 'thread/goal/set'].includes(call.method))).toBe(false)
+    expect(state.connected.value).toBe(true)
+    await state.openThread('a'); expect(state.active.value?.id).toBe('a')
+    state.newThread(); state.workingDirectory.value = '/existing-project'
+    expect(await state.send([{ type: 'text', text: 'use this project' }])).toBe(true)
+    expect(requests.findLast(call => call.method === 'thread/start')?.params.cwd).toBe('/existing-project')
+  })
+  test('a changed project cancels delayed preparation and repeated send cannot create duplicate tasks', async () => {
+    let release: (() => void) | undefined
+    archiveTransport = (method, params, reply) => {
+      if (method === 'command/exec' && params.command?.[3] === 'codex-remote-directory') { reply({ exitCode: 0, stdout: '/remote/missing-default' }); return true }
+      if (method === 'fs/createDirectory') { release = () => reply({}); return true }
+      return false
+    }
+    const mark = await connectUnprepared()
+    const first = state.send([{ type: 'text', text: 'original' }])
+    await eventually(() => !!release, 'directory creation should be awaiting its acknowledgement')
+    expect(await state.send([{ type: 'text', text: 'duplicate' }])).toBe(false)
+    state.workingDirectory.value = '/another-project'
+    release!(); expect(await first).toBe(false)
+    expect(state.workingDirectory.value).toBe('/another-project'); expect(state.connected.value).toBe(true)
+    expect(requests.slice(mark).some(call => ['thread/start', 'turn/start'].includes(call.method))).toBe(false)
+  })
+})

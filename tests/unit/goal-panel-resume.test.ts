@@ -131,3 +131,26 @@ test('releases the same-tick guard when the parent does not start a request', as
   await nextTick()
   expect(view.resume()!.props.disabled).toBe(false)
 })
+
+test.each(['blocked', 'usageLimited'] as const)('offers recovery for %s without resetting budget, objective or counters', async status => {
+  const view = mountPanel({ goal: goalFixture({ status }) }, true), initial = { ...view.props.goal! }
+  const button = view.resume()!
+  expect(button).toBeDefined(); expect(button.props.disabled).toBe(false)
+  button.props.onClick(); button.props.onClick()
+  expect(view.saves).toEqual([{ status: 'active' }]); expect(view.props.goal).toEqual(initial)
+  view.props.error = '仍然受限'; view.props.saving = false
+  await nextTick()
+  expect(view.resume()).toBeDefined(); expect(view.props.goal!.status).toBe(status)
+})
+test('a completed goal cannot be resumed through an old limited-state handler', async () => {
+  const view = mountPanel({ goal: goalFixture({ status: 'usageLimited' }) }), resume = view.resume()!.props.onClick
+  view.props.goal = goalFixture({ status: 'complete' }); await nextTick()
+  expect(view.resume()).toBeUndefined(); resume(); expect(view.saves).toEqual([])
+})
+test('an exhausted goal budget opens editing rather than restarting or silently raising the cap', async () => {
+  const view = mountPanel({ goal: goalFixture({ status: 'budgetLimited', tokensUsed: 4096 }) })
+  const button = view.resume()!
+  expect(button.props.title).toBe('调整预算后恢复目标')
+  button.props.onClick(); await nextTick()
+  expect(view.saves).toEqual([]); expect(view.props.goal!.tokenBudget).toBe(4096)
+})
