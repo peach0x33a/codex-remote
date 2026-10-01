@@ -4,6 +4,8 @@ Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 
 ## Latest delivery
+Production build and Bun backend are updated to merged code commit 2226a80. Deployment record: task-history/2026-10-01-rebuild-and-publish.md.
+
 Device synchronization work is merged with the parallel file-preview, responsive layout and Copy Session ID changes. Merge commit: d9451d5. The default test suite is reduced from 1,017 to 634 cases (609 unit + all 25 integration); browser tests are reduced from 246 to 78 desktop/mobile cases. Details: task-history/2026-10-01-main-merge-test-pruning.md.
 
 ## Preserved features
@@ -18,5 +20,5 @@ Device synchronization work is merged with the parallel file-preview, responsive
 ## Repository / runtime boundary
 - Feature commit: 9eadf8a. Main's concurrent source changes were preserved at 263ebd6 before the three-way merge. Recovery branch: backup/master-before-device-sync-20261001.
 - Test pruning modifies tests/configuration and documentation, not production behavior.
-- Verification build uses .local/e2e-dist and synthetic credentials. The live service's dist and real credentials were not replaced. No service restart or remote push occurred.
+- Production dist is now published and Bun was restarted as PID 3125155, preserving its original environment and credential path. PID file: .local/server.pid; output: .local/server.log. The earlier verification build remains separate in .local/e2e-dist. No remote push occurred.
 - Tests use tests/mock-bridge.ts, which does not inherit production .env authentication or credential paths.
