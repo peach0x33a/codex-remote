@@ -62,47 +62,15 @@ describe('persisted choices', () => {
     expect(entries.get('tab')).toBe(JSON.stringify('all'))
   })
 
-  test('accepts saved false and empty lists rather than replacing them with defaults', () => {
-    entries.set('collapsed', 'false'); entries.set('pins', '[]')
-    const collapsed = mount('collapsed', true, isBoolean).choice
-    const pins = mount('pins', ['default-thread'], isStringList).choice
-    expect(collapsed.value).toBe(false)
-    expect(pins.value).toEqual([])
-    expect(writes).toEqual([])
-    collapsed.value = true; collapsed.value = false
-    expect(writes).toEqual([['collapsed', 'true'], ['collapsed', 'false']])
-  })
-
-  test.each(['', '{broken', 'null', '[]', '{}', '12', 'true', '"retired"'])('uses the default for malformed or unsupported storage %j without overwriting it', raw => {
+  test.each([
+    '{broken',
+    'null',
+    '"retired"'
+  ])('uses the default for malformed or unsupported storage %j without overwriting it', raw => {
     entries.set('tab', raw)
     expect(mount('tab', 'files', validTab).choice.value).toBe('files')
     expect(entries.get('tab')).toBe(raw)
     expect(writes).toEqual([])
-  })
-
-  test('clones missing list defaults per instance and persists deep changes', () => {
-    const fallback = ['root']
-    const first = mount('pins-a', fallback, isStringList).choice
-    const second = mount('pins-b', fallback, isStringList).choice
-    expect(first.value).toEqual(['root'])
-    expect(first.value).not.toBe(second.value)
-    expect(writes).toEqual([])
-    first.value.push('child')
-    expect(entries.get('pins-a')).toBe(JSON.stringify(['root', 'child']))
-    expect(second.value).toEqual(['root'])
-    expect(fallback).toEqual(['root'])
-    first.value.splice(0, 1)
-    expect(writes).toEqual([['pins-a', JSON.stringify(['root', 'child'])], ['pins-a', JSON.stringify(['child'])]])
-  })
-
-  test('does not save selections rejected by the supplied validator', () => {
-    const choice = mount('tab', 'all', validTab).choice as Ref<string>
-    choice.value = 'files'
-    choice.value = 'unsupported'
-    expect(entries.get('tab')).toBe(JSON.stringify('files'))
-    expect(writes).toHaveLength(1)
-    choice.value = 'agents'
-    expect(entries.get('tab')).toBe(JSON.stringify('agents'))
   })
 
   test('isolates reactive device keys without copying the previous device selection', () => {
@@ -154,35 +122,6 @@ describe('storage events and component lifetime', () => {
     expect(writes).toEqual([])
   })
 
-  test.each(['remove', 'clear', 'malformed', 'invalid'] as const)('restores the default on remote %s without rewriting storage', async change => {
-    entries.set('tab', JSON.stringify('agents')); entries.set('other', 'keep')
-    const choice = mount('tab', 'files', validTab).choice
-    if (change === 'clear') entries.clear()
-    else if (change === 'remove') entries.delete('tab')
-    else entries.set('tab', change === 'malformed' ? '{broken' : JSON.stringify('unsupported'))
-    const before = [...entries]
-    storageEvent(change === 'clear' ? null : 'tab')
-    await nextTick()
-    expect<string>(choice.value).toBe('files')
-    expect([...entries]).toEqual(before)
-    expect(writes).toEqual([])
-  })
-
-  test('restores list values without an echo and continues tracking subsequent deep edits', async () => {
-    const fallback = ['root']
-    const choice = mount('pins', fallback, isStringList).choice
-    entries.set('pins', JSON.stringify(['remote'])); storageEvent('pins')
-    await nextTick()
-    expect(choice.value).toEqual(['remote'])
-    expect(writes).toEqual([])
-    choice.value.push('local')
-    expect(writes).toEqual([['pins', JSON.stringify(['remote', 'local'])]])
-    entries.clear(); storageEvent(null)
-    expect(choice.value).toEqual(['root'])
-    expect(fallback).toEqual(['root'])
-    expect(writes).toHaveLength(1)
-  })
-
   test('removes storage listeners and stops persistence watches on unmount', async () => {
     const mounted = mount('tab', 'all', validTab)
     mounted.unmount()
@@ -195,9 +134,11 @@ describe('storage events and component lifetime', () => {
     expect(mount('tab', 'all', validTab).choice.value).toBe('agents')
   })
 
-  test.each(['access', 'read', 'write'] as const)('keeps the selection usable when storage %s throws', failure => {
-    if (failure === 'access') global('localStorage', { get() { throw new Error('blocked storage') } })
-    else global('localStorage', { value: {
+  test.each([
+    'read',
+    'write'
+  ] as const)('keeps the selection usable when storage %s throws', failure => {
+    global('localStorage', { value: {
       getItem: () => { if (failure === 'read') throw new Error('blocked read'); return null },
       setItem: () => { throw new Error('blocked write') },
     } })

@@ -74,26 +74,6 @@ test('asks before downloading an unsupported file and fetches every binary chunk
   expect((await commands()).filter(args => args.includes('chunk'))).toHaveLength(3)
 })
 
-test('browses directories and previews images without opening another tab', async ({ page, context }) => {
-  await page.getByRole('button', { name: '目录', exact: true }).click()
-  const panel = page.getByRole('complementary', { name: '文件预览', exact: true })
-  await expect(panel.getByRole('list', { name: '文件夹内容', exact: true })).toBeVisible()
-  await panel.getByRole('button', { name: /pixel.gif/ }).click()
-  await expect(panel.getByRole('img', { name: 'pixel.gif', exact: true })).toBeVisible()
-  await expect.poll(() => panel.getByRole('img', { name: 'pixel.gif', exact: true }).evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1)
-  await panel.getByRole('button', { name: '上级文件夹', exact: true }).click()
-  await expect(panel.getByRole('list', { name: '文件夹内容', exact: true })).toBeVisible()
-  expect(context.pages()).toHaveLength(1)
-})
-
-test('streams downloads into the selected file when the browser supports direct saving', async ({ page }) => {
-  await page.getByRole('button', { name: 'AppImage', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '下载文件？', exact: true })
-  await dialog.getByRole('button', { name: '下载', exact: true }).click()
-  await expect.poll(() => page.evaluate(() => (window as any).__fileWriter)).toEqual({ bytes: 600123, correct: true, closed: true, aborted: false, name: 'build.AppImage' })
-  await expect(dialog.getByRole('button', { name: '下载', exact: true })).toBeEnabled()
-})
-
 test('supports code line references and ignores responses after the preview closes', async ({ page }) => {
   await page.getByRole('button', { name: '源代码', exact: true }).click()
   const panel = page.getByRole('complementary', { name: '文件预览', exact: true })

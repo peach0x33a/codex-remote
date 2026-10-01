@@ -18,20 +18,6 @@ describe('installed plugin references', () => {
       .toEqual([{ name: 'ready', path: 'plugin://ready', kind: 'plugin', description: '' }])
   })
 
-  test('uses display metadata and falls back to native names without inventing descriptions', () => {
-    const entries = [
-      plugin('maps@official', { name: 'maps', interface: { displayName: '地图', shortDescription: 'Find a place' } }),
-      plugin('plain', { name: 'Native name' }), plugin('bad-ui', { interface: [] }),
-      plugin('bad-fields', { interface: { displayName: 42, shortDescription: false } }),
-    ]
-    expect(parsePluginMentions({ marketplaces: [{ plugins: entries }] })).toEqual([
-      { name: '地图', path: 'plugin://maps@official', kind: 'plugin', description: 'Find a place' },
-      { name: 'Native name', path: 'plugin://plain', kind: 'plugin', description: '' },
-      { name: 'bad-ui', path: 'plugin://bad-ui', kind: 'plugin', description: '' },
-      { name: 'bad-fields', path: 'plugin://bad-fields', kind: 'plugin', description: '' },
-    ])
-  })
-
   test('deduplicates native plugin IDs across marketplaces while keeping distinct IDs with the same name', () => {
     const result = parsePluginMentions({ marketplaces: [
       { plugins: [plugin('one', { name: 'Shared name' }), plugin('two', { name: 'Shared name' })] },
@@ -43,13 +29,11 @@ describe('installed plugin references', () => {
     ])
   })
 
-  test('skips malformed individual entries and accepts an empty catalog', () => {
-    const invalid = [null, [], 'plugin', {}, plugin(''), plugin('bad-name', { name: null }), plugin('bad-id', { id: 42 })]
-    expect(parsePluginMentions({ marketplaces: [{ plugins: [...invalid, plugin('valid')] }] }).map(value => value.path)).toEqual(['plugin://valid'])
-    expect(parsePluginMentions({ marketplaces: [] })).toEqual([])
-  })
-
-  test.each([undefined, null, [], {}, { marketplaces: {} }, { marketplaces: [null] }, { marketplaces: [{ plugins: {} }] }].map(value => [value] as const))('rejects a malformed plugin response %j', value => {
+  test.each([
+    undefined,
+    { marketplaces: {} },
+    { marketplaces: [{ plugins: {} }] }
+  ].map(value => [value] as const))('rejects a malformed plugin response %j', value => {
     expect(() => parsePluginMentions(value)).toThrow('插件列表响应无效。')
   })
 })
@@ -62,23 +46,6 @@ describe('completion source categories', () => {
     ])
     expect(completionTabs('command')).toEqual([{ id: 'all', label: '全部' }, { id: 'commands', label: '命令' }, { id: 'skills', label: '技能' }])
     expect(completionTabs('skill')).toEqual([{ id: 'skills', label: '技能' }])
-  })
-
-  test('classifies ordinary chats and each explicit agent identity independently', () => {
-    expect(threadMention(thread())).toEqual({ name: 'Previous conversation', path: 'thread://thread-1', kind: 'thread', description: '/project' })
-    for (const fields of [{ agentNickname: 'Scout' }, { agentRole: 'explorer' }, { parentThreadId: 'parent' }]) {
-      expect(threadMention(thread(fields))).toMatchObject({ path: 'thread://thread-1', kind: 'agent' })
-    }
-    expect(threadMention(thread({ agentNickname: null, agentRole: '', parentThreadId: null }))).toMatchObject({ kind: 'thread' })
-  })
-
-  test('uses name, nickname, preview and ID in order and normalizes long labels', () => {
-    expect(threadMention(thread({ name: 'Named', agentNickname: 'Scout' }))?.name).toBe('Named')
-    expect(threadMention(thread({ name: '', agentNickname: 'Scout' }))?.name).toBe('Scout')
-    expect(threadMention(thread({ name: null, agentNickname: null }))?.name).toBe('Previous conversation')
-    expect(threadMention(thread({ preview: '' }))?.name).toBe('thread-1')
-    expect(threadMention(thread({ name: 'Review\n\t this   branch' }))?.name).toBe('Review this branch')
-    expect(threadMention(thread({ name: 'x'.repeat(180) }))?.name).toBe('x'.repeat(160))
   })
 
   test('accepts bounded native thread IDs and rejects unsafe link targets', () => {
@@ -143,15 +110,6 @@ describe('native prompt reference roundtrips', () => {
     expect(toInputs(messageParts(input))).toEqual(input)
   })
 
-  test('restores native mentions recorded without a display marker', () => {
-    const input: MessageContent[] = [{ type: 'mention', name: 'Maps', path: 'plugin://maps' }, { type: 'mention', name: 'Chat', path: 'thread://chat' }]
-    expect(messageParts(input)).toMatchObject([
-      { type: 'mention', name: 'Maps', path: 'plugin://maps', kind: 'plugin' },
-      { type: 'mention', name: 'Chat', path: 'thread://chat', kind: 'thread' },
-    ])
-    expect(messageEditError({ id: 'user', type: 'userMessage', content: input })).toBeUndefined()
-  })
-
   test('retains plain text that only resembles a plugin marker or reference preamble', () => {
     const context = threadReferenceContext(['thread://chat'])
     const input: MessageContent[] = [
@@ -183,17 +141,6 @@ describe('native prompt reference roundtrips', () => {
 })
 
 describe('bounded live thread reference context', () => {
-  test('deduplicates valid thread paths in first-seen order and ignores other source categories', () => {
-    const context = threadReferenceContext([
-      'plugin://maps', 'thread://Beta_2', 'thread://alpha', 'thread://Beta_2', '/project/file.ts',
-      '/skills/review/SKILL.md', 'thread://bad/id', 'thread://', 'thread://' + 'x'.repeat(65), 'https://example.invalid/chat',
-    ])
-    expect(contextIds(context)).toEqual([{ threadId: 'Beta_2' }, { threadId: 'alpha' }])
-    expect(context).toContain('live thread references, not their contents')
-    expect(context).toEndWith('## My request for Codex:\n')
-    expect(threadReferenceContext(['plugin://maps', 'thread://bad/id'])).toBe('')
-    expect(threadReferenceContext([])).toBe('')
-  })
 
   test('accepts 16 distinct thread or agent references, including repeated chips', () => {
     const parts = Array.from({ length: 16 }, (_, index) => mention('thread://chat-' + index, 'Chat ' + index, index % 2 ? 'agent' : 'thread'))
@@ -210,15 +157,4 @@ describe('bounded live thread reference context', () => {
     expect(() => toInputs(parts)).toThrow('一条消息最多引用 16 个会话。')
   })
 
-  test('counts unique threads rather than repeated chips or installed plugin references', () => {
-    const parts = Array.from({ length: 20 }, () => mention('thread://same', 'Same'))
-    const input = toInputs(parts)
-    expect(contextIds(input[0]!.text!)).toEqual([{ threadId: 'same' }])
-    expect(messageParts(input)).toHaveLength(20)
-    const plugins = Array.from({ length: 17 }, (_, index) => mention('plugin://plugin-' + index, 'Plugin ' + index, 'plugin'))
-    const pluginInput = toInputs(plugins)
-    expect(pluginInput).toHaveLength(34)
-    expect(pluginInput.some(part => part.text_elements?.some(element => element.placeholder === THREAD_REFERENCE_MARKER))).toBe(false)
-    expect(messageParts(pluginInput)).toHaveLength(17)
-  })
 })

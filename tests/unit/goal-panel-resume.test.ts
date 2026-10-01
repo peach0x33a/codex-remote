@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, reactive, type App, type Component } from 'vue'
-import type { ThreadGoal, ThreadGoalStatus, ThreadGoalUpdate } from '../../src/lib/thread-goal'
+import type { ThreadGoal, ThreadGoalUpdate } from '../../src/lib/thread-goal'
 
 let GoalPanel: Component
 beforeAll(async () => {
@@ -90,22 +90,7 @@ test('the island resumes an existing paused goal through save, preserving its ob
   expect(view.props.goal).toEqual({ ...initial, status: 'active' })
 })
 
-const otherStatuses: ThreadGoalStatus[] = ['active', 'blocked', 'usageLimited', 'budgetLimited', 'complete']
-test.each(otherStatuses)('does not offer or infer resume for %s, even from a stale paused handler', async status => {
-  const view = mountPanel(), staleClick = view.resume()!.props.onClick
-  view.props.goal = goalFixture({ status })
-  await nextTick()
-  expect(view.resume()).toBeUndefined()
-  staleClick()
-  expect(view.saves).toEqual([])
-})
-
-const guardedStates: [string, Partial<PanelProps>][] = [
-  ['loading', { loading: true }], ['saving', { saving: true }], ['disabled', { disabled: true }],
-  ['unsupported', { supported: false }], ['different current thread', { scopeKey: 'other-thread' }],
-  ['new thread', { scopeKey: 'new' }], ['stale goal from another thread', { goal: goalFixture({ threadId: 'old-thread' }) }],
-]
-test.each(guardedStates)('blocks resume while %s, including direct invocation of an old handler', async (_name, patch) => {
+test.each([['loading', { loading: true }], ['different current thread', { scopeKey: 'other-thread' }]] as [string, Partial<PanelProps>][])('blocks resume while %s, including direct invocation of an old handler', async (_name, patch) => {
   const view = mountPanel(), staleClick = view.resume()!.props.onClick
   Object.assign(view.props, patch)
   await nextTick()
@@ -121,17 +106,6 @@ test('a cleared goal cannot be recreated by a stale resume click', async () => {
   expect(view.resume()).toBeUndefined()
   staleClick()
   expect(view.saves).toEqual([])
-})
-
-test('refresh blocks a same-tick resume before the parent updates loading', async () => {
-  const view = mountPanel()
-  const refresh = view.button('刷新目标')!.props.onClick()
-  view.resume()!.props.onClick()
-  expect(view.refreshes()).toBe(1)
-  expect(view.saves).toEqual([])
-  await refresh
-  await nextTick()
-  expect(view.resume()!.props.disabled).toBe(false)
 })
 
 test('a failed request retains the paused goal and permits an explicit retry', async () => {
@@ -156,16 +130,4 @@ test('releases the same-tick guard when the parent does not start a request', as
   await nextTick()
   await nextTick()
   expect(view.resume()!.props.disabled).toBe(false)
-})
-
-test.each([null, 4096])('does not set or reset token budget %p on resume', tokenBudget => {
-  const view = mountPanel({ goal: goalFixture({ tokenBudget, tokensUsed: 4096 }), scopeKey: undefined })
-  view.resume()!.props.onClick()
-  expect(view.saves).toEqual([{ status: 'active' }])
-})
-
-test('respects the existing summary visibility guard', () => {
-  const view = mountPanel({ showSummary: false })
-  expect(view.resume()).toBeUndefined()
-  expect(view.saves).toEqual([])
 })

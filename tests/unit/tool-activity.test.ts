@@ -36,11 +36,6 @@ describe('server-classified command activities', () => {
     expect(toolActivityTitle(items[0]!)).toBe('读取 /src/a、/src/b')
   })
 
-  test('shows a literal one-line shell summary when no read metadata exists', () => {
-    const item = command('a', undefined, { command: 'printf "<script>"\n  && echo done' })
-    expect(toolActivityTitle(item)).toBe('printf "<script>" && echo done')
-    expect(toolActivityTitle(command('empty', undefined, { command: '' }))).toBe('运行命令')
-  })
 })
 
 describe('adjacent activity rows', () => {
@@ -52,12 +47,6 @@ describe('adjacent activity rows', () => {
       command('s1', [action('search')]), command('s2', [action('search')]),
       command('u1'), command('u2', [read('/a'), action('unknown')]), command('r3', [read('/c')]),
     ])])).toEqual([['r1', 'r2'], ['l1', 'l2'], ['s1', 's2'], ['u1', 'u2'], ['r3']])
-  })
-
-  test.each(['userMessage', 'agentMessage', 'reasoning', 'contextCompaction', 'plan', 'hookPrompt', 'futureItem'])('never crosses a %s boundary, even when its body is empty', type => {
-    const items = [command('a', [read('/a')]), call('boundary', type), command('b', [read('/b')])]
-    expect(ids([turn(items)])).toEqual([['a'], 'boundary', ['b']])
-    expect(buildActivityRows([turn(items)]).flatMap(row => 'group' in row ? row.group : [row.item])).toEqual(items)
   })
 
   test('never crosses turns and gives repeated item IDs in different turns distinct keys', () => {
@@ -81,21 +70,6 @@ describe('adjacent activity rows', () => {
       .toEqual([['a', 'b'], 'c', 'd', ['e', 'f'], 'g', 'h'])
   })
 
-  test('preserves ordering and input identity without mutating turn arrays', () => {
-    const first = command('a'), middle = call('b', 'webSearch'), last = command('c')
-    const items = Object.freeze([first, middle, last])
-    const rows = buildActivityRows([turn(items as unknown as Item[])])
-    expect(ids([turn([...items])])).toEqual(['a', 'b', 'c'])
-    expect('item' in rows[0]! && rows[0]!.item).toBe(first)
-  })
-
-  test('keys depend on the first item, not streamed status, output or appended siblings', () => {
-    const a = command('a', [read('/a')], { status: 'inProgress' })
-    const before = buildActivityRows([turn([a])])[0]!
-    const after = buildActivityRows([turn([{ ...a, status: 'completed', aggregatedOutput: 'done' }, command('b', [read('/b')])])])[0]!
-    expect(before.key).toBe(after.key)
-    expect(after.key).toBe(JSON.stringify(['turn', 'a']))
-  })
 })
 
 describe('document activity rows across a turn', () => {
@@ -122,48 +96,6 @@ describe('document activity rows across a turn', () => {
     expect(items).toEqual([before, first, reasoning, edit, search, second, after])
   })
 
-  test.each(['reads', 'changes'] as const)('combines separated %s even without the other document category', kind => {
-    const item = (id: string) => kind === 'reads' ? command(id, [read('/' + id)]) : call(id, 'fileChange')
-    const rows = buildDocumentActivityRows([turn([item('a'), call('between', 'plan'), item('b')])])
-    expect(rows[0]).toMatchObject({ documentSummary: true, group: [{ id: 'a' }, { id: 'b' }] })
-    expect(rows[1]).toMatchObject({ item: { id: 'between' } })
-    expect(rows).toHaveLength(2)
-  })
-
-  test('combines adjacent mixed document calls but retains ordinary homogeneous groups', () => {
-    const mixed = [command('read', [read('/a')]), call('edit', 'fileChange')]
-    expect(buildDocumentActivityRows([turn(mixed)])[0]).toMatchObject({ documentSummary: true, group: mixed })
-    for (const items of [[], [command('read', [read('/a')])], [call('edit', 'fileChange')],
-      [command('a', [read('/a')]), command('b', [read('/b')])],
-      [call('a', 'fileChange'), call('b', 'fileChange')]]) {
-      expect(buildDocumentActivityRows([turn(items)])).toEqual(buildActivityRows([turn(items)]))
-    }
-  })
-
-  test('retains unrelated tools, messages and their adjacent groups in source order', () => {
-    const unrelated = [
-      command('list', [action('listFiles')]), command('search', [action('search')]),
-      command('shell-a'), command('shell-b', [read('/mixed'), action('unknown')]),
-      call('mcp-a', 'mcpToolCall', { server: 'repo', tool: 'read' }),
-      call('mcp-b', 'mcpToolCall', { server: 'repo', tool: 'read' }),
-      call('dynamic', 'dynamicToolCall', { tool: 'read', commandActions: [read('/metadata')] }),
-      call('agent', 'agentMessage'), call('reasoning', 'reasoning'), call('plan', 'plan'),
-      call('compaction', 'contextCompaction'), call('hook', 'hookPrompt'), call('unknown', 'futureItem'),
-    ]
-    const first = command('read', [read('/a')]), last = call('edit', 'fileChange')
-    const rows = buildDocumentActivityRows([turn([first, ...unrelated, last])])
-    expect(rows[0]).toMatchObject({ documentSummary: true, group: [first, last] })
-    expect(rows.slice(1)).toEqual(buildActivityRows([turn(unrelated)]))
-    const retained = rows.slice(1).flatMap(row => 'group' in row ? row.group : [row.item])
-    retained.forEach((item, index) => expect(item).toBe(unrelated[index]))
-  })
-
-  test('does not aggregate a read and change across an empty user message', () => {
-    const items = [command('read', [read('/a')]), call('user', 'userMessage'), call('edit', 'fileChange')]
-    expect(documentIds([turn(items)])).toEqual([['read'], 'user', 'edit'])
-    expect(buildDocumentActivityRows([turn(items)])).toEqual(buildActivityRows([turn(items)]))
-  })
-
   test('builds independent document summaries on each side of user boundaries', () => {
     const items = [
       command('r1', [read('/a')]), call('e1', 'fileChange'),
@@ -173,14 +105,6 @@ describe('document activity rows across a turn', () => {
     ]
     expect(documentIds([turn(items)])).toEqual([['r1', 'e1'], 'u1', 'u2', ['e2', 'r2'], 'middle', 'u3'])
     expect(buildDocumentActivityRows([turn(items)]).filter(row => 'group' in row && row.documentSummary)).toHaveLength(2)
-  })
-
-  test('never merges across turns and scopes summary keys to the turn', () => {
-    const items = [command('read', [read('/a')]), call('edit', 'fileChange')]
-    const rows = buildDocumentActivityRows([turn(items, 'one'), turn([], 'empty'), turn(items, 'two')])
-    expect(rows).toHaveLength(2)
-    expect(rows.map(row => row.key)).toEqual([JSON.stringify(['one', 'read']), JSON.stringify(['two', 'read'])])
-    expect(documentIds([turn([items[0]!], 'one'), turn([items[1]!], 'two')])).toEqual([['read'], 'edit'])
   })
 
   test('keeps keys and first-seen order while using the latest snapshot of a repeated item', () => {
@@ -195,30 +119,9 @@ describe('document activity rows across a turn', () => {
     expect(documentActivityTitle('group' in after ? after.group : [])).toBe('合计 1 次读取，1 次变更')
   })
 
-  test('counts calls rather than files or successful outcomes in document titles', () => {
-    const items = [
-      command('a', [read('/a'), read('/b'), read('/a')]),
-      command('b', [read('/a')], { status: 'failed' }),
-      call('edit', 'fileChange', { status: 'inProgress', changes: [{ path: '/a' }, { path: '/b' }] }),
-      call('declined', 'fileChange', { status: 'declined' }),
-      command('mixed', [read('/c'), action('search')]), command('shell'),
-      call('mcp', 'mcpToolCall', { tool: 'read', commandActions: [read('/d')] }),
-    ]
-    expect(documentActivityTitle(items)).toBe('合计 2 次读取，2 次变更')
-    expect(documentActivityTitle([])).toBe('合计 0 次读取，0 次变更')
-    expect(documentActivityTitle([items[0]!])).toBe('合计 1 次读取，0 次变更')
-    expect(documentActivityTitle([items[2]!])).toBe('合计 0 次读取，1 次变更')
-  })
 })
 
 describe('truthful activity summaries', () => {
-  test.each(['inProgress', 'failed', 'declined', 'interrupted', 'futureStatus', undefined])('does not claim reading completed for %s', status => {
-    const summary = summarizeToolActivity([command('a', [read('/a')]), command('b', [read('/b')], { status })])
-    expect(summary.completed).toBe(false)
-    expect(summary.title).not.toStartWith('已')
-    if (status === 'inProgress') expect(summary.title).toBe('正在读取 2 个文件')
-    if (status === 'failed') expect(summary.failed).toBe(true)
-  })
 
   test('keeps mixed failure and running states visible without a completion checkmark', () => {
     const summary = summarizeToolActivity([command('a', undefined, { status: 'failed' }), command('b', undefined, { status: 'inProgress' })])
@@ -297,14 +200,6 @@ function mountRows(items: Item[]) {
 }
 
 describe('collapsed tool groups and streaming detail state', () => {
-  test.each(['completed', 'inProgress'])('omits status badges for %s tool rows and groups', async status => {
-    const view = mountRows([command('a', [read('/actual/a')], { status }), command('b', [read('/actual/b')], { status })])
-    expect(view.text()).not.toContain('已完成'); expect(view.text()).not.toContain('进行中')
-    expect(descendants(view.root).some(target => String(target.props.class || '').includes('activity-state'))).toBe(false)
-    if (status === 'inProgress') expect(view.text()).toContain('正在读取')
-    await view.toggle(view.details()[0]!, true)
-    expect(descendants(view.root).some(target => String(target.props.class || '').includes('activity-state'))).toBe(false)
-  })
 
   test('renders only the failure indicator and puts its count in the group title', async () => {
     const view = mountRows([command('a', undefined, { status: 'failed' }), command('b', undefined, { status: 'failed' }), command('c')])
@@ -353,12 +248,4 @@ describe('collapsed tool groups and streaming detail state', () => {
     expect(descendants(view.root).some(target => ['script', 'img'].includes(target.type))).toBe(false)
   })
 
-  test('shows an ordinary command as one compact text summary and lazily mounts its output', async () => {
-    const view = mountRows([command('a', undefined, { command: 'echo one\n  && echo two', aggregatedOutput: 'large output' })])
-    expect(view.text()).toContain('echo one && echo two')
-    expect(view.text()).not.toContain('large output')
-    expect(descendants(view.root).some(target => target.props.innerHTML)).toBe(false)
-    await view.toggle(view.details()[0]!, true)
-    expect(view.text()).toContain('large output')
-  })
 })

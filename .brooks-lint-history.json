@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-10-01",
+    "mode": "Test Quality Review",
+    "score": 85,
+    "findings": {
+      "critical": 0,
+      "warning": 3,
+      "suggestion": 0
+    },
+    "scope": "Pre-pruning merged master: tests/unit, tests/integration, tests/e2e"
+  }
+]

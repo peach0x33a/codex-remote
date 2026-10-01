@@ -6,8 +6,6 @@ import { useCodex } from '../../src/composables/useCodex'
 import { RpcClient, RpcError } from '../../src/lib/rpc'
 import { promptText } from '../../src/lib/prompt'
 import { completedTurnDurations } from '../../src/lib/turn-duration'
-import { STORAGE_KEY } from '../../src/lib/profiles'
-import { UI_PREFERENCES_KEY } from '../../src/lib/ui-preferences'
 import type { ThreadGoal } from '../../src/lib/thread-goal'
 import type { ConnectionProfile, Item, MessageContent, Thread, Turn } from '../../shared/protocol'
 
@@ -178,87 +176,6 @@ afterEach(async () => {
   for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name) }
   originals.clear()
 })
-describe('persisted connection credentials', () => {
-  function credentialBridge() {
-    const original = globalThis.fetch
-    const calls: { method: string; body: Record<string, string> }[] = []
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (url === '/api/profiles' && init?.method === 'POST') calls.push({ method: 'POST', body: JSON.parse(String(init.body)) })
-      if (url === '/api/connect') calls.push({ method: 'CONNECT', body: JSON.parse(String(init?.body)) })
-      return original(url, init)
-    }) as typeof fetch
-    return { calls, saved: profileApi.credentials, failSave: () => { profileApi.failSave = true }, failDelete: () => { profileApi.failDelete = true } }
-  }
-  const details = { name: 'Authenticated device', endpoint: 'wss://private.example/codex', cwd: '/work', token: 'test-private-token', rememberToken: true }
-  test('stores only a credential reference and reuses it after a fresh runtime', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details)
-    expect(profile.credentialId).toMatch(/^[a-f0-9]{64}$/)
-    expect(bridge.saved.get(profile.credentialId!)?.token).toBe(details.token)
-    expect(state.tokenFor(profile.id)).toBe('')
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
-    await state.connect(profile)
-    expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: profile.endpoint, credentialId: profile.credentialId! })
-    app.unmount(); mountRuntime(); await state.start(); await settle()
-    const restored = state.profiles.value.find(item => item.id === profile.id)!
-    expect(restored.credentialId).toBe(profile.credentialId)
-    await state.connect(restored)
-    expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: profile.endpoint, credentialId: profile.credentialId! })
-  })
-  test('renaming with a blank token preserves the saved secret without reading it back', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details), mark = bridge.calls.length
-    const renamed = await state.saveProfile({ ...details, id: profile.id, name: 'Renamed', token: '' })
-    expect(renamed.credentialId).toBe(profile.credentialId)
-    expect(bridge.calls.slice(mark).filter(call => call.method === 'POST')).toHaveLength(1)
-    expect(bridge.saved.size).toBe(1)
-  })
-  test('rotation removes the old credential and explicit clearing removes the saved reference', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details)
-    const replacement = await state.saveProfile({ ...details, id: profile.id, token: 'replacement-token' })
-    expect(replacement.credentialId).not.toBe(profile.credentialId)
-    expect(bridge.saved.has(profile.credentialId!)).toBe(false)
-    const cleared = await state.saveProfile({ ...details, id: profile.id, token: '', clearToken: true })
-    expect(cleared.credentialId).toBeUndefined()
-    expect(bridge.saved.size).toBe(0)
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
-  })
-  test('opting out keeps the token in memory only and clears an old saved secret', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details)
-    const temporary = await state.saveProfile({ ...details, id: profile.id, rememberToken: false })
-    expect(temporary.credentialId).toBeUndefined(); expect(bridge.saved.size).toBe(0)
-    expect(state.tokenFor(profile.id)).toBe(details.token)
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
-    await state.connect(temporary)
-    expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: temporary.endpoint, token: details.token })
-    app.unmount(); mountRuntime(); await state.start(); await settle()
-    expect(state.tokenFor(profile.id)).toBe('')
-  })
-  test('removing a device deletes its server credential before reporting completion', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details)
-    expect(await state.removeProfile(profile.id)).toBe(true)
-    expect(bridge.saved.size).toBe(0)
-    expect(state.profiles.value.some(item => item.id === profile.id)).toBe(false)
-  })
-  test('rejected secret persistence leaves the existing device unchanged', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details)
-    bridge.failSave()
-    await expect(state.saveProfile({ ...details, id: profile.id, token: 'new-secret' })).rejects.toThrow('保存失败')
-    expect(state.profiles.value.find(item => item.id === profile.id)?.credentialId).toBe(profile.credentialId)
-    expect(profileApi.snapshot.profiles.find(item => item.id === profile.id)?.credentialId).toBe(profile.credentialId)
-  })
-  test('failed deletion preserves the device record and lets the user retry', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details)
-    bridge.failDelete()
-    await expect(state.removeProfile(profile.id)).rejects.toThrow('删除失败')
-    expect(state.profiles.value.some(item => item.id === profile.id)).toBe(true)
-    expect(profileApi.snapshot.profiles.find(item => item.id === profile.id)?.credentialId).toBe(profile.credentialId)
-  })
-  test('a saved secret cannot silently move to a changed endpoint', async () => {
-    const bridge = credentialBridge(), profile = await state.saveProfile(details), mark = bridge.calls.length
-    await expect(state.saveProfile({ ...details, id: profile.id, endpoint: 'wss://different.example', token: '' })).rejects.toThrow('地址已更改')
-    expect(bridge.calls.slice(mark).filter(call => call.method === 'POST')).toHaveLength(1)
-    expect(bridge.saved.get(profile.credentialId!)?.endpoint).toBe(profile.endpoint)
-  })
-})
 
 describe('native conversation menu actions', () => {
   test('rename updates metadata only after the server acknowledgement', async () => {
@@ -296,59 +213,7 @@ function beginReasoning() {
   socket.emit('item/reasoning/textDelta', { threadId: 'a', turnId: turn.id, itemId: 'thought', contentIndex: 0, delta: 'Checking the task.' })
   return turn
 }
-describe('saved-device auto-connect', () => {
-  function remountSaved(enabled?: boolean) {
-    app.unmount()
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, selectedId: primaryDevice.id, profiles: [primaryDevice] }))
-    localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(enabled === undefined ? {} : { autoConnect: enabled }))
-    requests = []; mountRuntime()
-  }
-  test.each([true, undefined])('automatically connects the saved device once when preference is %s', async enabled => {
-    remountSaved(enabled)
-    await eventually(() => state.connected.value, 'saved device should connect after session authentication')
-    expect(state.selectedId.value).toBe(primaryDevice.id)
-    window.dispatchEvent(new Event('online')); await settle()
-    expect(requests.filter(request => request.method === 'initialize')).toHaveLength(1)
-    expect(requests.some(request => request.method === 'turn/start')).toBe(false)
-  })
-  test('disabled auto-connect preserves saved devices and permits manual connection', async () => {
-    remountSaved(false); await state.start(); await settle()
-    expect(state.status.value).toBe('disconnected')
-    expect(state.profiles.value).toHaveLength(1)
-    expect(requests).toHaveLength(0)
-    await state.connect(state.selected.value!)
-    expect(state.connected.value).toBe(true)
-  })
-  test('manual disconnect stays disconnected when an online event rechecks authentication', async () => {
-    remountSaved(true)
-    await eventually(() => state.connected.value, 'saved device should connect')
-    state.disconnect(); const mark = requests.length
-    window.dispatchEvent(new Event('online')); await settle()
-    expect(state.status.value).toBe('disconnected')
-    expect(requests.slice(mark)).toHaveLength(0)
-  })
-  test('waits for login before auto-connecting', async () => {
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (url: string, init?: RequestInit) => url === '/api/session'
-      ? Response.json(init?.method === 'POST' ? {} : { authenticated: false, requiresKey: true })
-      : originalFetch(url, init)) as typeof fetch
-    remountSaved(true); await settle()
-    expect(state.authenticated.value).toBe(false)
-    expect(requests).toHaveLength(0)
-    await state.login('test-access-key')
-    await eventually(() => state.connected.value, 'successful login should allow one automatic connection')
-    expect(requests.filter(request => request.method === 'initialize')).toHaveLength(1)
-  })
-  test('a late startup session check does not override a manual disconnect', async () => {
-    const originalFetch = globalThis.fetch
-    let release!: (value: Response) => void
-    globalThis.fetch = (async (url: string, init?: RequestInit) => url === '/api/session' ? new Promise<Response>(resolve => { release = resolve }) : originalFetch(url, init)) as typeof fetch
-    remountSaved(true); state.disconnect()
-    release(Response.json({ authenticated: true, requiresKey: false })); await settle()
-    expect(state.status.value).toBe('disconnected')
-    expect(requests).toHaveLength(0)
-  })
-})
+
 describe('archived thread service through the real RPC pipeline', () => {
   test('an earlier archive notification does not override a later successful restore ack', async () => {
     await state.archive('b')
@@ -708,31 +573,7 @@ describe('runtime retry, timing, and projects without network ports', () => {
     socket.emit('error', { threadId: 'a', turnId: turn.id, willRetry: false, error: { message: 'Final failure' } })
     expect(state.error.value).toBe(''); expect(state.currentTurnFailure.value).toBe('Final failure')
   })
-  test('retry status includes upstream details instead of only Reconnecting', async () => {
-    const turn = beginReasoning(); await settle()
-    socket.emit('error', { threadId: 'a', turnId: turn.id, willRetry: true, error: { message: 'Reconnecting... 1/5', additionalDetails: '429 Too Many Requests, request id: req-42' } })
-    await settle()
-    expect(state.reconnectStatus.value).toBe('429 Too Many Requests, request id: req-42 · Reconnecting... 1/5')
-    expect(state.error.value).toBe(''); expect(state.currentTurnFailure.value).toBe('')
-  })
-  test('thinking time advances and stops on turn completion', async () => {
-    const turn = beginReasoning(); await settle()
-    const initial = state.thinkingElapsed.value
-    expect(initial).toBeDefined()
-    setSystemTime(Date.now() + 3500); await Bun.sleep(1100)
-    expect(state.thinkingElapsed.value!).toBeGreaterThan(initial!)
-    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status: 'completed', items: [] } }); await settle()
-    expect(state.thinkingElapsed.value).toBeUndefined()
-    const item = state.items.value.find(item => item.id === 'thought')!
-    expect(item.completedAtMs).toBeGreaterThan(item.startedAtMs!)
-  })
-  test('preserves actual history timestamps without starting a new timer', async () => {
-    const item: Item = { id: 'old-thought', type: 'reasoning', summary: [], content: ['Saved summary.'], startedAtMs: 1000, completedAtMs: 7000 }
-    store.get('b')!.turns = [{ id: 'old-turn', status: 'completed', items: [item] }]
-    await state.openThread('b'); await settle()
-    expect(state.items.value[0]).toMatchObject({ startedAtMs: 1000, completedAtMs: 7000 })
-    expect(state.thinkingElapsed.value).toBeUndefined()
-  })
+
   test('uses selected cwd for a new thread and keeps the project catalog updated', async () => {
     expect(state.projectThreads.value).toHaveLength(2)
     state.newThread(); state.workingDirectory.value = '/chosen/project'
@@ -1300,8 +1141,8 @@ describe('thread goals through the real RPC pipeline', () => {
   })
 
   test.each([
-    [-32601, 'Method not found'], [-32600, 'goals feature is disabled'],
-    [-32600, 'unknown variant `thread/goal/get`, expected initialize'],
+    [-32601, 'Method not found'],
+    [-32600, 'goals feature is disabled']
   ])('unsupported get %s reports a goal error and does not break conversation loading', async (code, message) => {
     archiveTransport = (method, _p, _reply, fail) => {
       if (method !== 'thread/goal/get') return false
@@ -1445,7 +1286,11 @@ describe('thread goals through the real RPC pipeline', () => {
     expect(requests.slice(mark).some(call => call.method === 'turn/start')).toBe(false)
   })
 
-  test.each(['paused', 'active', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const)('status %s is sent unchanged without synthetic turn input', async status => {
+  test.each([
+    'paused',
+    'active',
+    'complete'
+  ] as const)('status %s is sent unchanged without synthetic turn input', async status => {
     publish(goalFixture())
     expect(await state.setGoal({ status })).toBe(true)
     expect(goalCalls().at(-1)?.params).toEqual({ threadId: 'a', status })
@@ -1574,7 +1419,12 @@ describe('file search scoped to the current remote directory', () => {
     await expect(state.searchFiles('src')).rejects.toThrow('工作目录')
     expect(requests.slice(mark)).toHaveLength(0)
   })
-  test.each([{ root: '/another device' }, { path: '../secret' }, { path: '/absolute' }, { path: 'a\\..\\secret' }, { score: '10' }, { indices: [-1] }, { match_type: 'unknown' }])('rejects invalid or escaped results %j', async patch => {
+  test.each([
+    { root: '/another device' },
+    { path: '../secret' },
+    { path: 'a\\..\\secret' },
+    { indices: [-1] }
+  ])('rejects invalid or escaped results %j', async patch => {
     archiveTransport = (method, _p, reply) => { if (method !== 'fuzzyFileSearch') return false; reply({ files: [file(patch)] }); return true }
     await expect(state.searchFiles('src')).rejects.toThrow('响应无效')
   })
@@ -1743,7 +1593,10 @@ describe('queue dispatch parity with installed Codex', () => {
     await eventually(() => starts().length === 3, 'the next completion should still dispatch normally')
   })
 
-  test.each(['completed', 'failed', 'interrupted'])('native %s lifecycle never invokes browser dispatch', async status => {
+  test.each([
+    'completed',
+    'interrupted'
+  ])('native %s lifecycle never invokes browser dispatch', async status => {
     nativeQueueEnabled = true
     await state.connect(primaryDevice, true)
     await eventually(() => state.serverQueueSupported.value, 'native queue should be supported')
@@ -1994,7 +1847,9 @@ describe('explicit steer versus queued input', () => {
     expect(requests.filter(call => call.method === 'thread/queue/add')).toHaveLength(1)
     expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
   })
-  test.each(['cannot steer a review turn', 'no active turn to steer', 'expected turn id mismatch'])('unstructured rejection %s does not silently queue or retry', async message => {
+  test.each([
+    'expected turn id mismatch'
+  ])('unstructured rejection %s does not silently queue or retry', async message => {
     await running()
     archiveTransport = (method, _params, _reply, fail) => { if (method !== 'turn/steer') return false; fail(-32602, message); return true }
     const mark = requests.length
@@ -2108,3 +1963,16 @@ describe('turn failures stay with their conversation', () => {
     expect(state.currentTurnFailure.value).toBe('')
   })
 })
+
+// Preserve completion timing separately from formatting permutations.
+test('thinking time advances and stops on turn completion', async () => {
+    const turn = beginReasoning(); await settle()
+    const initial = state.thinkingElapsed.value
+    expect(initial).toBeDefined()
+    setSystemTime(Date.now() + 3500); await Bun.sleep(1100)
+    expect(state.thinkingElapsed.value!).toBeGreaterThan(initial!)
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status: 'completed', items: [] } }); await settle()
+    expect(state.thinkingElapsed.value).toBeUndefined()
+    const item = state.items.value.find(item => item.id === 'thought')!
+    expect(item.completedAtMs).toBeGreaterThan(item.startedAtMs!)
+  })

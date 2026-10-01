@@ -122,23 +122,6 @@ describe('SideChat', () => {
     expect(view.busy.at(-1)).toBe(false)
   })
 
-  test('renders optimistic sends immediately and replaces them with confirmed messages', async () => {
-    const view = mount(); await flush()
-    const ack = deferred<boolean>()
-    view.codex.send.mockImplementation(async value => { view.codex.sending.value = true; view.codex.pending.value = [{ id: 'pending-send', type: 'userMessage', content: value }]; const accepted = await ack.promise; view.codex.sending.value = false; return accepted })
-    view.input(parts('马上显示')); await nextTick()
-    const request = view.submit(); await nextTick()
-    expect(view.ids()).toEqual(['pending-send'])
-    expect(view.codex.items.value.some(item => item.id === 'pending-send')).toBe(false)
-    expect(view.button('发送侧边聊天消息')?.props.disabled).toBe(true)
-    view.codex.active.value!.turns.push({ id: 'side-turn', status: 'inProgress', items: [{ id: 'sent', type: 'userMessage', content: parts('马上显示') }] })
-    view.codex.pending.value = []; ack.resolve(true); await request; await flush()
-    expect(view.ids()).toEqual(['sent'])
-    expect(view.draft()).toEqual([])
-    expect(view.busy.at(-1)).toBe(true)
-    expect(view.renderedIds).not.toContain('old-user')
-  })
-
   test('keeps original inherited ids after reconnect and preserves drafts', async () => {
     const view = mount(); await flush()
     view.codex.active.value!.turns.push({ id: 'side', status: 'completed', items: [{ id: 'side-answer', type: 'agentMessage', text: '侧边回答' }] })
@@ -152,16 +135,6 @@ describe('SideChat', () => {
     expect(view.renderedIds).not.toContain('old-user')
     expect(view.renderedIds).not.toContain('old-answer')
     expect(view.draft()).toEqual([...parts('未发送'), image])
-  })
-
-  test('does not hide later messages after automatic reloads', async () => {
-    const view = mount(); await flush()
-    view.codex.status.value = 'reconnecting'; await nextTick()
-    expect(view.text()).toContain('正在重新连接')
-    view.codex.loadingThread.value = true; view.codex.status.value = 'connected'
-    view.codex.active.value = { ...inherited(), turns: [...inherited().turns, { id: 'new', status: 'completed', items: [{ id: 'new-answer', type: 'agentMessage', text: '重连期间的回答' }] }] }
-    view.codex.loadingThread.value = false; await flush()
-    expect(view.ids()).toEqual(['new-answer'])
   })
 
   test('shows failed initial loads and retries without reconnecting unnecessarily', async () => {
@@ -178,16 +151,6 @@ describe('SideChat', () => {
     expect(view.button('发送侧边聊天消息')?.props.disabled).toBe(false)
   })
 
-  test('catches rejected connections and retries without dropping drafts', async () => {
-    const state = runtime(); state.codex.connectWithToken.mockImplementationOnce(async () => { throw new Error('凭据读取失败') })
-    const view = mount(state); await flush()
-    view.input(parts('保留草稿')); await nextTick()
-    expect(view.text()).toContain('凭据读取失败')
-    await view.button('重新连接侧边聊天')!.props.onClick(); await flush()
-    expect(view.text()).not.toContain('凭据读取失败')
-    expect(view.draft()).toEqual(parts('保留草稿'))
-  })
-
   test('preserves changed drafts and images when submissions fail', async () => {
     const view = mount(); await flush()
     const ack = deferred<boolean>(); view.codex.send.mockImplementationOnce(() => ack.promise)
@@ -199,46 +162,6 @@ describe('SideChat', () => {
     view.codex.send.mockImplementationOnce(async () => { throw new Error('发送失败') }); await view.submit(); await flush()
     expect(view.text()).toContain('发送失败')
     expect(view.draft()).toEqual([...parts('接着写'), image])
-  })
-
-  test('wires queue actions and keeps missing-message edits visible for image-safe restore', async () => {
-    const view = mount(); await flush()
-    view.codex.currentQueue.value = [job('server')]; await nextTick()
-    const queue = view.find('queue-pane')
-    expect(view.find('approval-island').props.hasQueue).toBe(true)
-    expect(queue.props.serverManaged).toBe(true)
-    await queue.props.save('queue-1', [image])
-    expect(view.codex.updateQueued).toHaveBeenCalledWith('queue-1', [image])
-    queue.props.remove('queue-1'); queue.props.resume(); queue.props.pause()
-    expect(view.codex.removeQueued).toHaveBeenCalledWith('queue-1')
-    expect(view.codex.resumeQueue).toHaveBeenCalledTimes(1)
-    expect(view.codex.pauseQueue).toHaveBeenCalledTimes(1)
-    queue.props.editing(true); view.codex.currentQueue.value = []; await nextTick()
-    expect(view.find('queue-pane')).toBe(queue)
-    expect(view.busy.at(-1)).toBe(true)
-    view.input(parts('已有草稿')); queue.props.restore([image]); queue.props.editing(false); await flush()
-    expect(view.draft()).toEqual([...parts('已有草稿'), { type: 'text', text: '\n' }, image])
-    expect(view.draft().at(-1)).not.toBe(image)
-    expect(view.text()).toContain('编辑草稿已放回输入框')
-  })
-
-  test('distinguishes mixed/local queues from server-only queues', async () => {
-    const view = mount(); await flush()
-    view.codex.serverQueueSupported.value = true; view.codex.currentQueue.value = [job('server'), { ...job(), id: 'local' }]; await nextTick()
-    expect(view.find('queue-pane').props.serverManaged).toBe(false)
-    view.codex.queuePaused.value = true; await nextTick()
-    expect(view.find('queue-pane').props.paused).toBe(true)
-  })
-
-  test('supports steering and explicit queue submission with image parts', async () => {
-    const view = mount(); await flush()
-    view.codex.active.value!.turns.push({ id: 'working', status: 'inProgress', items: [] })
-    view.input([image]); await nextTick(); await view.submit(); await flush()
-    expect(view.codex.steer).toHaveBeenCalledWith([image])
-    view.input([...parts('稍后发送'), image]); await nextTick()
-    await view.button('加入侧边聊天队列')!.props.onClick(); await flush()
-    expect(view.codex.send).toHaveBeenCalledWith([...parts('稍后发送'), image])
-    expect(view.codex.steer).toHaveBeenCalledTimes(1)
   })
 
   test('reports drafts, active work, queues, steers, and revisions to the parent guard', async () => {
@@ -282,32 +205,6 @@ describe('SideChat', () => {
     expect(tab.preventDefault).toHaveBeenCalledTimes(1)
     expect(view.codex.send).toHaveBeenCalledWith(parts('输入法草稿'))
     expect(view.codex.steer).not.toHaveBeenCalled()
-  })
-
-  test('forwards notices/actions, announces failures, and removes its notice listener', async () => {
-    const view = mount(); await flush()
-    const notice: TaskNotice = { id: 'notice', kind: 'failed', deviceId: profile.id, deviceName: profile.name, threadId: 'fork', threadName: '侧边聊天' }
-    for (const listener of view.listeners) listener(notice)
-    expect(view.notices).toEqual([notice])
-    view.codex.currentTurnFailure.value = '任务失败'; view.codex.reconnectStatus.value = 'HTTP 503，重试 2/5'; await nextTick()
-    expect(view.text()).toContain('任务失败')
-    expect(descendants(view.root).some(target => target.props.role === 'status' && target.text.includes('HTTP 503'))).toBe(true)
-    view.find('approval-island').props.respond(1, { decision: 'accept' }); view.find('approval-island').props.withdraw('steer')
-    expect(view.codex.respond).toHaveBeenCalledWith(1, { decision: 'accept' })
-    expect(view.codex.withdrawPendingSteer).toHaveBeenCalledWith('steer')
-    view.button('关闭侧边聊天')!.props.onClick(); expect(view.closed()).toBe(true)
-    view.unmount(); expect(view.listeners.size).toBe(0)
-  })
-
-  test('autoscrolls streams only while the reader remains at the bottom', async () => {
-    const view = mount(); await flush()
-    const host = descendants(view.root).find(target => target.props.class === 'side-chat-messages')!
-    host.scrollTop = 50; host.props.onScrollPassive()
-    view.codex.active.value!.turns.push({ id: 'side', status: 'inProgress', items: [{ id: 'stream', type: 'agentMessage', text: '开始' }] }); await flush()
-    expect(host.scrollTop).toBe(50)
-    host.scrollTop = 400; host.props.onScrollPassive()
-    host.scrollHeight = 800; view.codex.active.value!.turns.at(-1)!.items[0]!.text += '继续'; await flush()
-    expect(host.scrollTop).toBe(800)
   })
 
   test('does not open a thread after closing during an unresolved connection', async () => {

@@ -1,15 +1,15 @@
 import * as fs from 'node:fs/promises'
 import { CredentialStore } from '../../server/credentials'
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { createBridge } from '../../server/bridge'
 
 const origin = 'https://app.example'
 const accessKey = 'credentials-test-access-key'
 const endpoint = 'wss://daemon.example/rpc'
-const unknownId = 'f'.repeat(64)
+
 const roots: string[] = []
 const apps: ReturnType<typeof createBridge>[] = []
 type Upgrade = { ticket: { endpoint: string; token: string; session: string; expires: number } }

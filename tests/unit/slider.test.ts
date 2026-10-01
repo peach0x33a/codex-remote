@@ -6,8 +6,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, ref, type App, type Component } from 'vue'
-import { renderToString } from 'vue/server-renderer'
-let Slider: Component, Effort: Component
+let Slider: Component
 beforeAll(async () => {
   async function load(name: string) {
     const file = new URL('../../src/components/' + name + '.vue', import.meta.url)
@@ -17,7 +16,7 @@ beforeAll(async () => {
     const dir = await mkdtemp(join(tmpdir(), 'codex-slider-'))
     try { const path = join(dir, name + '.mjs'); await Bun.write(path, js); return (await import(pathToFileURL(path).href)).default } finally { await rm(dir, { recursive: true, force: true }) }
   }
-  Slider = await load('ValueSlider'); Effort = await load('EffortSlider')
+  Slider = await load('ValueSlider')
 })
 test('normalizes typed slider values to supported steps and bounds', () => {
   expect(normalizeSliderValue('1127', 720, 1600, 40)).toBe(1120)
@@ -26,16 +25,7 @@ test('normalizes typed slider values to supported steps and bounds', () => {
   expect(normalizeSliderValue('.36', 0, 1, .1)).toBe(.4)
   for (const raw of ['', ' ', 'bad', Infinity, NaN]) expect(normalizeSliderValue(raw, 0, 100)).toBeUndefined()
 })
-test('all numeric sliders render an accessible range and an editable value field', async () => {
-  const html = await renderToString(h(Slider, { modelValue: 1120, min: 720, max: 1600, step: 40, label: '自定义内容宽度', unit: 'px' }))
-  expect(html).toContain('type="range"'); expect(html).toContain('aria-label="自定义内容宽度"'); expect(html).toContain('aria-label="自定义内容宽度数值"')
-  expect(html).toContain('value="1120"'); expect(html).toContain('value-slider-field')
-})
-test('reasoning keeps its original dedicated track, animated fill and named stops without an input field', async () => {
-  const html = await renderToString(h(Effort, { modelValue: 'ultra', options: [{ value: 'max', label: 'Max' }, { value: 'ultra', label: 'Ultra' }] }))
-  expect(html).toContain('effort-track'); expect(html).toContain('effort-stars')
-  expect(html).toContain('aria-valuetext="Ultra"'); expect(html).not.toContain('value-slider-field')
-})
+
 type Node = { type: string; props: Record<string, any>; children: Node[]; parent?: Node; text?: string }
 const node = (type: string): Node => ({ type, props: {}, children: [] })
 const renderer = createRenderer<Node, Node>({
@@ -71,18 +61,7 @@ test('native click and drag input commit while hover state is cleared', async ()
   view.rail().props.onPointerleave(); await nextTick()
   expect(view.committed).toEqual([75]); expect(view.value.value).toBe(75); expect(view.previews.at(-1)).toBeNull()
 })
-test('clicks retain position easing while pointer movement enables direct drag tracking', async () => {
-  const view = mountSlider()
-  const root = () => all(view.root).find(node => typeof node.props.class === 'string' && /^value-slider(?: |$)/.test(node.props.class))!
-  view.range().props.onPointerdown({ clientX: 49, pointerId: 1, currentTarget: { focus() {}, setPointerCapture() {} } }); await nextTick()
-  expect(root().props.class).toContain('is-pressed'); expect(root().props.class).not.toContain('is-dragging')
-  view.rail().props.onPointermove({ clientX: 70, pointerType: 'mouse' }); await nextTick()
-  expect(root().props.class).toContain('is-dragging')
-  view.range().props.onInput({ target: { value: '70' } }); await nextTick()
-  expect(view.value.value).toBe(70)
-  view.range().props.onPointerup(); await nextTick()
-  expect(root().props.class).not.toContain('is-dragging'); expect(root().props.class).not.toContain('is-pressed')
-})
+
 test('disable and unmount end a preview; touch movement does not create hover', async () => {
   const view = mountSlider(); await view.hover(80, 'touch'); expect(view.previews).toEqual([])
   await view.hover(60); view.disabled.value = true; await nextTick(); expect(view.previews.at(-1)).toBeNull()

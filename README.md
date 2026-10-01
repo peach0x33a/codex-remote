@@ -207,6 +207,15 @@ bunx playwright install chromium
 bun run test:e2e
 ~~~
 
+默认测试套件保留 634 项（609 单元、25 集成），浏览器套件保留 78 项（桌面/手机各 39）。重点保护协议状态、认证/凭据、跨设备隔离、队列、文件读写及主要交互；相同边界不再反复展开大量展示参数。
+
+浏览器测试使用独立的 loopback mock bridge 和 `.local/e2e-credentials.json`，不会继承生产 `.env` 中的访问密码或凭据路径。如果主目录正在运行服务，可以使用独立构建目录避免覆盖线上静态文件：
+
+~~~sh
+bun ./node_modules/vite/bin/vite.js build --outDir .local/e2e-dist --emptyOutDir
+E2E_STATIC_DIR=.local/e2e-dist bun run test:e2e
+~~~
+
 如果已有 Chromium，可以设置 CHROMIUM_PATH；测试端口默认 14731 和 14501，可用 E2E_PORT / MOCK_PORT 更改。模拟 daemon 仅存在于 tests/，不会打包到生产代码中。
 
 可对一个明确指定的真实 daemon 做只读协议验证：

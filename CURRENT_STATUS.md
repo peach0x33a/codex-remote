@@ -3,18 +3,20 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 
-## Current work
-The device-sync branch is being merged with the independently completed responsive file-preview and Copy Session ID changes. Both sets of production changes are retained. Test-suite reduction to approximately 600 effective cases is in progress; final counts and verification will replace this section when complete.
+## Latest delivery
+Device synchronization work is merged with the parallel file-preview, responsive layout and Copy Session ID changes. Merge commit: d9451d5. The default test suite is reduced from 1,017 to 634 cases (609 unit + all 25 integration); browser tests are reduced from 246 to 78 desktop/mobile cases. Details: task-history/2026-10-01-main-merge-test-pruning.md.
 
-## Preserved deliveries
-- Server-owned device metadata and credentials, automatic browser migration, LAN HTTP UUID support, native subAgentActivity cards, and ~/codex-remote/no-project defaults: task-history/2026-10-01-server-device-sync.md.
-- Responsive island layout, device-aware file previews/downloads, and Copy Session ID: task-history/2026-10-01-responsive-files-session-menu.md.
-- Previous composer, goal, queue, notification and appearance work remains included; see earlier task-history entries.
+## Preserved features
+- Server-owned shared device profiles/credentials, legacy browser migration and independent device runtimes.
+- LAN HTTP UUID support, subAgentActivity cards, and ~/codex-remote/no-project defaults.
+- Responsive island, device-aware file preview/downloads, Copy Session ID, side chat, native goals, queue controls and notifications.
+- Earlier implementation records remain in task-history/2026-10-01-server-device-sync.md and task-history/2026-10-01-responsive-files-session-menu.md.
 
-## Recovery points
-- Original shared workspace snapshot: bc51b81.
-- Concurrent master changes checkpoint: 263ebd6, retained on backup/master-before-device-sync-20261001.
-- Feature changes commit: 9eadf8a on fix/server-device-sync.
+## Verification
+634 unit/integration cases pass with 5,420 assertions. Vue/server typechecks and isolated production build pass. All previously covered lines in the eight critical bridge/store/runtime/queue/file modules remain covered. All 78 retained desktop/mobile browser cases pass (3.9 minutes). Exact commands and coverage comparison are recorded in this task's history entry. No skip/only/fixme markers are used to reduce counts.
 
-## Runtime boundary
-No Bun production-service restart or remote push in this phase. Device profiles and credentials use the private APP_CREDENTIALS_FILE; real credentials are excluded from Git and tests use isolated stores.
+## Repository / runtime boundary
+- Feature commit: 9eadf8a. Main's concurrent source changes were preserved at 263ebd6 before the three-way merge. Recovery branch: backup/master-before-device-sync-20261001.
+- Test pruning modifies tests/configuration and documentation, not production behavior.
+- Verification build uses .local/e2e-dist and synthetic credentials. The live service's dist and real credentials were not replaced. No service restart or remote push occurred.
+- Tests use tests/mock-bridge.ts, which does not inherit production .env authentication or credential paths.

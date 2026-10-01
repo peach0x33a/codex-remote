@@ -75,31 +75,14 @@ function mount(item: Record<string, unknown>) {
 }
 
 describe('collab tool presentation', () => {
-  test.each([
-    ['spawnAgent', '创建子代理', '任务说明'], ['sendInput', '向子代理发送指令', '指令内容'],
-    ['resumeAgent', '恢复子代理', '补充说明'], ['wait', '等待子代理', '补充说明'],
-    ['closeAgent', '关闭子代理', '补充说明'], ['sendMessage', '向子代理发送消息', '消息内容'],
-    ['followupTask', '分配后续任务', '后续任务'], ['interruptAgent', '中断子代理', '补充说明'],
-    ['listAgents', '查看子代理列表', '补充说明'],
-  ])('translates the native %s tool', (tool, title, promptLabel) => {
-    expect(parseCollabTool(call({ tool }))).toMatchObject({ title, promptLabel })
-  })
 
   test.each([
-    ['inProgress', '进行中', false, false], ['completed', '已完成', false, true],
-    ['failed', '失败', true, false], ['interrupted', '已中断', false, false],
+    ['completed', '已完成', false, true],
+    ['failed', '失败', true, false]
   ] as const)('keeps call status %s distinct from agent status', (status, label, failed, completed) => {
     const parsed = parseCollabTool(call({ status }))!
     expect(parsed).toMatchObject({ status: label, failed, completed })
     expect(parsed.agents[0].status).toBe('执行中')
-  })
-
-  test.each([
-    ['pendingInit', '初始化中', false], ['running', '执行中', false], ['interrupted', '已中断', false],
-    ['completed', '任务完成', false], ['errored', '执行出错', true], ['shutdown', '已关闭', false], ['notFound', '未找到代理', true],
-  ] as const)('translates native agent state %s', (status, label, failed) => {
-    const parsed = parseCollabTool(call({ tool: 'wait', agentsStates: { child: { status, message: null } } }))!
-    expect(parsed.agents[0]).toMatchObject({ id: 'child', status: label, failed })
   })
 
   test('describes a successful spawn without claiming the agent finished its task', () => {
@@ -122,16 +105,11 @@ describe('collab tool presentation', () => {
     ])
   })
 
-  test('keeps empty agent lists empty without explanatory placeholders', () => {
-    for (const fields of [{ status: 'inProgress' }, { tool: 'wait' }, { tool: 'listAgents' }]) {
-      const parsed = parseCollabTool(call({ ...fields, receiverThreadIds: [], agentsStates: {} }))!
-      expect(parsed.agents).toEqual([])
-      expect(parsed).not.toHaveProperty('description')
-      expect(parsed).not.toHaveProperty('emptyAgents')
-    }
-  })
-
-  test.each(['futureTool', 'constructor', '__proto__', '', null, { name: 'spawnAgent' }])('unknown or malformed tools have a readable fallback: %j', tool => {
+  test.each([
+    'futureTool',
+    '__proto__',
+    { name: 'spawnAgent' }
+  ])('unknown or malformed tools have a readable fallback: %j', tool => {
     const parsed = parseCollabTool(call({ tool, result: { privatePayload: 'do not dump' } }))!
     expect(parsed.title).toBe(typeof tool === 'string' && tool.trim() ? `子代理协作 · ${tool}` : '子代理协作')
     expect(parsed.prompt).toBe('检查队列同步\n先核对协议。')
@@ -191,16 +169,6 @@ describe('collab tool cards and reasoning visibility', () => {
     expect(descendants(view.root).some(target => ['script', 'img'].includes(target.type) || target.props.innerHTML)).toBe(false)
   })
 
-  test.each([
-    ['missing', { status: 'inProgress', startedAtMs: 1_000 }],
-    ['empty', { summary: [], content: [] }],
-    ['whitespace', { summary: ['  '], content: ['\n'], text: ' ' }],
-  ])('does not display reasoning with %s body text', (_name, fields) => {
-    const view = mount({ id: 'reasoning', type: 'reasoning', ...fields as object })
-    expect(view.text().trim()).toBe('')
-    expect(descendants(view.root).some(target => target.type === 'details')).toBe(false)
-  })
-
   test('keeps live reasoning out of the transcript and inserts it collapsed on completion', async () => {
     const item = { id: 'reasoning', type: 'reasoning', summary: [], content: ['已有实际思考正文'], status: 'inProgress', startedAtMs: 1000 }
     const view = mount(item)
@@ -215,13 +183,7 @@ describe('collab tool cards and reasoning visibility', () => {
     await view.open()
     expect(descendants(view.root).some(target => String(target.props.innerHTML || '').includes('已有实际思考正文'))).toBe(true)
   })
-  test('historical reasoning starts collapsed even if it has no timestamps', async () => {
-    const view = mount({ id: 'history', type: 'reasoning', summary: ['历史思考正文'] })
-    expect(view.text()).toContain('思考过程')
-    expect(view.text()).not.toContain('历史思考正文')
-    await view.open()
-    expect(descendants(view.root).some(target => String(target.props.innerHTML || '').includes('历史思考正文'))).toBe(true)
-  })
+
 })
 
 describe('native sub-agent activity events', () => {

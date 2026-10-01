@@ -59,22 +59,6 @@ function fixture(options: { open?: boolean; animate?: boolean; reduced?: boolean
 const flush = async () => { await nextTick(); await nextTick() }
 
 describe('native details animation lifecycle', () => {
-  test('notifies lazy Vue content before measuring and keeps open through collapse', async () => {
-    const f = fixture()
-    expect(f.click().defaultPrevented).toBe(true)
-    expect(f.notifications).toEqual([true]); expect(f.mounted).toBe(false)
-    await flush()
-    expect(f.animations[0].frames).toEqual([{ height: '24px' }, { height: '140px' }])
-    expect(f.animations[0].timing.duration).toBe(220)
-    f.animations[0].finish(); expect(f.style.height).toBe(''); expect(f.style.overflow).toBe('')
-    f.click(); await flush()
-    expect(f.el.open).toBe(true); expect(f.mounted).toBe(true)
-    expect(f.animations[1].timing.duration).toBe(160)
-    f.nativeToggle(); expect(f.el.open).toBe(true)
-    f.animations[1].finish(); await flush()
-    expect(f.el.open).toBe(false); expect(f.mounted).toBe(false)
-    expect(f.style.height).toBe(''); expect(f.style.overflow).toBe(''); f.dispose()
-  })
 
   test('reverses from current rendered height and honors rapid repeated activation', async () => {
     const f = fixture(); f.click(); await flush(); const first = f.animations[0]
@@ -96,12 +80,6 @@ describe('native details animation lifecycle', () => {
     f.animations[1].finish(); expect(f.style.height).toBe(''); f.dispose()
   })
 
-  test.each(['reduced', 'hidden'] as const)('settles the latest intent on live %s changes', async change => {
-    const f = fixture({ open: true }); f.click(); await flush(); f[change](); await flush()
-    expect(f.el.open).toBe(false); expect(f.mounted).toBe(false)
-    expect(f.style.height).toBe(''); expect(f.style.overflow).toBe(''); f.dispose()
-  })
-
   test.each([{ animate: false }, { reduced: true }])('falls back immediately with %j', async options => {
     const f = fixture(options); f.click(undefined, 0); await flush()
     expect(f.el.open).toBe(true); expect(f.mounted).toBe(true); expect(f.animations).toHaveLength(0)
@@ -118,11 +96,6 @@ describe('native details animation lifecycle', () => {
     expect(pending.animations).toHaveLength(0); expect(pending.style.height).toBe('')
   })
 
-  test('external animation cancellation cleans up and preserves requested open state', async () => {
-    const f = fixture(); f.click(); await flush(); f.animations[0].cancel(); await flush()
-    expect(f.el.open).toBe(true); expect(f.style.height).toBe(''); expect(f.style.overflow).toBe(''); f.dispose()
-  })
-
   test('does not hijack nested summaries or interactive summary descendants', () => {
     const f = fixture()
     expect(f.click({ closest: () => ({}) }).defaultPrevented).toBe(false)
@@ -131,7 +104,4 @@ describe('native details animation lifecycle', () => {
     f.dispose()
   })
 
-  test('accepts non-DOM custom-renderer elements without browser globals', () => {
-    expect(() => attachDetailsMotion({} as HTMLDetailsElement)()).not.toThrow()
-  })
 })

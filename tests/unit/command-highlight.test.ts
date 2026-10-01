@@ -24,18 +24,6 @@ describe('command highlighting without execution or HTML injection', () => {
     expect(plainText(html)).toBe(command)
   })
 
-  test('keeps wrapper quotes while highlighting the inner zsh/bash command', () => {
-    for (const command of [
-      "/bin/zsh -lc 'cd /tmp && git status --short | head -n 2'",
-      '/usr/bin/bash -l -c "printf hello && echo $HOME"',
-    ]) {
-      const html = highlightCommand(command)
-      expect(html).toContain(span('operator', '&amp;&amp;'))
-      expect(html).toContain(span('command', command.includes('git') ? 'git' : 'echo'))
-      expect(plainText(html)).toBe(command)
-    }
-  })
-
   test('does not mistake quoted or escaped operators and hashes within words for syntax', () => {
     const command = 'echo \'git --flag && $HOME # literal\' a\\|b https://host/#anchor \\$HOME "x \\" y"'
     const html = highlightCommand(command)
@@ -43,27 +31,6 @@ describe('command highlighting without execution or HTML injection', () => {
     expect(html).not.toContain('command-token-comment')
     expect(html).not.toContain('command-token-variable')
     expect(html).not.toContain(span('command', 'git'))
-    expect(plainText(html)).toBe(command)
-  })
-
-  test('recognizes quoted variables and leaves substitutions opaque', () => {
-    const command = 'echo "$HOME ' + '$' + '{USER:-guest} $1 $? $$ $@ $(printf hi) $((1 + 2))"'
-    const html = highlightCommand(command)
-    for (const variable of ['$HOME', '$' + '{USER:-guest}', '$1', '$?', '$$', '$@', '$(printf hi)', '$((1 + 2))']) {
-      expect(html).toContain(span('variable', variable))
-    }
-    expect(html).not.toContain(span('command', 'printf'))
-    expect(plainText(html)).toBe(command)
-  })
-
-  test('handles assignments, leading redirections and continued command lines', () => {
-    const command = '2>/dev/null MODE=quiet /bin/echo ready && \\\n sleep -0.5; echo -- 0xff'
-    const html = highlightCommand(command)
-    for (const name of ['/bin/echo', 'sleep', 'echo']) expect(html).toContain(span('command', name))
-    expect(html).toContain(span('variable', 'MODE'))
-    expect(html).toContain(span('number', '-0.5'))
-    expect(html).toContain(span('number', '0xff'))
-    expect(html).toContain(span('flag', '--'))
     expect(plainText(html)).toBe(command)
   })
 
@@ -85,22 +52,6 @@ describe('command highlighting without execution or HTML injection', () => {
     const html = highlightCommand(command)
     expect(html).toContain(escape(body) + span('command', 'pwd'))
     expect(html).not.toContain('command-token-flag')
-    expect(plainText(html)).toBe(command)
-  })
-
-  test('an unterminated heredoc stays plain through the end of input', () => {
-    const body = 'EOF is not an exact delimiter\nrm --fake && echo $HOME'
-    const html = highlightCommand('cat <<EOF\n' + body)
-    expect(html.endsWith(escape(body))).toBe(true)
-    expect(html).not.toContain('command-token-flag')
-    expect(plainText(html)).toBe('cat <<EOF\n' + body)
-  })
-
-  test('also keeps script content opaque inside a zsh wrapper heredoc', () => {
-    const command = "/bin/zsh -lc 'python <<PY\nif x < 2: print(\"git --fake && $HOME\")\nPY\necho done'"
-    const html = highlightCommand(command)
-    expect(html).toContain('if x &lt; 2: print(&quot;git --fake &amp;&amp; $HOME&quot;)\nPY\n' + span('command', 'echo'))
-    expect(html).not.toContain(span('flag', '--fake'))
     expect(plainText(html)).toBe(command)
   })
 

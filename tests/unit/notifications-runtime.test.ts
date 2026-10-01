@@ -38,24 +38,14 @@ test('never prompts on mount or task events; explicit enable requests permission
   await state.notify(task('next')); expect(desktopCalls).toHaveLength(1); expect(tones).toBe(2)
   await state.notify(task('next')); expect(desktopCalls).toHaveLength(1); expect(tones).toBe(2)
 })
-test('denied permission is explained and never requested repeatedly', async () => {
-  FakeNotification.permission = 'denied'; await state.setDesktop(true); await state.setDesktop(true)
-  expect(permissionRequests).toBe(0); expect(state.preferences.value.desktop).toBe(false); expect(state.error.value).toContain('站点设置')
-})
+
 test('sound works independently of desktop notifications and persists volume settings', async () => {
   state.update({ desktop: false, volume: 25 }); await state.unlockAudio(); await state.notify(task())
   expect(tones).toBe(2); expect(desktopCalls).toHaveLength(0)
   await nextTick(); expect(JSON.parse(data.get(NOTIFICATION_KEY)!)).toMatchObject({ volume: 25, desktop: false })
   state.update({ sound: false }); await state.notify(task('quiet')); expect(tones).toBe(2)
 })
-test('volume previews do not overwrite the committed notification preference', async () => {
-  state.update({ volume: 30 }); await nextTick()
-  const saved = data.get(NOTIFICATION_KEY)
-  state.previewVolume(80); await nextTick()
-  expect(state.effectiveVolume.value).toBe(80); expect(state.preferences.value.volume).toBe(30)
-  expect(data.get(NOTIFICATION_KEY)).toBe(saved)
-  state.previewVolume(null); expect(state.effectiveVolume.value).toBe(30)
-})
+
 test('background filtering and per-event settings apply before delivery', async () => {
   await state.setDesktop(true); state.update({ backgroundOnly: true }); await state.notify(task()); expect(desktopCalls).toHaveLength(0)
   focused = false; await state.notify(task()); expect(desktopCalls).toHaveLength(1)
@@ -66,13 +56,7 @@ test('clicking a browser notification opens only its associated device and threa
   ;(desktopCalls[0] as { instance: FakeNotification }).instance.onclick?.()
   expect(targets).toEqual([{ deviceId: 'device', threadId: 'thread' }])
 })
-test('prefers service worker notifications and does not request new permission', async () => {
-  const sw = Object.assign(new EventTarget(), { getRegistration: async () => ({ active: {}, showNotification: async (title: string, options: NotificationOptions) => { desktopCalls.push({ title, options }) } }) })
-  Object.assign(navigator, { serviceWorker: sw }); await state.setDesktop(true); await state.notify(task())
-  expect(desktopCalls).toHaveLength(1)
-  expect(desktopCalls[0]).toMatchObject({ title: '对话已完成', options: { silent: true, data: { type: 'codex-task', deviceId: 'device', threadId: 'thread' } } })
-  expect(permissionRequests).toBe(1)
-})
+
 test('disposal suppresses late desktop delivery without breaking the task', async () => {
   let release: (() => void) | undefined
   Object.assign(navigator, { serviceWorker: Object.assign(new EventTarget(), { getRegistration: () => new Promise(resolve => { release = () => resolve({ active: {}, showNotification: async () => desktopCalls.push('late') }) }) }) })

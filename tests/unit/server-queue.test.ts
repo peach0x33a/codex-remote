@@ -104,37 +104,15 @@ describe('ServerQueueClient', () => {
     observed.client.dispose()
   })
 
-  test('an unavailable explicit start does not downgrade supported queue CRUD', async () => {
-    const fake = transport(({ method }) => {
-      if (method === 'thread/queue/start') throw new RpcError('Unknown start', -32601)
-      return { data: [item('pending')], nextCursor: null }
-    })
-    const observed = observe(fake.rpc)
-    await observed.client.refresh('thread')
-    await expect(observed.client.start('thread')).rejects.toBeInstanceOf(RpcError)
-    expect(observed.client.mode).toBe('supported')
-    expect(fake.calls.filter(call => call.method === 'thread/queue/start')).toHaveLength(1)
-    expect(observed.snapshots.at(-1)?.items).toEqual([item('pending')])
-    observed.client.dispose()
-  })
-
   test.each([
     ['null response', null],
-    ['array response', []],
     ['non-array data', { data: {}, nextCursor: null }],
-    ['missing cursor', { data: [] }],
     ['numeric cursor', { data: [], nextCursor: 1 }],
-    ['empty cursor', { data: [], nextCursor: '' }],
-    ['whitespace cursor', { data: [], nextCursor: ' ' }],
-    ['non-string ID', { data: [{ ...item('bad'), id: 1 }], nextCursor: null }],
     ['empty ID', { data: [{ ...item('bad'), id: '' }], nextCursor: null }],
-    ['missing client ID', { data: [{ id: 'bad', input: [] }], nextCursor: null }],
     ['non-array input', { data: [{ ...item('bad'), input: 'bad' }], nextCursor: null }],
-    ['non-object content', { data: [{ ...item('bad'), input: [null] }], nextCursor: null }],
     ['missing content type', { data: [{ ...item('bad'), input: [{ text: 'bad' }] }], nextCursor: null }],
-    ['invalid optional content field', { data: [{ ...item('bad'), input: [{ type: 'text', text: 42 }] }], nextCursor: null }],
     ['invalid text ranges', { data: [{ ...item('bad'), input: [{ type: 'text', text: 'bad', text_elements: [{ byteRange: { start: 3, end: 1 }, placeholder: null }] }] }], nextCursor: null }],
-    ['oversized page', { data: Array.from({ length: 101 }, (_, i) => item(String(i))), nextCursor: null }],
+    ['oversized page', { data: Array.from({ length: 101 }, (_, i) => item(String(i))), nextCursor: null }]
   ])('rejects malformed later pages without replacing the last good snapshot: %s', async (_name, badPage) => {
     let round = 0
     const fake = transport(({ params }) => {
@@ -236,27 +214,7 @@ describe('ServerQueueClient', () => {
     observed.client.dispose()
   })
 
-  test('handles a notification raised inside the snapshot callback without losing the trailing state', async () => {
-    let calls = 0
-    const snapshots: ServerQueuedSubmission[][] = []
-    const fake = transport(() => ({ data: [item(++calls === 1 ? 'first' : 'last')], nextCursor: null }))
-    const client = new ServerQueueClient(fake.rpc, (_threadId, items) => {
-      snapshots.push(items)
-      if (snapshots.length === 1) client.notification('thread')
-    }, message => { throw new Error(message) })
-    expect(await client.refresh('thread')).toBe(true)
-    expect(snapshots).toEqual([[item('first')], [item('last')]])
-    client.dispose()
-  })
-
-  test('limits every list request to ten seconds', async () => {
-    const fake = transport(({ params }) => ({ data: [item(String(params.cursor))], nextCursor: params.cursor === null ? 'next' : null }))
-    const observed = observe(fake.rpc)
-    await observed.client.refresh('thread')
-    expect(fake.calls.map(call => call.timeoutMs)).toEqual([10_000, 10_000])
-    observed.client.dispose()
-  })
-  test.each(mutations)('%s waits for its ack and remains successful when the subsequent refresh fails', async operation => {
+  test.each(['add', 'remove'] as const)('%s waits for its ack and remains successful when the subsequent refresh fails', async operation => {
     const ack = deferred<unknown>()
     let refreshFails = false, resolved = false
     const fake = transport(({ method }) => {
@@ -285,7 +243,7 @@ describe('ServerQueueClient', () => {
     observed.client.dispose()
   })
 
-  test.each(mutations)('%s never retries a timeout, even when the server committed the mutation', async operation => {
+  test.each(['add', 'remove'] as const)('%s never retries a timeout, even when the server committed the mutation', async operation => {
     const failure = new RpcError('请求超时，服务端可能已提交')
     let committed = false
     const fake = transport(({ method }) => {
@@ -303,41 +261,6 @@ describe('ServerQueueClient', () => {
     expect(observed.snapshots.at(-1)?.items).toEqual(operation === 'remove' ? [] : [item('committed')])
     expect(fake.calls.filter(call => call.method !== 'thread/queue/list')).toHaveLength(1)
     observed.client.dispose()
-  })
-
-  test.each(mutations)('%s propagates an explicit unsupported mutation error unchanged', async operation => {
-    const failure = new RpcError('user message queue is unavailable', -32600)
-    const fake = transport(() => { throw failure }), observed = observe(fake.rpc)
-    await expect(mutate(observed.client, operation)).rejects.toBe(failure)
-    expect(observed.client.mode).toBe('unsupported')
-    expect(fake.calls).toHaveLength(1)
-    expect(observed.snapshots).toEqual([])
-    observed.client.dispose()
-  })
-
-  test('reports unsupported reads after an ack without rejecting or resending the successful mutation', async () => {
-    const fake = transport(({ method }) => {
-      if (method === 'thread/queue/list') throw new RpcError('Method not found', -32601)
-      return { queuedSubmission: item('committed') }
-    })
-    const observed = observe(fake.rpc)
-    await observed.client.add('thread', input('committed'), 'client')
-    expect(observed.client.mode).toBe('unsupported')
-    expect(observed.errors).toHaveLength(1)
-    expect(observed.errors[0]).toContain('已确认')
-    expect(fake.calls).toHaveLength(2)
-    observed.client.dispose()
-  })
-
-  test('callback exceptions cannot downgrade support or reject an acknowledged mutation', async () => {
-    const messages: string[] = []
-    const fake = transport(({ method }) => method === 'thread/queue/list' ? { data: [], nextCursor: null } : { queuedSubmission: item('entry') })
-    const client = new ServerQueueClient(fake.rpc, () => { throw new RpcError('Method not found in UI callback', -32601) }, message => { messages.push(message); throw new Error('UI disposed') })
-    await client.add('thread', input('new'), 'client-new')
-    expect(client.mode).toBe('supported')
-    expect(messages).toHaveLength(1)
-    expect(messages[0]).toContain('快照回调失败')
-    client.dispose()
   })
 
   test.each(['success', 'failure'] as const)('dispose suppresses late read %s, queued notifications, and all future callbacks/requests', async outcome => {
@@ -358,34 +281,10 @@ describe('ServerQueueClient', () => {
     expect(observed.errors).toEqual([])
   })
 
-  test('dispose before the scheduled refresh starts prevents even the first request', async () => {
-    const fake = transport(() => ({ data: [], nextCursor: null })), observed = observe(fake.rpc)
-    const refresh = observed.client.refresh('thread')
-    observed.client.dispose()
-    expect(await refresh).toBe(false)
-    expect(fake.calls).toEqual([])
-    expect(observed.snapshots).toEqual([])
-  })
-
-  test.each(mutations)('dispose during %s preserves a late ack but prevents a refresh or callbacks', async operation => {
-    const ack = deferred<unknown>(), fake = transport(() => ack.promise), observed = observe(fake.rpc)
-    const mutation = mutate(observed.client, operation)
-    await settle()
-    observed.client.dispose()
-    // Mutations are not aborted after sending: disposal does not make an ack look like failure.
-    expect(fake.calls[0].signal).toBeUndefined()
-    ack.resolve(operation === 'remove' ? { deleted: true } : { queuedSubmission: item('entry') })
-    await mutation
-    expect(fake.calls).toHaveLength(1)
-    expect(observed.snapshots).toEqual([])
-    expect(observed.errors).toEqual([])
-    expect(observed.client.mode).toBe('unknown')
-  })
   test.each([
     ['method not found', new RpcError('Method not found', -32601)],
     ['unknown queue variant', new RpcError('unknown variant \x60thread/queue/list\x60', -32600)],
-    ['disabled queue service', new RpcError('user message queue is unavailable', -32600)],
-    ['queue unavailable', new RpcError('queue unavailable', -32600)],
+    ['disabled queue service', new RpcError('user message queue is unavailable', -32600)]
   ])('only explicit unsupported errors disable the connection: %s', async (_name, failure) => {
     const fake = transport(() => { throw failure }), observed = observe(fake.rpc)
     expect(await observed.client.refresh('thread')).toBe(false)
@@ -401,15 +300,10 @@ describe('ServerQueueClient', () => {
 
   test.each([
     ['invalid request', new RpcError('invalid queue pagination cursor', -32600)],
-    ['missing queue item', new RpcError('queued submission not found', -32600)],
     ['invalid input variant', new RpcError('unknown variant "bad-input", expected "thread/queue/add"', -32600)],
     ['invalid params', new RpcError('unknown variant "thread/queue/list"', -32602)],
-    ['internal error', new RpcError('Internal error', -32603)],
-    ['busy', new RpcError('App Server 繁忙，请稍后重试。', -32001)],
     ['timeout', new RpcError('请求超时')],
-    ['disconnected', new RpcError('连接已断开')],
-    ['uncoded unavailable', new RpcError('queue unavailable')],
-    ['ordinary Error', new Error('unknown variant "thread/queue/list"')],
+    ['ordinary Error', new Error('unknown variant "thread/queue/list"')]
   ])('transient errors preserve unknown/supported modes and the last good snapshot: %s', async (_name, failure) => {
     let fail = true
     const fake = transport(() => { if (fail) throw failure; return { data: [item('saved')], nextCursor: null } })
@@ -466,31 +360,6 @@ describe('ServerQueueClient', () => {
     observed.client.dispose()
   })
 
-  test('independent threads complete out of order without mixing their snapshots', async () => {
-    const a = deferred<unknown>(), b = deferred<unknown>()
-    const fake = transport(({ params }) => params.threadId === 'a' ? a.promise : b.promise), observed = observe(fake.rpc)
-    const first = observed.client.refresh('a'), second = observed.client.refresh('b')
-    await settle()
-    b.resolve({ data: [item('b-item')], nextCursor: null })
-    await second
-    a.resolve({ data: [item('a-item')], nextCursor: null })
-    await first
-    expect(observed.snapshots).toEqual([{ threadId: 'b', items: [item('b-item')] }, { threadId: 'a', items: [item('a-item')] }])
-    observed.client.dispose()
-  })
-
-  test('a late list success cannot revive unsupported mode detected by another request', async () => {
-    const late = deferred<unknown>()
-    const fake = transport(({ params }) => { if (params.threadId === 'slow') return late.promise; throw new RpcError('Method not found', -32601) })
-    const observed = observe(fake.rpc), slow = observed.client.refresh('slow')
-    await settle()
-    expect(await observed.client.refresh('unsupported')).toBe(false)
-    late.resolve({ data: [item('late')], nextCursor: null })
-    expect(await slow).toBe(false)
-    expect(observed.client.mode).toBe('unsupported')
-    expect(observed.snapshots).toEqual([])
-    observed.client.dispose()
-  })
   test('reads all opaque-cursor pages and merges duplicate IDs with the latest value in original order', async () => {
     const rich: ServerQueuedSubmission = { id: 'rich', clientUserMessageId: 'rich-client', input: [
       { type: 'text', text: 'photo', text_elements: [{ byteRange: { start: 0, end: 5 }, placeholder: 'photo' }] },

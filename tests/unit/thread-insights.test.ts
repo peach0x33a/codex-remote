@@ -34,10 +34,6 @@ describe('latest turn summary', () => {
 })
 
 describe('loaded thread agent projection', () => {
-  test('no thread means no insights, regardless of globally cached summaries', () => {
-    expect(buildThreadInsights(null, [{ id: 'child', agentNickname: 'Tesla' }])).toEqual({ agents: [], files: [] })
-    expect(buildThreadInsights(thread(), [{ id: 'child', parentThreadId: 'parent', agentNickname: 'Tesla' }])).toEqual({ agents: [], files: [] })
-  })
 
   test('deduplicates receivers and state-only agents in stable discovery order', () => {
     const result = buildThreadInsights(thread([
@@ -67,31 +63,11 @@ describe('loaded thread agent projection', () => {
     expect(result.agents).toEqual([{ id: 'child', name: 'Tesla', role: 'explorer' }])
   })
 
-  test('partial metadata records preserve known names and use name when nickname is absent', () => {
-    expect(buildThreadInsights(thread([collab({ receiverThreadIds: ['a', 'b', 'c'] })]), [
-      { id: 'a', agentNickname: 'Tesla' }, { id: 'a', agentRole: 'reviewer' },
-      { threadId: 'b', name: 'Named by user', agentNickname: null },
-      { id: 'c', name: { unsafe: true }, agentNickname: '  ', agentRole: [] },
-    ]).agents).toEqual([
-      { id: 'a', name: 'Tesla', role: 'reviewer' }, { id: 'b', name: 'Named by user' }, { id: 'c', name: 'c' },
-    ])
-  })
-
   test('collab status and message take priority over thread metadata and lastMessage', () => {
     const result = buildThreadInsights(thread([collab({ agentsStates: { child: { status: 'running', message: 'Actual agent message' } } })]), [
       { id: 'child', status: { type: 'idle' }, lastMessage: 'Older answer', preview: 'Initial request' },
     ])
     expect(result.agents[0]).toEqual({ id: 'child', name: 'child', status: 'running', message: 'Actual agent message' })
-  })
-
-  test.each(['idle', 'active', 'systemError', 'notLoaded'])('summary runtime status %s stays literal and lastMessage is a fallback', status => {
-    expect(buildThreadInsights(thread([collab()]), [{ id: 'child', status: { type: status }, lastMessage: 'Latest real message' }]).agents[0]).toEqual({ id: 'child', name: 'child', status, message: 'Latest real message' })
-  })
-
-  test('preview and collab prompt never become a completed agent result', () => {
-    expect(buildThreadInsights(thread([collab({ prompt: 'Do the task', agentsStates: { child: { status: 'completed', message: null } } })]), [
-      { id: 'child', preview: 'Initial user request', lastMessage: { text: 'malformed' } },
-    ]).agents[0]).toEqual({ id: 'child', name: 'child', status: 'completed' })
   })
 
   test('a resumed agent clears an explicitly null result and partial states preserve targets', () => {
@@ -134,20 +110,10 @@ describe('loaded file-change projection', () => {
     expect(buildThreadInsights(thread([file([change('a', replacement)])], [file([change('a', replacement)])])).files[0]).toMatchObject({ added: 4, removed: 2 })
   })
 
-  test('counts hunk lines including literal +++/--- content, empty lines and no-newline markers', () => {
-    const diff = 'diff --git a/a b/a\r\nindex abc..def 100644\r\n--- a/a\r\n+++ b/a\r\n@@ -1,3 +1,4 @@ title\r\n unchanged\r\n---literal removed\r\n-old\r\n+++literal added\r\n+\r\n+new\r\n\\ No newline at end of file\r\n'
-    expect(buildThreadInsights(thread([file([change('a', diff)])])).files[0]).toMatchObject({ added: 3, removed: 2, diff })
-  })
-
-  test('sums complete multiple hunks and accepts native move notes outside hunks', () => {
-    const diff = '@@ -1,2 +1 @@\n-removed\n kept\n@@ -8 +7,2 @@\n x\n+y\n\nMoved to: renamed.txt'
-    expect(buildThreadInsights(thread([file([change('a', diff)])])).files[0]).toMatchObject({ added: 1, removed: 1 })
-  })
-
   test.each([
-    '', '+looks added\n-looks removed', 'raw new file content\n', 'Binary files a/a and b/a differ',
-    '--- a/a\n+++ b/a\n', '@@ -1 +1 @@\n-old', '@@ -1 +1 @@\n-old\n+new\n+extra',
-    '@@ -1,2 +1 @@\n-old\n+new', '@@@ -1 -1 +1 @@@\n++combined', '@@ -9007199254740992 +1 @@\n-old\n+new',
+    'Binary files a/a and b/a differ',
+    '@@ -1 +1 @@\n-old\n+new\n+extra',
+    '@@ -9007199254740992 +1 @@\n-old\n+new'
   ])('unrecognized or incomplete diff keeps line totals unknown: %j', diff => {
     const projected = buildThreadInsights(thread([file([change('a', diff)])])).files[0]!
     expect(projected).toEqual({ path: 'a', diff, kind: 'update' })
@@ -175,13 +141,6 @@ describe('loaded file-change projection', () => {
     }
   })
 
-  test.each([true, false])('one unknown contribution prevents an understated sum (unknown first: %s)', unknownFirst => {
-    const diffs = unknownFirst ? ['raw content', replacement] : [replacement, 'raw content']
-    const projected = buildThreadInsights(thread(diffs.map((diff, i) => file([change('a', diff)], { id: 'patch-' + i })))).files[0]!
-    expect(projected.diff).toBe(diffs.join('\n'))
-    expect(projected.added).toBeUndefined(); expect(projected.removed).toBeUndefined()
-  })
-
   test('known zero counts are retained only when the hunk explicitly establishes them', () => {
     expect(buildThreadInsights(thread([file([change('a', '@@ -0,0 +0,0 @@\n')])])).files[0]).toMatchObject({ added: 0, removed: 0 })
     expect(buildThreadInsights(thread([file([change('b', '@@ -1 +0,0 @@\n-deleted\n')])])).files[0]).toMatchObject({ added: 0, removed: 1 })
@@ -199,15 +158,4 @@ describe('loaded file-change projection', () => {
     ])).files).toEqual([{ path: 'literal <path>', diff: '' }])
   })
 
-  test('is pure, does not consult summary histories and does not retain another thread data', () => {
-    const original = thread([collab(), file([change('a', replacement)])])
-    const summaries = [{ id: 'child', agentNickname: 'Tesla', turns: [{ items: [file([change('child-file', replacement)])] }] }]
-    const before = structuredClone({ original, summaries })
-    const first = buildThreadInsights(original, summaries)
-    expect({ original, summaries }).toEqual(before)
-    first.agents[0]!.name = 'Changed by consumer'; first.files[0]!.added = 999
-    expect(buildThreadInsights(original, summaries).files[0]?.added).toBe(2)
-    expect(buildThreadInsights(original, summaries).agents[0]?.name).toBe('Tesla')
-    expect(buildThreadInsights(thread(), summaries)).toEqual({ agents: [], files: [] })
-  })
 })

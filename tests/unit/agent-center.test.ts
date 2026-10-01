@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { effectScope, nextTick, ref, type EffectScope } from 'vue'
 import { AGENT_CENTER_REFRESH_MS, useAgentCenter, type AgentCenterRequest } from '../../src/composables/useAgentCenter'
-import { agentState, agentTitle, agentTokenTotals, buildAgentRows, filterAgentRows, groupAgentRows, recentAgentMessages, type AgentThread } from '../../src/lib/agent-center'
+import { agentState, buildAgentRows, filterAgentRows, groupAgentRows, type AgentThread } from '../../src/lib/agent-center'
 import { activityTime } from '../../src/lib/recent-window'
 
 const thread = (id: string, fields: Partial<AgentThread> = {}): AgentThread => ({ id, name: id, preview: '', cwd: '/work/api', model: 'model-a', createdAt: 1, updatedAt: 2, turns: [], status: { type: 'idle' }, ...fields })
@@ -33,18 +33,7 @@ describe('agent center projections', () => {
     expect(rows.flatMap(row => row.members.map(member => member.id)).sort()).toEqual(['child', 'cycle-a', 'cycle-b', 'orphan', 'root'])
     expect(filterAgentRows(rows, '', 'inactive')).toEqual([])
   })
-  test('groups exact project paths, models and aggregated states', () => {
-    const rows = buildAgentRows([thread('a', { cwd: '/a/api', updatedAt: 1 }), thread('b', { cwd: '/b/api', model: 'model-b', status: { type: 'active' } }), thread('c', { cwd: '/a/api', updatedAt: 3 })])
-    expect(groupAgentRows(rows, 'project').map(group => [group.key, group.rows.map(row => row.thread.id)])).toEqual([['/a/api', ['c', 'a']], ['/b/api', ['b']]])
-    expect(groupAgentRows(rows, 'model').map(group => group.key)).toEqual(['model-a', 'model-b'])
-    expect(groupAgentRows(rows, 'status').map(group => group.key)).toEqual(['working', 'ready'])
-    expect(agentTitle(thread('a', { name: '', preview: 'First line\nSecond line' }))).toBe('First line')
-  })
-  test('uses recent real user/agent items and leaves missing token counts unavailable', () => {
-    expect(recentAgentMessages([{ id: 'new', status: 'inProgress', items: [{ id: 'u', type: 'userMessage', content: [{ type: 'text', text: 'New prompt' }] }] }, { id: 'old', status: 'completed', items: [{ id: 'u2', type: 'userMessage', content: ['Old prompt'] }, { id: 'a', type: 'agentMessage', text: 'Actual reply' }] }])).toEqual({ user: 'New prompt', agent: 'Actual reply' })
-    expect(agentTokenTotals()).toEqual({ input: undefined, output: undefined, total: undefined })
-    expect(agentTokenTotals({ threadId: 'a', groups: [{ inputTokens: 10, outputTokens: 0 }, { inputTokens: 20, outputTokens: null }] })).toEqual({ input: 30, output: undefined, total: undefined })
-  })
+
 })
 
 type Call = { method: string; params: Record<string, unknown>; signal?: AbortSignal }
@@ -111,36 +100,7 @@ describe('read-only agent center controller without network listeners', () => {
     expect(state.center.notice.value).toContain('部分任务')
     expect(state.center.loading.value).toBe(false)
   })
-  test('excludes old active loaded threads without reading unknown IDs or following older pages', async () => {
-    const data = [thread('latest', { updatedAt: activityDate(29) }), thread('previous', { updatedAt: activityDate(28) }), thread('old-active', { updatedAt: activityDate(27), status: { type: 'active' } })]
-    const state = createCenter(call => {
-      if (call.method === 'thread/loaded/list') return { data: ['old-active', 'unknown-loaded'], nextCursor: null }
-      if (call.method === 'thread/list' && !(call.params.sourceKinds as string[]).length) return { data, nextCursor: 'older-pages' }
-      return response(call, data)
-    })
-    state.open.value = true; await settle()
-    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['latest', 'previous'])
-    expect(state.calls.some(call => call.method === 'thread/read' && ['old-active', 'unknown-loaded'].includes(String(call.params.threadId)))).toBe(false)
-    expect(state.calls.filter(call => call.method === 'thread/list')).toHaveLength(2)
-    expect(state.calls.filter(call => call.method === 'thread/loaded/list')).toHaveLength(0)
-  })
-  test.each(['interactive', 'exec'] as const)('shares the latest anchor when %s is newer and stops the other source at the same cutoff', async newestSource => {
-    const data = [thread('latest', { recencyAt: activityDate(29), updatedAt: activityDate(25) }), thread('previous', { updatedAt: activityDate(28) }), thread('old', { updatedAt: activityDate(27) })]
-    const state = createCenter(call => {
-      if (call.method !== 'thread/list') return response(call, data)
-      const source = (call.params.sourceKinds as string[]).length ? 'exec' : 'interactive'
-      if (source === newestSource) return { data: [data[0]], nextCursor: null }
-      if (!call.params.cursor) return { data: [data[1]], nextCursor: 'older-tail' }
-      return { data: [data[2]], nextCursor: 'must-not-follow' }
-    })
-    state.open.value = true; await settle()
-    expect(state.center.rows.value.map(row => row.thread.id).sort()).toEqual(['latest', 'previous'])
-    const lists = state.calls.filter(call => call.method === 'thread/list')
-    expect(lists).toHaveLength(3)
-    expect(lists.every(call => call.params.limit === 100 && call.params.sortKey === 'recency_at')).toBe(true)
-    expect(lists.some(call => call.params.cursor === 'must-not-follow')).toBe(false)
-    expect(state.calls.some(call => call.method === 'thread/read' && call.params.threadId === 'old')).toBe(false)
-  })
+
   test.each(['interactive', 'subAgent'] as const)('includes spawn children through actual source filtering with the latest anchor from %s', async newestSource => {
     const spawnSource = { subAgent: { thread_spawn: { parent_thread_id: 'root', depth: 1, agent_path: null, agent_nickname: null, agent_role: null } } }
     const data = [
@@ -179,12 +139,9 @@ describe('read-only agent center controller without network listeners', () => {
     expect(state.calls.some(call => call.method === 'thread/loaded/list')).toBe(false)
   })
   test.each([
-    ['thread/read', null], ['thread/read', {}], ['thread/read', { thread: null }],
     ['thread/read', { thread: { ...thread('a'), name: 123 } }],
-    ['thread/turns/list', null], ['thread/turns/list', { data: null }],
-    ['thread/turns/list', { data: [null] }], ['thread/turns/list', { data: [{ items: {} }] }],
     ['thread/turns/list', { data: [{ items: [{ type: 'userMessage', content: [null] }] }] }],
-    ['account/usage/read', null], ['account/usage/read', { threadUsage: { threadId: 'a', groups: [null] } }],
+    ['account/usage/read', { threadUsage: { threadId: 'a', groups: [null] } }]
   ])('settles malformed fulfilled %s responses without breaking available details', async (method, payload) => {
     const state = createCenter(call => call.method === method ? payload : response(call))
     state.open.value = true; await settle()
@@ -196,36 +153,11 @@ describe('read-only agent center controller without network listeners', () => {
     await state.center.refreshDetails()
     expect(state.center.detailLoading.value).toBe(false)
   })
-  test('finally releases the detail spinner when payload processing unexpectedly throws', async () => {
-    const state = createCenter(call => call.method === 'thread/turns/list' ? { get data() { throw new Error('Bad payload') } } : response(call))
-    state.open.value = true; await settle()
-    expect(state.center.detailLoading.value).toBe(false)
-    expect(state.center.detailError.value).toContain('Bad payload')
-  })
-  test('publishes the shared-window first pages and selection before the remaining pages finish', async () => {
-    const nextPage = deferred<unknown>(), last = deferred<unknown>()
-    const state = createCenter(call => {
-      if (call.method === 'thread/list' && !(call.params.sourceKinds as string[]).length) {
-        return call.params.cursor === 'last' ? last.promise : call.params.cursor ? nextPage.promise : { data: [thread('a')], nextCursor: 'next' }
-      }
-      return response(call)
-    })
-    state.open.value = true; await settle()
-    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['a'])
-    expect(state.center.selectedId.value).toBe('a')
-    expect(state.center.details.value?.thread.id).toBe('a')
-    expect(state.center.loading.value).toBe(true)
-    nextPage.resolve({ data: [thread('b')], nextCursor: 'last' }); await settle()
-    state.center.select('b'); await settle()
-    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['a', 'b'])
-    expect(state.center.selectedId.value).toBe('b')
-    expect(state.center.details.value?.thread.id).toBe('b')
-    expect(state.center.loading.value).toBe(true)
-    last.resolve({ data: [thread('last')], nextCursor: null }); await settle()
-    expect(state.center.rows.value).toHaveLength(3)
-    expect(state.center.loading.value).toBe(false)
-  })
-  test.each(['refresh', 'device', 'close'] as const)('%s prevents late recent pages from merging into another snapshot', async action => {
+
+  test.each([
+    'refresh',
+    'device'
+  ] as const)('%s prevents late recent pages from merging into another snapshot', async action => {
     const late = deferred<unknown>()
     let fresh = false
     const state = createCenter(call => {
@@ -238,61 +170,14 @@ describe('read-only agent center controller without network listeners', () => {
     const pending = state.calls.find(call => call.method === 'thread/list' && call.params.cursor === 'late')!
     fresh = true
     if (action === 'refresh') void state.center.refresh()
-    else if (action === 'device') state.device.value = 'device-b'
-    else state.open.value = false
+    else state.device.value = 'device-b'
     await settle()
     expect(pending.signal?.aborted).toBe(true)
     late.resolve({ data: [thread('late')], nextCursor: null }); await settle()
-    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(action === 'close' ? [] : ['b'])
+    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['b'])
     expect(state.center.loading.value).toBe(false)
   })
-  test('keeps an existing selection while its later recent page is still pending', async () => {
-    const late = deferred<unknown>()
-    let refreshing = false
-    const state = createCenter(call => {
-      if (refreshing && call.method === 'thread/list' && !(call.params.sourceKinds as string[]).length) {
-        return call.params.cursor ? late.promise : { data: [thread('a')], nextCursor: 'next' }
-      }
-      return response(call)
-    })
-    state.open.value = true; await settle()
-    state.center.select('b'); await settle()
-    refreshing = true
-    void state.center.refresh(); await settle()
-    expect(state.center.selectedId.value).toBe('b')
-    expect(state.center.details.value?.thread.id).toBe('b')
-    late.resolve({ data: [thread('b', { name: 'Updated' })], nextCursor: null }); await settle()
-    expect(state.center.selectedId.value).toBe('b')
-    expect(state.center.rows.value.find(row => row.thread.id === 'b')?.thread.name).toBe('Updated')
-  })
-  test.each(['interactive', 'background'] as const)('limits the %s source to twenty pages in a dense activity window', async source => {
-    let page = 0
-    const state = createCenter(call => {
-      if (call.method === 'thread/list' && !!(call.params.sourceKinds as string[]).length === (source === 'background')) return { data: [thread('a')], nextCursor: 'page-' + ++page }
-      if (call.method === 'thread/list') return { data: [], nextCursor: null }
-      return response(call)
-    })
-    state.open.value = true
-    for (let index = 0; index < 5; index++) await settle()
-    expect(page).toBe(20)
-    expect(state.center.loading.value).toBe(false)
-    expect(state.center.notice.value).toContain('上限')
-    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['a'])
-    expect(state.calls.filter(call => call.method === 'thread/read')).toHaveLength(1)
-  })
-  test('drops cached active selections once a newer activity date moves the shared window', async () => {
-    const previous = thread('previous', { updatedAt: activityDate(27), status: { type: 'active' } })
-    let data = [thread('anchor', { updatedAt: activityDate(28) }), previous]
-    const state = createCenter(call => response(call, data))
-    state.open.value = true; await settle()
-    expect(state.center.selectedId.value).toBe('previous')
-    const before = state.calls.filter(call => call.method === 'thread/read' && call.params.threadId === 'previous').length
-    data = [thread('latest', { updatedAt: activityDate(29) }), previous]
-    await state.center.refresh(); await settle()
-    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['latest'])
-    expect(state.center.selectedId.value).toBe('latest')
-    expect(state.calls.filter(call => call.method === 'thread/read' && call.params.threadId === 'previous')).toHaveLength(before)
-  })
+
   test('late details cannot replace a newer selection, even when the adapter ignores abort', async () => {
     const late = deferred<{ thread: AgentThread }>()
     const state = createCenter(call => call.method === 'thread/read' && call.params.threadId === 'a' ? late.promise : response(call))
@@ -323,19 +208,7 @@ describe('read-only agent center controller without network listeners', () => {
     expect(state.center.details.value).toBeNull()
     expect(state.center.updatedAt.value).toBeNull()
   })
-  test.each(['close', 'disconnect', 'unmount'] as const)('%s cancels pending details without resurrecting them', async action => {
-    const late = deferred<{ thread: AgentThread }>()
-    const state = createCenter(call => call.method === 'thread/read' ? late.promise : response(call))
-    state.open.value = true; await settle()
-    const pending = state.calls.find(call => call.method === 'thread/read')!
-    if (action === 'close') state.open.value = false
-    else if (action === 'disconnect') state.connected.value = false
-    else state.scope.stop()
-    expect(pending.signal?.aborted).toBe(true)
-    late.resolve({ thread: thread('a') }); await settle()
-    expect(state.center.details.value).toBeNull()
-    expect(state.center.rows.value).toEqual([])
-  })
+
   test('refreshes at 15 seconds and releases the timer when hidden', async () => {
     const interval = spyOn(globalThis, 'setInterval'), clear = spyOn(globalThis, 'clearInterval')
     restores.push(() => interval.mockRestore(), () => clear.mockRestore())

@@ -28,7 +28,9 @@ afterEach(() => {
   originals.clear()
 })
 
-test.each(['animated', 'image', 'none'] as const)('keeps %s mode and image effects across theme changes, system events and remounts', async mode => {
+test.each([
+    'image'
+  ] as const)('keeps %s mode and image effects across theme changes, system events and remounts', async mode => {
   const effects = { opacity: 71, blur: 8, color: '#123456', colorOpacity: 24 }
   mount(); state.backgroundMode.value = mode; state.imageBackground.value = effects; state.autoConnect.value = false
   for (const theme of ['light', 'dark', 'system'] as const) {
@@ -61,14 +63,6 @@ test('migrates the visible legacy background before the system appearance change
   expect(state.imageBackground.value).toEqual(effects)
 })
 
-test('synchronizes general settings from another tab without coupling background to theme', async () => {
-  mount(); state.backgroundMode.value = 'none'; state.autoConnect.value = false; await nextTick()
-  entries.set(UI_PREFERENCES_KEY, JSON.stringify({ ...readUiPreferences(localStorage), theme: 'dark', autoConnect: true }))
-  window.dispatchEvent(Object.assign(new Event('storage'), { key: UI_PREFERENCES_KEY })); await nextTick()
-  expect(state.theme.value).toBe('dark')
-  expect(state.backgroundMode.value).toBe('none')
-  expect(state.autoConnect.value).toBe(true)
-})
 test('previews width and image effects without persisting, then restores the committed values', async () => {
   mount(); state.contentWidth.value = 840; state.imageBackground.value = { opacity: 35, blur: 3, color: '#123456', colorOpacity: 20 }; await nextTick()
   const before = entries.get(UI_PREFERENCES_KEY)

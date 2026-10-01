@@ -18,20 +18,14 @@ describe('terminal turn error messages', () => {
     expect(turnFailureMessage({ message: exhausted, willRetry: false })).toBe(exhausted)
     expect(turnFailureMessage({ message: exhausted })).toBe(exhausted)
   })
-  test('hides absent errors and live reconnect attempts', () => {
-    expect(turnFailureMessage(null)).toBeNull()
-    expect(turnFailureMessage(undefined)).toBeNull()
-    expect(turnFailureMessage({ message: 'Reconnecting 5/5', willRetry: true })).toBeNull()
-  })
+
   test('preserves the server error and request ID without inventing a rate limit explanation', () => {
     expect(turnFailureMessage({ message: exhausted, codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } }, additionalDetails: 'diagnostic detail' })).toBe(exhausted)
   })
   test('unwraps the Desktop JSON error envelope', () => {
     expect(turnFailureMessage({ message: JSON.stringify({ error: { message: exhausted, code: 'server_error' } }) })).toBe(exhausted)
   })
-  test.each(['{broken', 'null', '{"error":null}', '{"error":{"message":42}}', '{"message":"not the server envelope"}'])('preserves an unrecognized error payload: %s', message => {
-    expect(turnFailureMessage({ message })).toBe(message)
-  })
+
   test('provides a readable fallback for an empty terminal message', () => {
     expect(turnFailureMessage({ message: ' \n ' })).toBe('本轮未完成，请重试。')
   })

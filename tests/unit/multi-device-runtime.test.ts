@@ -496,3 +496,19 @@ describe('server metadata synchronization', () => {
     } finally { globalThis.fetch = original }
   })
 })
+
+// Covers the live metadata owner instead of the retired single-device startup path.
+test('imports browser-only devices once, preserves the saved selection and removes browser metadata', async () => {
+  await profileApi.store.removeProfile(alpha.id); await profileApi.store.removeProfile(beta.id)
+  const first = { ...alpha, id: 'legacy-a', endpoint: 'ws://legacy-a.test/', cwd: '' }
+  const second = { ...beta, id: 'legacy-b', endpoint: 'ws://legacy-b.test/' }
+  storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, selectedId: second.id, profiles: [first, second] }))
+  await state.refreshProfiles(); await settle()
+  expect(storage.getItem(STORAGE_KEY)).toBeNull()
+  expect(state.profiles.value.map(profile => profile.id)).toEqual([first.id, second.id])
+  expect(state.profiles.value[0]?.cwd).toBe('~/codex-remote')
+  expect(state.selectedId.value).toBe(second.id)
+  expect(profileApi.snapshot.selectedId).toBe(second.id)
+  await state.refreshProfiles()
+  expect(profileApi.snapshot.profiles).toHaveLength(2)
+})
