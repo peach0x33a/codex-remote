@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { VIEWPORT_UPDATED } from '../composables/useVisualViewport'
 import { randomId } from '../lib/random-id'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
 import { PhArchive, PhAt, PhBrain, PhChatCircle, PhCopy, PhCpu, PhCube, PhFile, PhFolder, PhGearSix, PhGitDiff, PhLightning, PhMagnifyingGlass, PhPencilSimple, PhPlus, PhQuestion, PhRobot, PhShieldCheck, PhTarget, PhTerminal } from '@phosphor-icons/vue'
@@ -120,6 +121,7 @@ onMounted(() => {
   document.addEventListener('selectionchange', selectionChanged)
   window.addEventListener('resize', placeMenu)
   window.addEventListener('scroll', placeMenu, true)
+  window.addEventListener(VIEWPORT_UPDATED, placeMenu)
   window.visualViewport?.addEventListener('resize', placeMenu)
   window.visualViewport?.addEventListener('scroll', placeMenu)
 })
@@ -128,6 +130,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('selectionchange', selectionChanged)
   window.removeEventListener('resize', placeMenu)
   window.removeEventListener('scroll', placeMenu, true)
+  window.removeEventListener(VIEWPORT_UPDATED, placeMenu)
   window.visualViewport?.removeEventListener('resize', placeMenu)
   window.visualViewport?.removeEventListener('scroll', placeMenu)
 })

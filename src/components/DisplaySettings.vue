@@ -132,7 +132,7 @@ async function close() {
 .settings-footer > button, .settings-footer-actions { flex-shrink: 0; }
 .settings-footer-actions { display: flex; gap: 8px; }
 .settings-footer.is-warning .settings-feedback { color: var(--ink-soft); font-size: calc(13px * var(--ui-font-scale, 1)); }
-.display-settings-dialog { width: min(1040px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 32px)); max-height: calc(100dvh - 32px); overflow: hidden; border-radius: var(--radius-xl); background: var(--surface); }
+.display-settings-dialog { width: min(1040px, calc(100vw - 32px)); height: min(760px, calc(var(--app-viewport-height, 100dvh) - 32px)); max-height: calc(var(--app-viewport-height, 100dvh) - 32px); overflow: hidden; border-radius: var(--radius-xl); background: var(--surface); }
 .display-settings-dialog :deep(.dialog-inner) { display: flex; flex-direction: column; height: 100%; max-height: inherit; padding: 0; }
 .display-settings-dialog :deep(.dialog-header) { flex-shrink: 0; align-items: center; margin: 0; padding: 20px 24px; border-bottom: 1px solid var(--line-soft); }
 .display-settings-dialog :deep(.dialog-header h2) { font-size: calc(18px * var(--ui-font-scale, 1)); letter-spacing: normal; }
@@ -170,7 +170,7 @@ async function close() {
 @media (max-width: 560px) {
   .settings-footer { padding: 12px; gap: 8px; }
   .settings-footer > button, .settings-footer-actions .button { padding-inline: 12px; }
-  .display-settings-dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); border-radius: var(--radius-lg); }
+  .display-settings-dialog { width: calc(100vw - 24px); max-height: calc(var(--app-viewport-height, 100dvh) - 24px); border-radius: var(--radius-lg); }
   .display-settings-dialog :deep(.dialog-header) { padding: 18px 16px; }
   .settings-body { padding: 0 12px; }
   /* Stack the two navigation groups as scrollable rows so the content keeps the full width. */

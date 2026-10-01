@@ -31,6 +31,8 @@ export function useComposerEntrance(welcome: Ref<boolean>, area: Ref<HTMLElement
   }, { flush: 'pre' })
   reducedMotion.addEventListener('change', cancel)
   window.addEventListener('resize', cancel)
-  onUnmounted(() => { cancel(); reducedMotion.removeEventListener('change', cancel); window.removeEventListener('resize', cancel) })
+  window.visualViewport?.addEventListener('resize', cancel)
+  window.visualViewport?.addEventListener('scroll', cancel)
+  onUnmounted(() => { cancel(); reducedMotion.removeEventListener('change', cancel); window.removeEventListener('resize', cancel); window.visualViewport?.removeEventListener('resize', cancel); window.visualViewport?.removeEventListener('scroll', cancel) })
   return { moving }
 }

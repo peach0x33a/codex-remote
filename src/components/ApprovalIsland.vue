@@ -147,12 +147,12 @@ function move(direction: number) { selected.value = props.approvals[(index.value
 .island-navigation { display: flex; align-items: center; gap: 3px; flex-shrink: 0; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
 .island-navigation span { min-width: 34px; text-align: center; }
 .island-content:focus { outline: none; }
-.island-content { animation: island-content-in 180ms var(--ease); overflow: auto; max-height: min(42dvh, 360px); overscroll-behavior: contain; }
+.island-content { animation: island-content-in 180ms var(--ease); overflow: auto; max-height: min(calc(var(--app-viewport-height, 100dvh) * .42), 360px); overscroll-behavior: contain; }
 .island-content :deep(.approval-card) { margin: 0; padding: 8px 16px 12px; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
 .island-content :deep(.approval-card > p) { margin-bottom: 8px; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .island-content :deep(pre) { max-height: 130px; font-size: var(--code-font-size, 13px); padding: 9px 12px; background: var(--surface, var(--canvas)); }
 .island-content :deep(.approval-actions) { margin-top: 10px; }
 .island-content :deep(.button) { min-height: 34px; font-size: calc(13px * var(--ui-font-scale, 1)); padding: 6px 14px; }
 .island-content :deep(fieldset) { margin-top: 0; }
-@media (max-width: 760px) { .composer-island { margin-left: 8px; margin-right: 8px; }.island-header { padding: 8px 10px 0; }.island-content :deep(.approval-card) { padding: 8px 10px 12px; }.island-content { max-height: 36dvh; }.island-header h3 { font-size: calc(13px * var(--ui-font-scale, 1)); } }
+@media (max-width: 760px) { .composer-island { margin-left: 8px; margin-right: 8px; }.island-header { padding: 8px 10px 0; }.island-content :deep(.approval-card) { padding: 8px 10px 12px; }.island-content { max-height: calc(var(--app-viewport-height, 100dvh) * .36); }.island-header h3 { font-size: calc(13px * var(--ui-font-scale, 1)); } }
 </style>

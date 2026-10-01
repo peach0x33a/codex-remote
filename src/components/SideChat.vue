@@ -152,5 +152,9 @@ watch([visible, statusMessage, connectionError, codex.currentTurnFailure], async
 .side-chat-input form { position: relative; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
 .side-chat-input > form :deep(.prompt-editor) { width: 100%; min-height: 65px; max-height: 180px; padding: 0; font-size: calc(14px * var(--ui-font-scale, 1)); }
 .side-chat-actions { display: flex; justify-content: flex-end; gap: 4px; }
-@media (max-width: 1000px) { .side-chat { position: fixed; inset: 60px 8px 8px; width: auto; min-width: 0; z-index: 25; margin: 0; } }
+@media (max-width: 1000px) { .side-chat { position: fixed; inset: calc(var(--app-viewport-top, 0px) + 60px) 8px auto; height: calc(var(--app-viewport-height, 100dvh) - 68px); width: auto; min-width: 0; z-index: 25; margin: 0; } }
+:global(:root[data-viewport-compact]) .side-chat-input { padding: 4px; min-height: 0; max-height: calc(100% - 60px); overflow-y: auto; }
+:global(:root[data-viewport-compact]) .side-chat-input > form { padding: 8px; }
+:global(:root[data-viewport-compact]) .side-chat-input > form :deep(.prompt-editor) { min-height: min(65px, max(calc(28px * var(--ui-font-scale, 1)), calc(var(--app-viewport-height) - 230px))); max-height: min(180px, max(calc(28px * var(--ui-font-scale, 1)), calc(var(--app-viewport-height) - 230px))); }
+@media (max-width: 1000px), (pointer: coarse) { .side-chat-input > form :deep(.prompt-editor) { font-size: max(16px, calc(16px * var(--ui-font-scale, 1))); } }
 </style>

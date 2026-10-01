@@ -60,7 +60,7 @@
   .inline-skill { display: inline-flex; align-items: center; vertical-align: middle; gap: 6px; max-width: 100%; min-height: 30px; margin: 0 4px; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink-soft); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 24px; }
   .inline-skill > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Shell and compact desktop project navigation */
-  .app-shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); height: 100dvh; transition: grid-template-columns .2s var(--ease); }
+  .app-shell { position: fixed; inset: var(--app-viewport-top, 0px) 0 auto; display: grid; grid-template-columns: 280px minmax(0, 1fr); height: var(--app-viewport-height, 100dvh); transition: grid-template-columns .2s var(--ease); }
   .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
   .sidebar-collapsed .sidebar { visibility: hidden; }
   .sidebar { --nav-hover: color-mix(in srgb, var(--ink) 4%, transparent); --nav-selected: color-mix(in srgb, var(--ink) 8%, transparent); min-width: 0; display: flex; flex-direction: column; padding: 18px 12px 12px; background: var(--sidebar); overflow: hidden; }
@@ -167,7 +167,7 @@
   .model-trigger-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .model-trigger-effort { color: var(--muted); flex-shrink: 0; }
   .model-trigger > svg { opacity: .7; }
-  .composer-popover { position: fixed; z-index: 60; max-width: calc(100vw - 24px); max-height: min(520px, calc(100dvh - 24px)); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid var(--line-soft); border-radius: var(--radius-lg); background: var(--canvas); box-shadow: 0 12px 36px -8px rgba(15, 17, 21, .2); color: var(--ink); }
+  .composer-popover { position: fixed; z-index: 60; max-width: calc(100vw - 24px); max-height: min(520px, calc(var(--app-viewport-height, 100dvh) - 24px)); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid var(--line-soft); border-radius: var(--radius-lg); background: var(--canvas); box-shadow: 0 12px 36px -8px rgba(15, 17, 21, .2); color: var(--ink); }
   .composer-menu-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 10px 12px; border-radius: var(--radius-md); text-align: left; cursor: pointer; }
   .composer-menu-item:hover:not(:disabled), .composer-menu-item:focus-visible { background: var(--hover); outline: none; }
   .composer-menu-item > span { flex: 1; min-width: 0; }
@@ -420,7 +420,7 @@
   .error-banner .icon-button { color: var(--danger-ink); }
 
   /* Dialogs — chat.deepseek.com sign-in: pill inputs, pill primary button, soft popover shadow */
-  .dialog { width: min(480px, calc(100% - 32px)); max-height: min(92dvh, 920px); padding: 0; border: 0; border-radius: var(--radius-xl); background: var(--surface); color: var(--ink); box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 64px rgba(15, 17, 21, .16); overflow: auto; }
+  .dialog { width: min(480px, calc(100% - 32px)); position: fixed; inset-block: var(--app-viewport-top, 0px) var(--app-viewport-bottom, 0px); max-height: min(calc(var(--app-viewport-height, 100dvh) - 28px), 920px); padding: 0; border: 0; border-radius: var(--radius-xl); background: var(--surface); color: var(--ink); box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 64px rgba(15, 17, 21, .16); overflow: auto; }
   .dialog::backdrop { background: rgba(0, 0, 0, .24); }
   .dialog[open] { animation: dialog-in .22s var(--ease); }
   .dialog-wide { width: min(640px, calc(100% - 32px)); }
@@ -470,16 +470,16 @@
   @media (max-width: 1050px) and (min-width: 761px) { .app-shell { grid-template-columns: 260px minmax(0, 1fr); }.workspace-header { padding-left: 14px; padding-right: 14px; }.composer-area { padding-left: 22px; padding-right: 22px; }.welcome h1 { font-size: calc(42px * var(--ui-font-scale, 1)); letter-spacing: normal; }.suggestions > button { padding: 0 16px; } }
   @media (max-width: 760px) {
     .app-shell, .app-shell.sidebar-collapsed { display: block; }
-    .sidebar, .sidebar-collapsed .sidebar { position: fixed; z-index: 25; inset: 0 auto 0 0; width: min(300px, 85vw); padding-top: max(18px, env(safe-area-inset-top)); padding-bottom: max(12px, env(safe-area-inset-bottom)); visibility: hidden; transform: translateX(-100%); transition: transform .22s var(--ease), visibility .22s; box-shadow: 8px 0 32px rgba(0, 0, 0, .08); }
+    .sidebar, .sidebar-collapsed .sidebar { position: fixed; z-index: 25; inset: var(--app-viewport-top, 0px) auto auto 0; height: var(--app-viewport-height, 100dvh); width: min(300px, 85vw); padding-top: max(18px, env(safe-area-inset-top)); padding-bottom: max(12px, env(safe-area-inset-bottom)); visibility: hidden; transform: translateX(-100%); transition: transform .22s var(--ease), visibility .22s; box-shadow: 8px 0 32px rgba(0, 0, 0, .08); }
     .sidebar.is-open { visibility: visible; transform: translateX(0); }
-    .drawer-backdrop { display: block; position: fixed; inset: 0; width: 100%; height: 100%; z-index: 24; background: rgba(0, 0, 0, .24); }
+    .drawer-backdrop { display: block; position: fixed; inset: var(--app-viewport-top, 0px) 0 auto; width: 100%; height: var(--app-viewport-height, 100dvh); z-index: 24; background: rgba(0, 0, 0, .24); }
     .mobile-only { display: inline-grid; }
-    .workspace { height: 100dvh; }
+    .workspace { height: 100%; }
     .workspace-header { min-height: 56px; padding: max(8px, env(safe-area-inset-top)) 10px 8px; gap: 8px; }
     .header-left { gap: 4px; }.device-trigger { max-width: 165px; }.header-separator { margin: 0 2px; }.conversation-title { max-width: 32vw; font-size: calc(12px * var(--ui-font-scale, 1)); }
     .chat-body.is-welcome { padding-bottom: 4vh; }
     .welcome { padding: 0 24px 28px; }.welcome h1 { font-size: calc(38px * var(--ui-font-scale, 1)); letter-spacing: normal; }
-    .composer-area { padding: 8px 12px max(8px, env(safe-area-inset-bottom)); }.is-welcome .composer-area { padding-left: 24px; padding-right: 24px; }
+    .composer-area { padding: 8px 12px max(8px, var(--app-safe-bottom, env(safe-area-inset-bottom))); }.is-welcome .composer-area { padding-left: 24px; padding-right: 24px; }
     .composer { border-radius: var(--radius-xl); padding: 12px 10px 10px; }.composer textarea { min-height: 56px; font-size: calc(16px * var(--ui-font-scale, 1)); }
     .composer-toolbar { margin-top: 8px; gap: 4px; }.header-left { min-width: 0; }
     .composer-control { min-height: 36px; padding: 0 7px; font-size: calc(12px * var(--ui-font-scale, 1)); gap: 4px; }
@@ -494,12 +494,12 @@
     .prompt-editor { min-height: 66px; padding: 6px 8px; line-height: calc(27px * var(--ui-font-scale, 1)); }
     .queue-pane { margin-left: 0; margin-right: 0; }.queue-heading small { display: none; }
     .queue-list { max-height: 180px; }.image-preview-panel > img { max-height: min(360px, calc(100dvh - 90px)); }
-    .composer-popover { max-height: calc(100dvh - 24px); }.send-button { width: 34px; height: 34px; }
+    .composer-popover { max-height: calc(var(--app-viewport-height, 100dvh) - 24px); }.send-button { width: 34px; height: 34px; }
     
     .suggestions { gap: 8px; padding-top: 28px; }.suggestions > button { height: 40px; padding: 0 14px; font-size: calc(14px * var(--ui-font-scale, 1)); gap: 6px; }
     .message-list { padding: 8px 16px 24px; }.message-agent { gap: 10px; }.agent-avatar { width: 28px; height: 28px; }.activity, .working-status { margin-left: 38px; }.approval-card { margin-left: 0; padding: 16px; }.markdown { font-size: calc(15px * var(--ui-font-scale, 1)); line-height: calc(26px * var(--ui-font-scale, 1)); }.user-bubble { max-width: 88%; font-size: calc(15px * var(--ui-font-scale, 1)); line-height: calc(26px * var(--ui-font-scale, 1)); padding: 8px 14px; }
     .error-banner { margin: 0 12px 8px; font-size: calc(12px * var(--ui-font-scale, 1)); }.top-notice { padding: 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); justify-content: flex-start; }
-    .dialog { max-height: calc(100dvh - 28px); border-radius: var(--radius-lg); width: calc(100% - 24px); }.dialog-inner { padding: 22px 18px; }.dialog-header h2 { font-size: calc(19px * var(--ui-font-scale, 1)); }.dialog-header p { font-size: calc(13px * var(--ui-font-scale, 1)); }.field > input, .password-field input { font-size: calc(16px * var(--ui-font-scale, 1)); }.dialog-actions { bottom: -22px; }.dialog-actions .button { font-size: calc(13px * var(--ui-font-scale, 1)); padding: 0 14px; }
+    .dialog { max-height: calc(var(--app-viewport-height, 100dvh) - 28px); border-radius: var(--radius-lg); width: calc(100% - 24px); }.dialog-inner { padding: 22px 18px; }.dialog-header h2 { font-size: calc(19px * var(--ui-font-scale, 1)); }.dialog-header p { font-size: calc(13px * var(--ui-font-scale, 1)); }.field > input, .password-field input { font-size: calc(16px * var(--ui-font-scale, 1)); }.dialog-actions { bottom: -22px; }.dialog-actions .button { font-size: calc(13px * var(--ui-font-scale, 1)); padding: 0 14px; }
     .icon-button { min-width: 38px; min-height: 38px; }.icon-button.small { min-width: 32px; min-height: 32px; }.text-button { min-height: 32px; }.saved-tabs button { min-height: 38px; }
   }
   @media (max-width: 370px) { .welcome h1 { font-size: calc(30px * var(--ui-font-scale, 1)); letter-spacing: normal; }.brand-remote { display: none; }.permission-trigger > span { display: none; }.model-trigger { max-width: 160px; } }
@@ -560,3 +560,10 @@
 }
 
 .turn-stopped-duration { margin: 6px 0 20px 42px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; font-variant-numeric: tabular-nums; }
+
+/* The OS keyboard changes the visual viewport even when 100dvh stays unchanged. */
+:root[data-viewport-compact] .composer-area { max-height: min(100%, calc(var(--app-viewport-height) - 76px)); overflow-y: auto; overscroll-behavior: contain; }
+:root[data-viewport-compact] .composer .prompt-editor { min-height: min(76px, max(calc(28px * var(--ui-font-scale, 1) + 24px), calc(var(--app-viewport-height) - 230px))); max-height: min(220px, max(calc(28px * var(--ui-font-scale, 1) + 24px), calc(var(--app-viewport-height) - 230px))); }
+@media (max-width: 760px), (pointer: coarse) {
+  .composer .prompt-editor, .field > textarea { font-size: max(16px, calc(16px * var(--ui-font-scale, 1))); }
+}

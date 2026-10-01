@@ -39,6 +39,7 @@ import { hasPrompt, messageEditError, messageParts, promptText, readImages, type
 import DevicePicker from './components/DevicePicker.vue'
 import ReasoningPicker from './components/ReasoningPicker.vue'
 import ContextIndicator from './components/ContextIndicator.vue'
+import { useVisualViewport } from './composables/useVisualViewport'
 import { copyText } from './lib/clipboard'
 import ModelPicker from './components/ModelPicker.vue'
 import PermissionPicker from './components/PermissionPicker.vue'
@@ -409,6 +410,7 @@ const scrollSignal = computed(() => items.value.map(i => i.id + ((i.text?.length
 watch(scrollSignal, async () => { if (atBottom.value) { await nextTick(); scrollBottom() } })
 watch(() => active.value?.id, async () => { atBottom.value = true; await nextTick(); scrollBottom() })
 watch(menuOpen, async open => { if (open && isMobile.value) { await nextTick(); sidebar.value?.querySelector<HTMLButtonElement>('button')?.focus() } })
+useVisualViewport(() => { if (atBottom.value) void nextTick(scrollBottom) })
 function scrollBottom() { if (scrollArea.value) scrollArea.value.scrollTop = scrollArea.value.scrollHeight }
 function trackScroll() { const el = scrollArea.value; if (el) atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 100 }
 function openConnections(id?: string) { if (revising.value || changesState.value.applying) return; editingId.value = id; connectionOpen.value = true; menuOpen.value = false }

@@ -316,7 +316,7 @@ function clear() {
 .goal-row-error { padding: 4px 6px; }
 .goal-row-error p, .goal-error p { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .goal-row-error button, .goal-error button { flex-shrink: 0; }
-.goal-dialog { max-height: min(84dvh, 720px); background: var(--surface); }
+.goal-dialog { max-height: min(calc(var(--app-viewport-height, 100dvh) * .84), 720px); background: var(--surface); }
 .goal-dialog :deep(.dialog-inner) { display: flex; flex-direction: column; max-height: inherit; padding: 24px; }
 .goal-dialog :deep(.dialog-header) { flex-shrink: 0; margin-bottom: 12px; }
 .goal-dialog :deep(.dialog-header h2) { font-size: calc(18px * var(--ui-font-scale, 1)); }
@@ -363,4 +363,5 @@ function clear() {
   .goal-panel .text-button, .goal-dialog .text-button, .goal-dialog .button { min-height: 44px; }
   .goal-panel .goal-summary { min-height: 44px; }
 }
+@media (max-width: 760px), (pointer: coarse) { .goal-input { font-size: max(16px, calc(16px * var(--ui-font-scale, 1))); } }
 </style>

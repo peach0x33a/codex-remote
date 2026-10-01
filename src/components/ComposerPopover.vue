@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { VIEWPORT_UPDATED } from '../composables/useVisualViewport'
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 const props = withDefaults(defineProps<{ label: string; disabled?: boolean; hover?: boolean; width?: number; align?: 'start' | 'end'; placement?: 'top' | 'bottom'; triggerClass?: string; panelClass?: string; teleportTo?: string | HTMLElement }>(), { width: 320, align: 'start', placement: 'top', teleportTo: 'body' })
 const emit = defineEmits<{ change: [open: boolean] }>()
@@ -47,6 +48,7 @@ function keydown(event: KeyboardEvent) {
 function listen(add: boolean) {
   const method = add ? 'addEventListener' : 'removeEventListener'
   document[method]('pointerdown', outside); document[method]('focusin', outside); document[method]('composer-popover-open', otherOpened)
+  window[method](VIEWPORT_UPDATED, place)
   window[method]('resize', place); window[method]('scroll', place, true)
   window.visualViewport?.[method]('resize', place); window.visualViewport?.[method]('scroll', place)
 }
