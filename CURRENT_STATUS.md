@@ -2,23 +2,25 @@
 
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
+Published application code: 78e46cb
 
 ## Latest delivery
-Production build and Bun backend are updated to merged code commit 2226a80. Deployment record: task-history/2026-10-01-rebuild-and-publish.md.
+The default-directory connection failure, missing limited-goal Resume control, Session ID placement/copy behavior, false browser-speed disconnects, and interrupted-turn work-time footer are fixed and published. Current behavior and evidence: task-history/2026-10-02-session-streaming-stop-fixes.md.
 
-Device synchronization work is merged with the parallel file-preview, responsive layout and Copy Session ID changes. Merge commit: d9451d5. The default test suite is reduced from 1,017 to 634 cases (609 unit + all 25 integration); browser tests are reduced from 246 to 78 desktop/mobile cases. Details: task-history/2026-10-01-main-merge-test-pruning.md.
-
-## Preserved features
-- Server-owned shared device profiles/credentials, legacy browser migration and independent device runtimes.
-- LAN HTTP UUID support, subAgentActivity cards, and ~/codex-remote/no-project defaults.
-- Responsive island, device-aware file preview/downloads, Copy Session ID, side chat, native goals, queue controls and notifications.
-- Earlier implementation records remain in task-history/2026-10-01-server-device-sync.md and task-history/2026-10-01-responsive-files-session-menu.md.
+- Connecting a device does not prepare directories. Explicit new work creates its configured default directory as needed, without silent fallback or connection loss on failure.
+- Paused/blocked/usage-limited goals can resume. Exhausted budgets require user-confirmed edits; counters/objective are preserved.
+- Session ID appears in Context Capacity with a Copy button. No Session ID action remains in the three-dot menu, and copy failure never opens a window or selects the visible ID.
+- Browser-bound backpressure queues messages in order, without relying on Bun 1.3.14's unimplemented ws pause/resume methods. Combined queue/native pending data is bounded; lack of progress is distinguished from transient pressure.
+- Stopped-turn durations freeze at each turn boundary in the main conversation and side chat. Native/history timing is authoritative; unknown history is not assigned invented time.
+- All earlier multi-device, credentials, responsive layout, file preview/download, goals and queue work is retained.
 
 ## Verification
-634 unit/integration cases pass with 5,420 assertions. Vue/server typechecks and isolated production build pass. All previously covered lines in the eight critical bridge/store/runtime/queue/file modules remain covered. All 78 retained desktop/mobile browser cases pass (3.9 minutes). Exact commands and coverage comparison are recorded in this task's history entry. No skip/only/fixme markers are used to reduce counts.
+648 unit/integration tests pass (619 unit + 29 integration; 5,519 assertions). All 84 retained desktop/mobile browser cases pass. Typecheck, production build and diff checks pass. Existing bundle-size warning remains.
 
-## Repository / runtime boundary
-- Feature commit: 9eadf8a. Main's concurrent source changes were preserved at 263ebd6 before the three-way merge. Recovery branch: backup/master-before-device-sync-20261001.
-- Test pruning modifies tests/configuration and documentation, not production behavior.
-- Production dist is now published and Bun was restarted as PID 3125155, preserving its original environment and credential path. PID file: .local/server.pid; output: .local/server.log. The earlier verification build remains separate in .local/e2e-dist. No remote push occurred.
-- Tests use tests/mock-bridge.ts, which does not inherit production .env authentication or credential paths.
+## Running service
+Published at 2026-10-02T01:45:46.058398+08:00. Bun web bridge PID: 3888293; .local/server.pid and .local/server.log identify the detached process. Listener configuration and access-key authentication were preserved. A bridge restart invalidated old application login sessions; users refresh and log in again. Device settings and tokens remain persisted in the existing private store.
+
+Health endpoint and served HTML/service-worker hashes were verified. Previous static release: /home/peach0x33a/source/repos/apps/codex-remote/.local/releases/20261002-014546-before-copy-pressure-stop. No real upstream task/goal mutations were used in tests and no remote Git push occurred.
+
+## Continuity
+The merge and test-pruning records remain in task-history/2026-10-01-main-merge-test-pruning.md. The old snapshot and feature worktree remain available as recovery points; current work is on master.
