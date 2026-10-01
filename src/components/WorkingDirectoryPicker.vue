@@ -26,15 +26,15 @@ async function back() { adding.value = false; await popover.value?.focusInitial(
 .directory-trigger-content { display: inline-flex; align-items: center; gap: inherit; min-width: 0; max-width: 100%; }
 .directory-trigger-content > svg { flex-shrink: 0; }
 .directory-trigger-name { max-width: min(240px, 55vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-search { margin: 0 6px 7px; padding: 9px 4px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.project-search { margin: 0 var(--space-3) var(--space-2); padding: var(--space-2) 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
 .project-search input { border: 0; padding: 0; box-shadow: none; min-height: 26px; background: transparent; color: var(--ink); outline: none; }
-.project-option { min-height: 36px; padding: 7px 9px; border-radius: var(--radius-md); font-size: calc(14px * var(--ui-font-scale, 1)); }
+.project-option { font-size: calc(14px * var(--ui-font-scale, 1)); }
 .project-option > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-option[aria-checked="true"] { background: var(--hover); }
 .project-options { max-height: min(280px, 40dvh); }
-.project-add-form { display: grid; gap: 14px; padding: 5px 8px 8px; }
+.project-add-form { display: grid; gap: var(--space-4); padding: var(--space-2) var(--space-3); }
 .project-add-heading { display: flex; align-items: center; gap: 6px; font-size: calc(14px * var(--ui-font-scale, 1)); }
 .project-add-form label { display: grid; gap: 8px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
-.project-add-form input { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font-size: calc(14px * var(--ui-font-scale, 1)); }
-@media (pointer: coarse) { .project-option { min-height: 42px; }.project-add-form input { font-size: calc(16px * var(--ui-font-scale, 1)); } }
+.project-add-form input { width: 100%; min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-round); background: var(--canvas); color: var(--ink); font-size: calc(14px * var(--ui-font-scale, 1)); }
+@media (pointer: coarse) { .project-add-form input { font-size: calc(16px * var(--ui-font-scale, 1)); } }
 </style>

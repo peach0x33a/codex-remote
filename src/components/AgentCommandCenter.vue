@@ -90,7 +90,7 @@ watch(visibleRows, visible => {
 
 <style scoped>
 .agent-center-dialog { width: min(1100px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
-.agent-center-dialog :deep(.dialog-inner) { padding: 20px; }
+.agent-center-dialog :deep(.dialog-inner) { padding: var(--dialog-padding); }
 .agent-center-dialog :deep(.dialog-header) { margin-bottom: 12px; }
 .agent-center-dialog :deep(.dialog-header h2) { font-size: calc(18px * var(--ui-font-scale, 1)); line-height: calc(24px * var(--ui-font-scale, 1)); font-weight: 600; }
 .agent-center { --nav-hover: color-mix(in srgb, var(--ink) 4%, transparent); --nav-selected: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); min-width: 0; }
@@ -100,10 +100,10 @@ watch(visibleRows, visible => {
 .agent-center-search input { width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; border-radius: 0; outline: none; background: transparent; color: var(--ink); font-size: calc(14px * var(--ui-font-scale, 1)); }
 .agent-center-search input::placeholder { color: var(--muted); }
 .agent-center-grouping { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
-.agent-center-grouping :deep(.custom-select-trigger) { min-width: 88px; min-height: 34px; padding: 6px 10px; border-radius: var(--radius-sm); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); color: var(--ink-soft); }
+.agent-center-grouping :deep(.custom-select-trigger) { min-width: 88px; min-height: 36px; padding: 0 var(--space-3); border-radius: var(--radius-round); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); color: var(--ink-soft); }
 .agent-center-grouping :deep(.custom-select-trigger:hover:not(:disabled)), .agent-center-grouping :deep(.custom-select-trigger[aria-expanded="true"]) { background: var(--nav-hover); }
-.agent-center-grouping :deep(.custom-select-menu) { min-width: max(140px, 100%); padding: 4px; border-radius: var(--radius-lg); }
-.agent-center-grouping :deep(.custom-select-menu button) { min-height: 32px; padding: 6px 8px; border-radius: var(--radius-sm); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); }
+.agent-center-grouping :deep(.custom-select-menu) { min-width: max(140px, 100%); }
+.agent-center-grouping :deep(.custom-select-menu button) { font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); }
 .agent-center-grouping :deep(.custom-select-menu button:hover:not(:disabled)), .agent-center-grouping :deep(.custom-select-menu button:focus-visible) { background: var(--nav-hover); }
 .agent-center-grouping :deep(.custom-select-menu button[aria-selected="true"]) { color: var(--ink); background: var(--nav-selected); }
 .agent-center .text-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 8px; border-radius: var(--radius-sm); color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); white-space: nowrap; }
@@ -158,7 +158,6 @@ watch(visibleRows, visible => {
 .agent-center button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (max-width: 700px) {
   .agent-center-dialog { width: calc(100vw - 24px); max-width: calc(100vw - 24px); }
-  .agent-center-dialog :deep(.dialog-inner) { padding: 16px; }
   .agent-center-search { flex-basis: 100%; }
   .agent-center-search input { font-size: calc(16px * var(--ui-font-scale, 1)); }
   .agent-center-refresh { margin-left: auto; }

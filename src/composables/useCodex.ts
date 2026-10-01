@@ -1523,11 +1523,12 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   const wentOffline = () => { online.value = false; clearTimeout(reconnectTimer); reconnectTimer = undefined; if (connected.value) { client?.disconnect(); status.value = 'reconnecting'; error.value = '网络已断开，联网后会重新连接；不会自动重发消息。' } }
   let checksSession = true
   const wentOnline = () => { online.value = true; if (checksSession) void checkSession(); if (status.value === 'reconnecting') { reconnectCount = 0; scheduleReconnect() } }
-  watch([connected, () => active.value && activeTurn.value ? queueKey(active.value.id) + '/' + activeTurn.value.id : ''], ([online, key]) => {
+  watch([connected, () => active.value && activeTurn.value ? queueKey(active.value.id) + '/' + activeTurn.value.id : '',
+    () => goal.value?.status === 'active' ? goalKey(goal.value.threadId) + '/' + goal.value.createdAt : ''], ([online, key, activeGoal]) => {
     clearInterval(clockTimer); clockTimer = undefined
     clockNow.value = Date.now()
     if (key && !turnStartedAt.value.has(key)) turnStartedAt.value.set(key, clockNow.value)
-    if (online && key) clockTimer = setInterval(() => { clockNow.value = Date.now() }, 1000)
+    if (online && (key || activeGoal)) clockTimer = setInterval(() => { clockNow.value = Date.now() }, 1000)
   }, { flush: 'sync' })
   let profileRefreshTimer: ReturnType<typeof setInterval> | undefined
   const refreshVisibleProfiles = () => { if (typeof document === 'undefined' || document.visibilityState !== 'hidden') void refreshProfiles() }

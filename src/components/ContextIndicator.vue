@@ -38,9 +38,9 @@ const rows = computed(() => props.usage ? [
 </template>
 
 <style scoped>
-.context-session { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
-.context-session-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted); }
-.context-session-copy { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; }
-.context-session-id { display: block; width: 100%; min-width: 0; resize: none; padding: 7px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--canvas); color: var(--ink); font-family: var(--code-font-family); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; overflow-wrap: anywhere; user-select: text; cursor: text; }
+.context-session { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
+.context-session-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted); }
+.context-session-copy { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); }
+.context-session-id { display: block; width: 100%; min-width: 0; resize: none; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font-family: var(--code-font-family); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; overflow-wrap: anywhere; user-select: text; cursor: text; }
 .context-session-empty { margin: 0; color: var(--subtle); font-size: calc(12px * var(--ui-font-scale, 1)); }
 </style>

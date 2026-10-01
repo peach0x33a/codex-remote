@@ -60,6 +60,6 @@ defineExpose({ show, hide, focusInitial })
 <template>
   <button ref="trigger" type="button" class="composer-control" :class="[triggerClass, { 'is-open': open }]" :aria-label="label" :title="label" aria-haspopup="dialog" :aria-expanded="open" :aria-controls="open ? id : undefined" :disabled="disabled" @pointerenter="enter" @pointerleave="leave" @click="click" @keydown.down.prevent="show()"><slot name="trigger" :open="open" /></button>
   <Teleport :to="teleportTo">
-    <Transition name="composer-menu"><div v-if="open" :id="id" ref="panel" class="composer-popover" :class="panelClass" :inert="!open" role="dialog" :aria-label="label" :style="{ ...position, width: width + 'px' }" @pointerenter="enter" @pointerleave="leave" @pointerdown="pinned = true" @keydown="keydown"><slot :close="hide" :focus-initial="focusInitial" /></div></Transition>
+    <Transition name="composer-menu"><div v-if="open" :id="id" ref="panel" class="composer-popover menu-surface" :class="panelClass" :inert="!open" role="dialog" :aria-label="label" :style="{ ...position, width: width + 'px' }" @pointerenter="enter" @pointerleave="leave" @pointerdown="pinned = true" @keydown="keydown"><slot :close="hide" :focus-initial="focusInitial" /></div></Transition>
   </Teleport>
 </template>

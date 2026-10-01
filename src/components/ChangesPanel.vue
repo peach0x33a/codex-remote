@@ -208,8 +208,7 @@ defineExpose({ show, requestUndo })
 .changes-modal { position: fixed; margin: auto; width: calc(100vw - 24px); height: calc(100dvh - 24px); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); z-index: 70; }.changes-modal::backdrop { background: #0006; }
 .changes-reveal-enter-active { transition: opacity 180ms ease, transform 260ms var(--ease); }.changes-reveal-leave-active { transition: opacity 120ms ease, transform 200ms var(--ease); pointer-events: none; }.changes-reveal-enter-from, .changes-reveal-leave-to { opacity: 0; transform: translateX(24px); }
 .changes-modal.changes-reveal-enter-active, .changes-modal.changes-reveal-leave-active { transition: opacity 160ms ease, transform 180ms var(--ease); }.changes-modal.changes-reveal-enter-from, .changes-modal.changes-reveal-leave-to { transform: translateY(8px); }
-:global(.diff-scope-popover .composer-menu-item) { min-height: 36px; padding: 7px 10px; gap: 9px; }
-:global(.diff-scope-popover .diff-note) { padding: 9px 10px; }
-:global(.diff-scope-popover .diff-menu-divider) { margin: 4px 8px; }
+:global(.diff-scope-popover .diff-note) { padding: var(--menu-item-padding); }
+:global(.diff-scope-popover .diff-menu-divider) { margin: var(--space-1) var(--space-3); }
 @media (max-width: 760px) { .diff-toolbar-actions .icon-button, .diff-toolbar-actions :deep(.composer-control) { width: 36px; height: 36px; }.diff-file-tree { flex-basis: 130px; }.diff-file-heading { min-height: 44px; } }
 </style>

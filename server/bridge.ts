@@ -46,8 +46,9 @@ export function createBridge(options: Options) {
   const peers = new Set<ServerWebSocket<Peer>>()
   const digest = (text: string) => createHash('sha256').update(text).digest()
   const equal = (a: string, b: string) => timingSafeEqual(digest(a), digest(b))
-  const secure = options.origins.every(origin => origin.startsWith('https://'))
-  const cookie = (value: string, age = 43200) => COOKIE + '=' + value + '; HttpOnly; SameSite=Strict; Path=/; Max-Age=' + age + (secure ? '; Secure' : '')
+  // Cookie writes happen only after the request Origin passes the allowlist.
+  // Use that browser-facing scheme, including behind an HTTPS reverse proxy.
+  const cookie = (request: Request, value: string, age = 43200) => COOKIE + '=' + value + '; HttpOnly; SameSite=Strict; Path=/; Max-Age=' + age + (request.headers.get('origin')?.startsWith('https://') ? '; Secure' : '')
   const sessionId = (request: Request) => request.headers.get('cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith(COOKIE + '='))?.slice(COOKIE.length + 1) || ''
   const authenticated = (request: Request) => !options.accessKey || (sessions.get(sessionId(request)) || 0) > Date.now()
   const sameOrigin = (request: Request) => options.origins.includes(request.headers.get('origin') || '')
@@ -168,7 +169,7 @@ export function createBridge(options: Options) {
           failures.delete(ip)
           const key = randomBytes(32).toString('hex')
           sessions.set(key, Date.now() + 43_200_000)
-          return json({ authenticated: true }, 200, { 'Set-Cookie': cookie(key) })
+          return json({ authenticated: true }, 200, { 'Set-Cookie': cookie(request, key) })
         }
         if (!authenticated(request)) return json({ error: '请先输入此应用的访问密码。' }, 401)
         if (path === '/api/session' && request.method === 'DELETE') {
@@ -176,7 +177,7 @@ export function createBridge(options: Options) {
           sessions.delete(id)
           for (const [key, ticket] of tickets) if (ticket.session === id) tickets.delete(key)
           for (const peer of peers) if (peer.data.ticket.session === id) peer.close(4001, 'Signed out')
-          return json({ ok: true }, 200, { 'Set-Cookie': cookie('', 0) })
+          return json({ ok: true }, 200, { 'Set-Cookie': cookie(request, '', 0) })
         }
         if (path === '/api/profiles') {
           try {

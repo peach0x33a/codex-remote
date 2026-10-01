@@ -15,6 +15,7 @@ const props = withDefaults(defineProps<{
   disabled: boolean
   showSummary?: boolean
   scopeKey?: string
+  now?: number
 }>(), { showSummary: true })
 const emit = defineEmits<{ refresh: []; save: [update: GoalUpdate]; clear: [] }>()
 
@@ -50,16 +51,29 @@ const remaining = computed(() => {
   return goal?.tokenBudget != null && Number.isFinite(goal.tokensUsed) && goal.tokensUsed >= 0
     ? Math.max(0, goal.tokenBudget - goal.tokensUsed) : null
 })
+const observedAt = ref(Date.now())
+watch([() => props.scopeKey, () => props.goal?.threadId, () => props.goal?.createdAt, () => props.goal?.status, () => props.goal?.timeUsedSeconds], () => {
+  observedAt.value = Date.now()
+}, { flush: 'sync' })
+const elapsedSeconds = computed(() => {
+  const goal = props.goal
+  if (!goal || !Number.isFinite(goal.timeUsedSeconds) || goal.timeUsedSeconds < 0) return undefined
+  // Interpolate active time between server counters; token-only snapshots must
+  // not reset the clock, and paused/terminal counters remain authoritative.
+  const additional = goal.status === 'active' && props.now !== undefined
+    ? Math.max(0, Math.floor((props.now - observedAt.value) / 1000)) : 0
+  return Math.floor(goal.timeUsedSeconds) + additional
+})
 const elapsed = computed(() => {
-  if (!props.goal || !Number.isFinite(props.goal.timeUsedSeconds) || props.goal.timeUsedSeconds < 0) return '—'
-  const seconds = Math.floor(props.goal.timeUsedSeconds)
+  const seconds = elapsedSeconds.value
+  if (seconds === undefined) return '—'
   const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60)
   return hours ? `${number.format(hours)} 小时 ${minutes} 分 ${seconds % 60} 秒`
     : minutes ? `${minutes} 分 ${seconds % 60} 秒` : `${seconds} 秒`
 })
 const compactElapsed = computed(() => {
-  if (elapsed.value === '—') return '—'
-  const seconds = Math.floor(props.goal!.timeUsedSeconds)
+  const seconds = elapsedSeconds.value
+  if (seconds === undefined) return '—'
   return `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds % 3600 / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 })
 const budgetError = computed(() => {
@@ -317,7 +331,7 @@ function clear() {
 .goal-row-error p, .goal-error p { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .goal-row-error button, .goal-error button { flex-shrink: 0; }
 .goal-dialog { max-height: min(calc(var(--app-viewport-height, 100dvh) * .84), 720px); background: var(--surface); }
-.goal-dialog :deep(.dialog-inner) { display: flex; flex-direction: column; max-height: inherit; padding: 24px; }
+.goal-dialog :deep(.dialog-inner) { display: flex; flex-direction: column; max-height: inherit; padding: var(--dialog-padding); }
 .goal-dialog :deep(.dialog-header) { flex-shrink: 0; margin-bottom: 12px; }
 .goal-dialog :deep(.dialog-header h2) { font-size: calc(18px * var(--ui-font-scale, 1)); }
 .goal-form { display: flex; flex-direction: column; min-height: 0; }
@@ -354,7 +368,6 @@ function clear() {
 .goal-actions .secondary { background: var(--surface); }
 .goal-actions .secondary:hover:not(:disabled) { background: var(--hover); }
 @media (max-width: 600px) {
-  .goal-dialog :deep(.dialog-inner) { padding: 20px 16px; }
   .goal-heading { column-gap: 6px; }
   .goal-dialog .goal-input { font-size: calc(16px * var(--ui-font-scale, 1)); }
 }

@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, spyOn, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -50,6 +50,7 @@ afterEach(async () => { for (const app of apps.splice(0)) app.unmount(); await n
 type PanelProps = {
   goal: ThreadGoal | null; scopeKey?: string; loading: boolean; saving: boolean
   error: string; supported: boolean | null; disabled: boolean; showSummary: boolean
+  now?: number
 }
 const goalFixture = (patch: Partial<ThreadGoal> = {}): ThreadGoal => ({
   threadId: 'current-thread', objective: '继续现有任务', status: 'paused', tokenBudget: 4096,
@@ -67,6 +68,39 @@ function mountPanel(patch: Partial<PanelProps> = {}, startRequest = false) {
   const button = (label: string) => all(root).find(node => node.type === 'button' && node.props['aria-label'] === label)
   return { props, saves, root, button, resume: () => button('恢复目标'), refreshes: () => refreshes, clears: () => clears }
 }
+
+test('ticks active goal time between snapshots and freezes confirmed inactive counters', async () => {
+  const clock = spyOn(Date, 'now').mockReturnValue(100_000)
+  try {
+    const view = mountPanel({ goal: goalFixture({ status: 'active' }), now: 100_000 })
+    const elapsed = () => all(view.root).find(node => node.props.class === 'goal-time')?.props['aria-label']
+    expect(elapsed()).toBe('已用 23 秒')
+    view.props.now = 103_000; await nextTick()
+    expect(elapsed()).toBe('已用 26 秒')
+    clock.mockReturnValue(103_000)
+    view.props.goal = { ...view.props.goal!, tokensUsed: 900, updatedAt: 103 }; await nextTick()
+    view.props.now = 104_000; await nextTick()
+    expect(elapsed()).toBe('已用 27 秒')
+    clock.mockReturnValue(104_000)
+    view.props.goal = { ...view.props.goal!, timeUsedSeconds: 30 }; await nextTick()
+    expect(elapsed()).toBe('已用 30 秒')
+    view.props.now = 106_000; await nextTick()
+    expect(elapsed()).toBe('已用 32 秒')
+    for (const status of ['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const) {
+      view.props.goal = { ...view.props.goal!, status, timeUsedSeconds: 32 }; await nextTick()
+      view.props.now! += 10_000; await nextTick()
+      expect(elapsed()).toBe('已用 32 秒')
+    }
+    clock.mockReturnValue(200_000); view.props.now = 200_000
+    view.props.scopeKey = 'other-thread'
+    view.props.goal = goalFixture({ threadId: 'other-thread', status: 'active', timeUsedSeconds: 5, createdAt: 200 }); await nextTick()
+    expect(elapsed()).toBe('已用 5 秒')
+    view.props.now = 202_000; await nextTick()
+    expect(elapsed()).toBe('已用 7 秒')
+    view.props.goal = null; await nextTick()
+    expect(elapsed()).toBeUndefined()
+  } finally { clock.mockRestore() }
+})
 
 test('the island resumes an existing paused goal through save, preserving its objective, budget and counters', async () => {
   const view = mountPanel({}, true), initial = { ...view.props.goal! }, button = view.resume()!

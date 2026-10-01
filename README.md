@@ -197,6 +197,14 @@ ALLOW_UNIX_SOCKETS=false
 
 请替换示例访问密码。非 loopback 监听或公开域名必须设置 APP_ORIGIN 和至少 16 字符的 APP_ACCESS_KEY。密码验证后使用 HttpOnly / SameSite cookie；HTTPS 部署还会设置 Secure。来源校验同时作用于 HTTP 请求和 WebSocket 握手，登录有失败频率限制。
 
+`APP_ORIGIN` 支持用英文逗号分隔多个完整源地址，例如同时允许局域网和 Tailscale Serve 入口：
+
+```dotenv
+APP_ORIGIN=http://192.168.2.71:3000,https://your-device.your-tailnet.ts.net
+```
+
+将示例域名替换成自己的实际地址。每个地址只包含协议、主机和可选端口，不支持通配符、路径或查询参数；空格和末尾 `/` 会规范化，重复地址会去重。原有单地址写法继续有效。HTTP 和 HTTPS 入口并存时，HTTPS 登录仍设置 Secure cookie；不同主机的登录状态分别保存在浏览器中，设备资料继续共用服务端存储。修改配置后需重启 Bun 服务；允许 HTTP 地址不会使该地址具备 PWA 的 HTTPS 安装条件。
+
 例如，使用 Caddy 将同一站点完整转发到 Bun（包括 /api 和 WebSocket）：
 
 ~~~caddyfile

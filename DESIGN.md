@@ -8,6 +8,8 @@ Mobile: an accessible navigation drawer, full-width workspace, bottom-safe compo
 
 Colors (DeepSeek dsw tokens): brand #3964fe (hover #5686fe), soft #edf3fe, tint #e4edfd, ink #0f1115 / #1e232c, muted #61666b, subtle #81858c, caption #adb2b8, sidebar #f9fafb, borders rgba(0,0,0,.1), hover rgba(38,49,72,.06). Action buttons and single-line dialog inputs are pill-shaped; dialog inputs use the shared full radius on a #f9fafb fill, as on the DeepSeek sign-in page. Status is always labeled, never conveyed by color alone.
 
+Shared geometry: button-opened menus and select lists use the same menu-surface and composer-menu-item styles: 16px panel corners, 8px panel inset, 8px option corners, 8px/12px option padding, and at least 44px option height. The inset keeps inner and outer corners aligned. Model, permission, device, project, conversation-action, changes, settings, and task-grouping menus inherit these tokens instead of setting local shape or row-height overrides. Select triggers follow the existing pill controls; text/code areas retain 12px corners. Standard dialogs use 24px desktop / 16px mobile padding; split-pane settings and fullscreen workspaces retain their structural layouts. Use the shared 4/8/12/16/24px spacing scale for reusable control geometry, with visible inset keyboard focus for menu options.
+
 Typography: self-hosted DM Sans for Latin, PingFang SC / Noto Sans CJK SC / Microsoft YaHei for Chinese. 14–16px body, 46px weight-400 welcome prompt: “有什么需要帮忙？”. Code uses platform monospace.
 
 States: disconnected, connecting, connected, reconnecting, error; no sample data presented as real. Clear inline errors, pending approval controls, offline and update feedback.

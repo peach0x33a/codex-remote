@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { createBridge } from '../../server/bridge'
 
 const origin = 'http://codex.test'
+const secureOrigin = 'https://codex.tailnet.ts.net'
 const accessKey = 'integration-access-key-long'
 let app: ReturnType<typeof createBridge>
 let mock: ReturnType<typeof Bun.serve>
@@ -15,8 +16,8 @@ let upstreamHeaders: Headers
 let session = ''
 const post = (path: string, body: unknown, cookie = session, from = origin) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: from, Cookie: cookie }, body: JSON.stringify(body) })
 
-function wsMessages(url: string, cookie = session) {
-  const ws = new WebSocket(url, { headers: { Origin: origin, Cookie: cookie } })
+function wsMessages(url: string, cookie = session, from = origin) {
+  const ws = new WebSocket(url, { headers: { Origin: from, Cookie: cookie } })
   const messages: unknown[] = []
   let resolver: ((message: unknown) => void) | undefined
   ws.on('message', data => { const value = JSON.parse(data.toString()); if (resolver) { const resolve = resolver; resolver = undefined; resolve(value) } else messages.push(value) })
@@ -29,7 +30,7 @@ function wsMessages(url: string, cookie = session) {
 
 beforeAll(async () => {
   mock = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request, server) { upstreamHeaders = request.headers; if (request.headers.get('origin')) return new Response('No Origin permitted', { status: 403 }); if (server.upgrade(request, { data: undefined })) return; return new Response('Bad request', { status: 400 }) }, websocket: { message(ws, message) { const data = JSON.parse(String(message)); ws.send(JSON.stringify({ id: data.id, result: { echo: data.params, method: data.method } })) } } })
-  app = createBridge({ host: '127.0.0.1', port: 0, origins: [origin], accessKey })
+  app = createBridge({ host: '127.0.0.1', port: 0, origins: [origin, secureOrigin], accessKey })
   base = 'http://127.0.0.1:' + app.server.port
   const response = await post('/api/session', { key: accessKey }, '')
   session = response.headers.get('set-cookie')!.split(';')[0]
@@ -41,6 +42,41 @@ describe('authenticated connection bridge', () => {
     expect((await post('/api/connect', { endpoint: 'ws://localhost:1234' }, '')).status).toBe(401)
     expect((await post('/api/connect', { endpoint: 'ws://localhost:1234' }, session, 'https://attacker.example')).status).toBe(403)
     expect((await post('/api/session', { key: 'wrong' }, '')).status).toBe(401)
+  })
+  test('supports login, WebSocket traffic and logout on both HTTP and proxied HTTPS origins', async () => {
+    for (const from of [origin, secureOrigin]) {
+      const login = await post('/api/session', { key: accessKey }, '', from)
+      expect(login.status).toBe(200)
+      const setCookie = login.headers.get('set-cookie')!
+      expect(setCookie.includes('; Secure')).toBe(from === secureOrigin)
+      expect(setCookie).toContain('; HttpOnly; SameSite=Strict; Path=/;')
+      const cookie = setCookie.split(';')[0]!
+      const connection = await post('/api/connect', { endpoint: 'ws://127.0.0.1:' + mock.port }, cookie, from)
+      expect(connection.status).toBe(200)
+      const { ticket } = await connection.json()
+      const { ws, next } = wsMessages(base.replace('http:', 'ws:') + '/api/socket?ticket=' + ticket, cookie, from)
+      try {
+        expect(await next()).toEqual({ method: 'bridge/ready', params: {} })
+        ws.send(JSON.stringify({ id: 8, method: 'initialize', params: { from } }))
+        expect(await next()).toEqual({ id: 8, result: { echo: { from }, method: 'initialize' } })
+      } finally { ws.terminate() }
+      const logout = await fetch(base + '/api/session', { method: 'DELETE', headers: { Origin: from, Cookie: cookie } })
+      expect(logout.status).toBe(200)
+      expect(logout.headers.get('set-cookie')).toContain('Max-Age=0')
+      expect(logout.headers.get('set-cookie')!.includes('; Secure')).toBe(from === secureOrigin)
+      expect((await post('/api/connect', { endpoint: 'ws://127.0.0.1:' + mock.port }, cookie, from)).status).toBe(401)
+    }
+  })
+  test('keeps exact HTTP and WebSocket origin checks with multiple allowed addresses', async () => {
+    expect((await post('/api/connect', { endpoint: 'ws://localhost:1234' }, '', secureOrigin)).status).toBe(401)
+    const { ticket } = await (await post('/api/connect', { endpoint: 'ws://127.0.0.1:' + mock.port })).json()
+    const url = base + '/api/socket?ticket=' + ticket
+    for (const from of ['http://codex.tailnet.ts.net', 'https://codex.tailnet.ts.net:444', 'https://codex.tailnet.ts.net.attacker.example', 'null']) {
+      expect((await post('/api/session', { key: accessKey }, '', from)).status).toBe(403)
+      expect((await fetch(url, { headers: { Origin: from, Cookie: session } })).status).toBe(403)
+    }
+    const { ws, next } = wsMessages(url.replace('http:', 'ws:'), session, secureOrigin)
+    try { expect(await next()).toEqual({ method: 'bridge/ready', params: {} }) } finally { ws.terminate() }
   })
   test('uses a no-store, one-use ticket; supplies Bearer without browser Origin', async () => {
     const response = await post('/api/connect', { endpoint: 'ws://127.0.0.1:' + mock.port, token: 'test-capability-token' })

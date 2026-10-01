@@ -39,8 +39,8 @@ async function submenu(value: 'main' | 'copy' | 'fork') { page.value = value; aw
   </ComposerPopover>
 </template>
 <style scoped>
-:global(.conversation-actions-trigger) { padding: 0; width: 32px; height: 32px; border-radius: var(--radius-sm); }
-.composer-menu-item { min-height: 38px; font-size: calc(14px * var(--ui-font-scale, 1)); }
+:global(.conversation-actions-trigger) { padding: 0; width: 34px; height: 34px; border-radius: var(--radius-round); }
+.composer-menu-item { font-size: calc(14px * var(--ui-font-scale, 1)); }
 .composer-menu-item > span { flex: 1; }
-@media (pointer: coarse) { .composer-menu-item { min-height: 44px; } }
+@media (max-width: 760px), (pointer: coarse) { :global(.conversation-actions-trigger) { width: 44px; height: 44px; } }
 </style>

@@ -48,8 +48,8 @@ onBeforeUnmount(() => { listen(false); clearTimeout(prefixTimer) })
       <span>{{ selectedLabel }}</span><PhCaretDown :size="14" aria-hidden="true" />
     </button>
     <Transition name="select-menu">
-      <div v-if="open" :id="id" ref="panel" class="custom-select-menu" :class="{ 'is-above': above }" role="listbox" :aria-label="label" @keydown="keydown">
-        <button v-for="option in options" :key="option.value" type="button" role="option" :aria-selected="option.value === modelValue" :disabled="option.disabled" tabindex="-1" @click="select(option.value)"><span>{{ option.label }}</span><PhCheck v-if="option.value === modelValue" :size="16" aria-hidden="true" /></button>
+      <div v-if="open" :id="id" ref="panel" class="custom-select-menu menu-surface" :class="{ 'is-above': above }" role="listbox" :aria-label="label" @keydown="keydown">
+        <button v-for="option in options" :key="option.value" class="composer-menu-item" type="button" role="option" :aria-selected="option.value === modelValue" :disabled="option.disabled" tabindex="-1" @click="select(option.value)"><span>{{ option.label }}</span><PhCheck v-if="option.value === modelValue" :size="16" aria-hidden="true" /></button>
       </div>
     </Transition>
   </div>
@@ -57,13 +57,11 @@ onBeforeUnmount(() => { listen(false); clearTimeout(prefixTimer) })
 
 <style scoped>
 .custom-select { position: relative; }
-.custom-select-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 44px; min-width: 100px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); }
+.custom-select-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: 44px; min-width: 100px; padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-round); background: var(--surface); color: var(--ink); }
 .custom-select-trigger:hover:not(:disabled), .custom-select-trigger[aria-expanded="true"] { background: var(--hover); }
-.custom-select-trigger:focus-visible, .custom-select-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.custom-select-menu { position: absolute; z-index: 10; top: calc(100% + 6px); right: 0; min-width: max(160px, 100%); max-width: calc(100vw - 48px); padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); color: var(--ink); box-shadow: 0 10px 32px #0002; transform-origin: top right; }
-.custom-select-menu.is-above { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
-.custom-select-menu button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; min-height: 40px; padding: 8px 12px; border-radius: var(--radius-sm); text-align: left; }
-.custom-select-menu button:hover:not(:disabled), .custom-select-menu button:focus-visible { background: var(--hover); }
+.custom-select-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.custom-select-menu { position: absolute; z-index: 10; top: calc(100% + var(--space-2)); right: 0; min-width: max(160px, 100%); max-width: calc(100vw - 24px); max-height: min(320px, calc(var(--app-viewport-height, 100dvh) - 24px)); overflow-y: auto; overscroll-behavior: contain; transform-origin: top right; }
+.custom-select-menu.is-above { top: auto; bottom: calc(100% + var(--space-2)); transform-origin: bottom right; }
 .custom-select-menu button[aria-selected="true"] { color: var(--accent); }
 .select-menu-enter-active, .select-menu-leave-active { transition: opacity 140ms var(--ease), transform 140ms var(--ease); }
 .select-menu-enter-from, .select-menu-leave-to { opacity: 0; transform: translateY(-3px); }
