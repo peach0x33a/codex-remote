@@ -16,15 +16,15 @@ export class RpcClient {
   private cancelConnect: ((error: Error) => void) | null = null
   constructor(private handlers: Handlers) {}
 
-  async connect(endpoint: string, token: string) {
+  async connect(endpoint: string, token: string, credentialId?: string) {
     const fetchTimeout = setTimeout(() => this.abort.abort(), 15_000)
     let response: Response
     try {
       response = await fetch('/api/connect', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ endpoint, token }), signal: this.abort.signal,
+        body: JSON.stringify(credentialId ? { endpoint, credentialId } : { endpoint, token }), signal: this.abort.signal,
       })
-    } catch { throw new RpcError(this.stopped ? '连接已取消。' : '无法访问 Bun 连接服务或请求超时，请检查网络和服务状态。') }
+    } catch { throw new RpcError(this.stopped ? '连接已取消。' : '连接服务不可达，请检查网络或服务状态。') }
     finally { clearTimeout(fetchTimeout) }
     const data = await response.json() as { ticket?: string; error?: string }
     if (!response.ok || !data.ticket) throw new RpcError(data.error || '连接服务暂时不可用。', response.status)

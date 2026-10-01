@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { useStoredChoice, isStringList } from '../composables/useStoredChoice'
 import { computed, ref, useId, watch } from 'vue'
 import { PhArchive, PhCaretDown, PhFolder, PhListNumbers, PhPlus } from '@phosphor-icons/vue'
 import type { Thread } from '../../shared/protocol'
 
 const props = defineProps<{
+  deviceId?: string
   threads: Thread[]
   activeId?: string
   busyThreadIds?: string[]
@@ -19,8 +21,9 @@ const emit = defineEmits<{
 type Project = { cwd: string; name: string; threads: Thread[] }
 const id = useId()
 const previewCount = 5
-const collapsed = ref(new Set<string>())
-const expanded = ref(new Set<string>())
+const collapsedSaved = useStoredChoice(() => 'codex-remote.project-collapsed.' + (props.deviceId || 'default'), [] as string[], isStringList)
+const expandedSaved = useStoredChoice(() => 'codex-remote.project-expanded.' + (props.deviceId || 'default'), [] as string[], isStringList)
+const collapsed = computed(() => new Set(collapsedSaved.value)), expanded = computed(() => new Set(expandedSaved.value))
 const busyIds = computed(() => new Set(props.busyThreadIds))
 const approvalIds = computed(() => new Set(props.approvalThreadIds))
 const activeCwd = computed(() => props.threads.find(thread => thread.id === props.activeId)?.cwd)
@@ -40,12 +43,12 @@ const projects = computed(() => {
 })
 
 watch([() => props.activeId, activeCwd], () => {
-  if (activeCwd.value !== undefined) collapsed.value.delete(activeCwd.value)
-}, { immediate: true })
+  if (activeCwd.value !== undefined) collapsedSaved.value = collapsedSaved.value.filter(cwd => cwd !== activeCwd.value)
+})
 
-function toggle(set: Set<string>, cwd: string) {
-  if (set.has(cwd)) set.delete(cwd)
-  else set.add(cwd)
+function toggle(kind: 'collapsed' | 'expanded', cwd: string) {
+  const saved = kind === 'collapsed' ? collapsedSaved : expandedSaved
+  saved.value = saved.value.includes(cwd) ? saved.value.filter(value => value !== cwd) : [...saved.value, cwd]
 }
 function visibleThreads(project: Project) {
   if (collapsed.value.has(project.cwd)) return project.threads.filter(thread => thread.id === props.activeId)
@@ -80,7 +83,7 @@ function archive(thread: Thread) {
           :aria-label="`${collapsed.has(project.cwd) ? '展开' : '收起'}项目 ${project.name}`"
           :aria-expanded="!collapsed.has(project.cwd)"
           :aria-controls="`${id}-threads-${index}`"
-          @click="toggle(collapsed, project.cwd)"
+          @click="toggle('collapsed', project.cwd)"
         >
           <span class="project-disclosure" aria-hidden="true"><PhFolder :size="16" class="project-folder" /><PhCaretDown :size="14" class="project-caret" :class="{ collapsed: collapsed.has(project.cwd) }" /></span>
           <span class="project-name">{{ project.name }}</span>
@@ -107,7 +110,7 @@ function archive(thread: Thread) {
           class="project-show-more"
           :aria-expanded="expanded.has(project.cwd)"
           :aria-controls="`${id}-threads-${index}`"
-          @click="toggle(expanded, project.cwd)"
+          @click="toggle('expanded', project.cwd)"
         >
           <PhCaretDown :size="12" :class="{ reversed: expanded.has(project.cwd) }" aria-hidden="true" />
           <span>{{ expanded.has(project.cwd) ? '收起' : '展开显示' }}</span>
@@ -123,7 +126,7 @@ function archive(thread: Thread) {
 .project-group + .project-group { margin-top: 20px; }
 .project-header { position: relative; display: flex; align-items: center; min-height: 32px; border-radius: var(--radius-sm); transition: background-color 140ms var(--ease); }
 .project-header:hover, .project-header:focus-within { background: var(--nav-hover, var(--hover)); }
-.project-toggle { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 32px; padding: 6px 34px 6px 8px; border-radius: inherit; color: var(--muted); text-align: left; font-size: 14px; line-height: 20px; font-weight: 500; }
+.project-toggle { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 32px; padding: 6px 34px 6px 8px; border-radius: inherit; color: var(--muted); text-align: left; font-size: calc(14px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); font-weight: 500; }
 .project-toggle:hover { color: var(--ink); }
 .project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-disclosure { position: relative; display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 18px; color: var(--muted); }
@@ -139,20 +142,20 @@ function archive(thread: Thread) {
 .thread-row { position: relative; display: flex; align-items: center; min-width: 0; min-height: 30px; border-radius: var(--radius-sm); transition: background-color 140ms var(--ease); }
 .thread-row:hover { background: var(--nav-hover, var(--hover)); }
 .thread-row.active, .thread-row.active:hover { background: var(--nav-selected, var(--active)); }
-.thread-row > .thread-select { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 5px 9px 5px 32px; text-align: left; color: var(--ink-soft); font-size: 14px; line-height: 20px; font-weight: 400; border-radius: inherit; }
+.thread-row > .thread-select { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 5px 9px 5px 32px; text-align: left; color: var(--ink-soft); font-size: calc(14px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); font-weight: 400; border-radius: inherit; }
 .thread-row.active > .thread-select { color: var(--ink); }
 .thread-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-row.can-archive:hover > .thread-select, .thread-row.can-archive:focus-within > .thread-select { padding-right: 34px; }
-.queue-badge { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; padding: 0; color: var(--muted); background: transparent; border-radius: 0; font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; }
-.approval-badge { flex-shrink: 0; padding: 0; background: transparent; color: color-mix(in srgb, var(--warn) 80%, var(--ink)); font-size: 11px; line-height: 18px; font-weight: 500; }
+.queue-badge { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; padding: 0; color: var(--muted); background: transparent; border-radius: 0; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: calc(18px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
+.approval-badge { flex-shrink: 0; padding: 0; background: transparent; color: color-mix(in srgb, var(--warn) 80%, var(--ink)); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: calc(18px * var(--ui-font-scale, 1)); font-weight: 500; }
 .thread-running { flex-shrink: 0; width: 7px; height: 7px; border-radius: var(--radius-round); background: var(--accent); }
 .thread-row.can-archive:hover .archive-button, .thread-row.can-archive:focus-within .archive-button { opacity: 1; }
 .archive-button:disabled { opacity: 0; pointer-events: none; }
-.project-show-more { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 9px 5px 32px; border-radius: var(--radius-sm); color: var(--muted); font-size: 12px; line-height: 20px; text-align: left; }
+.project-show-more { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 9px 5px 32px; border-radius: var(--radius-sm); color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); text-align: left; }
 .project-show-more:hover { background: var(--nav-hover, var(--hover)); color: var(--ink); }
 .project-show-more > svg { display: none; }
 .remaining-count { font-variant-numeric: tabular-nums; }
-.project-empty { padding: 16px 8px; color: var(--muted); font-size: 13px; }
+.project-empty { padding: 16px 8px; color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (hover: none), (pointer: coarse) {
   .project-toggle, .project-show-more, .thread-row > .thread-select { min-height: 44px; }

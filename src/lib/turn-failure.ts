@@ -5,6 +5,23 @@ export type TurnFailureInfo = {
   codexErrorInfo?: unknown
 }
 
+/** Keep the real retry cause supplied by the server alongside its retry count. */
+export function retryStatusMessage(error: unknown): string {
+  if (!error || typeof error !== 'object') return '连接中断，正在重试…'
+  const value = error as Record<string, unknown>
+  const text = (input: unknown) => typeof input === 'string' && input.trim() ? turnFailureMessage({ message: input }) || '' : ''
+  const message = text(value.message), details = text(value.additionalDetails)
+  if (details) return !message || details.includes(message) ? details : message.includes(details) ? message : details + ' · ' + message
+  const info = value.codexErrorInfo
+  if (info && typeof info === 'object') {
+    for (const entry of Object.values(info)) {
+      const code = entry && typeof entry === 'object' && 'httpStatusCode' in entry ? entry.httpStatusCode : undefined
+      if (typeof code === 'number' && Number.isInteger(code) && code >= 100 && code <= 599 && !message.includes(String(code))) return 'HTTP ' + code + (message ? ' · ' + message : '')
+    }
+  }
+  return message || '连接中断，正在重试…'
+}
+
 /**
  * Desktop app-shared-bedb2212942c.js: HXn hides willRetry errors and unwraps
  * an exact { error: { message } } JSON response. Retry exhaustion remains a

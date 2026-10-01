@@ -7,9 +7,10 @@ async function configure(page: Page) {
   const dialog = page.getByRole('dialog', { name: '连接你的设备' })
   await dialog.getByLabel('设备名称').fill('测试工作站')
   await dialog.getByLabel('App Server 地址').fill(MOCK_ENDPOINT)
-  await dialog.getByPlaceholder('App Server 的 Bearer token').fill('memory-only-secret')
+  await dialog.getByPlaceholder('App Server 的 Bearer token').fill('e2e-transport-token')
   await dialog.getByPlaceholder('例如：/home/me/projects/my-app').fill('/test/project')
   await dialog.getByRole('button', { name: '保存并连接', exact: true }).click()
+  await expect(dialog).toBeHidden()
   await expect(page.getByTestId('selected-device')).toContainText('已连接')
 }
 
@@ -29,7 +30,7 @@ async function reopenAfterReload(page: Page, title: string) {
   await page.getByRole('menuitemradio', { name: /测试工作站/ }).click()
   await expect(page.getByTestId('selected-device')).toContainText('已连接')
   await showSidebar(page)
-  await page.locator('.sidebar').getByRole('button', { name: title, exact: true }).click()
+  await page.locator('.sidebar').getByRole('button', { name: new RegExp('^' + title) }).click()
 }
 
 async function showSidebar(page: Page) {
@@ -114,7 +115,7 @@ test('uses the composer working directory for the next thread/start request', as
   await page.getByRole('button', { name: '已有项目分析', exact: true }).click()
   await expect(page.getByText('这是保存在远端的会话。', { exact: true })).toBeVisible()
   await showSidebar(page)
-  await page.locator('.sidebar').getByRole('button', { name: '开启新对话', exact: true }).click()
+  await page.locator('.sidebar').getByRole('button', { name: 'Codex Remote 首页', exact: true }).click()
 
   const directory = page.locator('.composer-area').getByRole('button', { name: '工作目录', exact: true })
   await expect(directory).toBeVisible()
@@ -154,7 +155,7 @@ test('substitutes upstream retry text for live reasoning and resumes without an 
   await configure(page)
   await send(page, '思考计时')
   const status = page.locator('.working-status')
-  const preview = status.locator('.working-preview')
+  const preview = page.locator('.composer-island .island-thinking-preview')
   await expect(preview).toBeVisible()
   await expect(preview).toContainText('先检查事件顺序')
   const initialReasoning = (await preview.innerText()).trim()
@@ -168,7 +169,7 @@ test('substitutes upstream retry text for live reasoning and resumes without an 
   await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
 
   expect((await request.post(MOCK_URL + '/test/upstream-resume')).ok()).toBe(true)
-  await expect(status).not.toContainText(retryText)
+  await expect(status).toHaveCount(0)
   await expect(preview).toBeVisible()
   await expect(preview).toContainText('重连后继续检查。')
   await expect(page.locator('.error-banner')).toHaveCount(0)
@@ -183,9 +184,11 @@ test('advances elapsed thinking time during a real held reasoning stream', async
   await page.reload()
   await configure(page)
   await send(page, '思考计时')
-  const status = page.locator('.working-status')
-  await expect(status.locator('.working-preview')).toBeVisible()
-  await expect(status.locator('.working-preview')).toContainText('先检查事件顺序')
+  const status = page.locator('.composer-island .island-thinking')
+  await expect(status.locator('.island-thinking-preview')).toBeVisible()
+  await expect(status.locator('.island-thinking-preview')).toContainText('先检查事件顺序')
+  await expect(page.locator('.message-list .reasoning')).toHaveCount(0)
+  await expect(page.locator('.working-status')).toHaveCount(0)
   await expect(status).toContainText(/思考[\s\S]*\d+(?:\.\d+)?\s*秒/)
   const elapsedSeconds = async () => {
     const match = (await status.innerText()).match(/(\d+(?:\.\d+)?)\s*秒/)
@@ -198,6 +201,13 @@ test('advances elapsed thinking time during a real held reasoning stream', async
   await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
   await expect(page.locator('.error-banner')).toHaveCount(0)
   await finish(page, request)
+  await expect(status).toHaveCount(0)
+  const completed = page.locator('.message-list .reasoning')
+  await expect(completed).toHaveCount(1)
+  await expect(completed).not.toHaveAttribute('open', '')
+  await expect(completed.locator('.markdown')).toHaveCount(0)
+  await completed.locator('summary').click()
+  await expect(completed.locator('.markdown')).toContainText('先检查事件顺序')
 })
 
 test('shares native queue edits across clients and restores them after reload without browser dispatch', async ({ page, request }) => {

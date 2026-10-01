@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
+const transportToken = 'e2e-transport-token'
 
 async function configure(page: Page, connect = true, endpoint = MOCK_ENDPOINT) {
   await page.getByRole('button', { name: '选择设备', exact: true }).click()
@@ -7,9 +8,11 @@ async function configure(page: Page, connect = true, endpoint = MOCK_ENDPOINT) {
   const dialog = page.getByRole('dialog', { name: '连接你的设备' })
   await dialog.getByLabel('设备名称').fill('测试工作站')
   await dialog.getByLabel('App Server 地址').fill(endpoint)
-  await dialog.getByPlaceholder('App Server 的 Bearer token').fill('memory-only-secret')
+  await expect(dialog.getByRole('switch', { name: '记住令牌', exact: true })).toHaveAttribute('aria-checked', 'true')
+  await dialog.getByPlaceholder('App Server 的 Bearer token').fill(transportToken)
   await dialog.getByPlaceholder('例如：/home/me/projects/my-app').fill('/test/project')
   await dialog.getByRole('button', { name: connect ? '保存并连接' : '仅保存', exact: true }).click()
+  await expect(dialog).toBeHidden()
   if (connect) await expect(page.getByTestId('selected-device')).toContainText('测试工作站')
 }
 async function send(page: Page, text: string) { await page.getByRole('textbox', { name: '发送给 Codex 的消息' }).fill(text); await page.getByRole('button', { name: '发送消息', exact: true }).click() }
@@ -17,18 +20,24 @@ async function showSidebar(page: Page) { if (await page.getByRole('button', { na
 
 test.beforeEach(async ({ page, request }) => { await request.get(MOCK_URL + '/test/reset'); await page.goto('/') })
 
-test('saves profiles across reload without persisting transport tokens', async ({ page }) => {
+test('saves server credential references across reload without storing raw tokens in the browser', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '有什么需要帮忙？' })).toBeVisible()
   await configure(page, false)
   const storage = await page.evaluate(() => localStorage.getItem('codex-remote.connections.v1'))
-  expect(storage).toContain('测试工作站'); expect(storage).not.toContain('memory-only-secret')
+  expect(storage).toContain('测试工作站'); expect(storage).not.toContain(transportToken)
+  const profile = JSON.parse(storage!).profiles[0]
+  expect(profile.credentialId).toMatch(/^[a-f0-9]{64}$/)
   await page.reload()
   await page.getByRole('button', { name: '选择设备', exact: true }).click()
   await page.getByRole('menuitem', { name: '编辑设备 测试工作站' }).click()
   await expect(page.getByLabel('设备名称')).toHaveValue('测试工作站')
-  await expect(page.getByPlaceholder('App Server 的 Bearer token')).toHaveValue('')
+  await expect(page.getByPlaceholder('已保存在服务器，留空保留', { exact: true })).toHaveValue('')
+  await expect(page.getByRole('switch', { name: '记住令牌', exact: true })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByText('已保存的令牌不会回传浏览器。填写新值可替换。', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '保存并连接' }).click()
-  await expect(page.getByTestId('selected-device')).toContainText('测试工作站')
+  await expect(page.getByRole('dialog', { name: '连接你的设备', exact: true })).toBeHidden()
+  await expect(page.getByTestId('selected-device')).toContainText('已连接')
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('codex-remote.connections.v1')!).profiles[0].credentialId)).toBe(profile.credentialId)
 })
 
 test('initializes the protocol, streams a turn, restores history, and reconnects', async ({ page, request }) => {
@@ -329,15 +338,20 @@ test('keeps a background queue bound to its original conversation', async ({ pag
 
 test('renders native reasoning content in the live CLI-style preview and saved history', async ({ page, request }) => {
   await configure(page); await send(page, '思考适配')
-  await expect(page.locator('.working-preview')).toContainText('先检查事件顺序')
-  await expect(page.locator('.reasoning-snippet')).toContainText('保持原始位置')
+  await expect(page.locator('.composer-island .island-thinking-preview')).toContainText('先检查事件顺序')
+  await expect(page.locator('.message-list .reasoning')).toHaveCount(0)
+  await expect(page.locator('.working-status')).toHaveCount(0)
+  await request.get(MOCK_URL + '/test/finish')
+  await expect(page.locator('.island-thinking-preview')).toHaveCount(0)
+  await expect(page.locator('.reasoning summary')).toContainText(/已思考|思考过程/)
+  await expect(page.locator('.reasoning .markdown')).toHaveCount(0)
   await page.locator('.reasoning summary').click()
   await expect(page.locator('.reasoning .markdown')).toContainText('先检查事件顺序')
-  await request.get(MOCK_URL + '/test/finish')
-  await expect(page.locator('.reasoning summary')).toContainText(/已思考|思考过程/)
   await showSidebar(page); await page.getByRole('button', { name: '第二个会话', exact: true }).click()
   await showSidebar(page); await page.getByRole('button', { name: '思考适配', exact: true }).click()
-  await expect(page.locator('.reasoning-snippet')).toContainText('保持原始位置')
+  await expect(page.locator('.reasoning .markdown')).toHaveCount(0)
+  await page.locator('.reasoning summary').click()
+  await expect(page.locator('.reasoning .markdown')).toContainText('保持原始位置')
 })
 
 test('sends text-image-text in order with inline filenames and hover/click previews', async ({ page, request }, testInfo) => {
@@ -372,8 +386,10 @@ test('groups conversations by project and remembers a configurable content width
   await expect(page.getByRole('button', { name: '按项目筛选' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '第二个会话', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '第二个会话', exact: true }).click()
+  await showSidebar(page)
   await page.getByRole('button', { name: '设置' }).click()
-  await page.getByRole('menuitemradio', { name: '宽屏', exact: true }).click()
+  await page.getByRole('button', { name: '内容宽度', exact: true }).click()
+  await page.getByRole('option', { name: '宽屏', exact: true }).click()
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('codex-remote.ui.v1')!).contentWidth)).toBe(1280)
   await page.keyboard.press('Escape')
   await page.reload()
@@ -412,4 +428,11 @@ test('uses a consistent connected-device hover and right-aligned entry', async (
   const background = await row.evaluate(el => getComputedStyle(el).backgroundColor)
   await row.locator('.device-edit').hover()
   expect(await row.evaluate(el => getComputedStyle(el).backgroundColor)).toBe(background)
+})
+
+test('offers one connect action in the sidebar and composer before a device is connected', async ({ page }) => {
+  await expect(page.locator('.composer').getByRole('button', { name: '添加设备', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '选择模型', exact: true })).toHaveCount(0)
+  await page.locator('.composer').getByRole('button', { name: '添加设备', exact: true }).click()
+  await expect(page.getByLabel('设备名称')).toBeVisible()
 })

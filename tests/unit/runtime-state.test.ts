@@ -4,6 +4,7 @@ import { createRenderer, nextTick, type App } from 'vue'
 import { useCodex } from '../../src/composables/useCodex'
 import { RpcClient, RpcError } from '../../src/lib/rpc'
 import { promptText } from '../../src/lib/prompt'
+import { completedTurnDurations } from '../../src/lib/turn-duration'
 import { STORAGE_KEY } from '../../src/lib/profiles'
 import { UI_PREFERENCES_KEY } from '../../src/lib/ui-preferences'
 import type { ThreadGoal } from '../../src/lib/thread-goal'
@@ -174,6 +175,127 @@ afterEach(() => {
   for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name) }
   originals.clear()
 })
+describe('persisted connection credentials', () => {
+  function credentialBridge() {
+    const original = globalThis.fetch
+    const calls: { method: string; body: Record<string, string> }[] = [], saved = new Map<string, { endpoint: string; token: string }>()
+    let sequence = 0, failSave = false, failDelete = false
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (url === '/api/credentials') {
+        const body = JSON.parse(String(init?.body)); calls.push({ method: init?.method || '', body })
+        if (init?.method === 'DELETE') {
+          if (failDelete) return Response.json({ error: '删除失败' }, { status: 503 })
+          saved.delete(body.credentialId); return Response.json({ ok: true })
+        }
+        if (failSave) return Response.json({ error: '保存失败' }, { status: 503 })
+        const credentialId = (++sequence).toString(16).padStart(64, '0')
+        saved.set(credentialId, body); return Response.json({ credentialId })
+      }
+      if (url === '/api/connect') calls.push({ method: 'CONNECT', body: JSON.parse(String(init?.body)) })
+      return original(url, init)
+    }) as typeof fetch
+    return { calls, saved, failSave: () => { failSave = true }, failDelete: () => { failDelete = true } }
+  }
+  const details = { name: 'Authenticated device', endpoint: 'wss://private.example/codex', cwd: '/work', token: 'test-private-token', rememberToken: true }
+  test('stores only a credential reference and reuses it after a fresh runtime', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details)
+    expect(profile.credentialId).toMatch(/^[a-f0-9]{64}$/)
+    expect(bridge.saved.get(profile.credentialId!)?.token).toBe(details.token)
+    expect(state.tokenFor(profile.id)).toBe('')
+    expect(localStorage.getItem(STORAGE_KEY)).not.toContain(details.token)
+    await state.connect(profile)
+    expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: profile.endpoint, credentialId: profile.credentialId! })
+    app.unmount(); mountRuntime(); await settle()
+    const restored = state.profiles.value.find(item => item.id === profile.id)!
+    expect(restored.credentialId).toBe(profile.credentialId)
+    await state.connect(restored)
+    expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: profile.endpoint, credentialId: profile.credentialId! })
+  })
+  test('renaming with a blank token preserves the saved secret without reading it back', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details), mark = bridge.calls.length
+    const renamed = await state.saveProfile({ ...details, id: profile.id, name: 'Renamed', token: '' })
+    expect(renamed.credentialId).toBe(profile.credentialId)
+    expect(bridge.calls.slice(mark)).toHaveLength(0)
+    expect(bridge.saved.size).toBe(1)
+  })
+  test('rotation removes the old credential and explicit clearing removes the saved reference', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details)
+    const replacement = await state.saveProfile({ ...details, id: profile.id, token: 'replacement-token' })
+    expect(replacement.credentialId).not.toBe(profile.credentialId)
+    expect(bridge.saved.has(profile.credentialId!)).toBe(false)
+    const cleared = await state.saveProfile({ ...details, id: profile.id, token: '', clearToken: true })
+    expect(cleared.credentialId).toBeUndefined()
+    expect(bridge.saved.size).toBe(0)
+    expect(localStorage.getItem(STORAGE_KEY)).not.toContain('credentialId')
+  })
+  test('opting out keeps the token in memory only and clears an old saved secret', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details)
+    const temporary = await state.saveProfile({ ...details, id: profile.id, rememberToken: false })
+    expect(temporary.credentialId).toBeUndefined(); expect(bridge.saved.size).toBe(0)
+    expect(state.tokenFor(profile.id)).toBe(details.token)
+    expect(localStorage.getItem(STORAGE_KEY)).not.toContain(details.token)
+    await state.connect(temporary)
+    expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: temporary.endpoint, token: details.token })
+    app.unmount(); mountRuntime(); await settle()
+    expect(state.tokenFor(profile.id)).toBe('')
+  })
+  test('removing a device deletes its server credential before reporting completion', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details)
+    expect(await state.removeProfile(profile.id)).toBe(true)
+    expect(bridge.saved.size).toBe(0)
+    expect(state.profiles.value.some(item => item.id === profile.id)).toBe(false)
+  })
+  test('rejected secret persistence leaves the existing device unchanged', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details)
+    bridge.failSave()
+    await expect(state.saveProfile({ ...details, id: profile.id, token: 'new-secret' })).rejects.toThrow('保存失败')
+    expect(state.profiles.value.find(item => item.id === profile.id)?.credentialId).toBe(profile.credentialId)
+    expect(localStorage.getItem(STORAGE_KEY)).toContain(profile.credentialId!)
+  })
+  test('failed deletion preserves the device record and lets the user retry', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details)
+    bridge.failDelete()
+    await expect(state.removeProfile(profile.id)).rejects.toThrow('删除失败')
+    expect(state.profiles.value.some(item => item.id === profile.id)).toBe(true)
+    expect(localStorage.getItem(STORAGE_KEY)).toContain(profile.credentialId!)
+  })
+  test('a saved secret cannot silently move to a changed endpoint', async () => {
+    const bridge = credentialBridge(), profile = await state.saveProfile(details), mark = bridge.calls.length
+    await expect(state.saveProfile({ ...details, id: profile.id, endpoint: 'wss://different.example', token: '' })).rejects.toThrow('地址已更改')
+    expect(bridge.calls.slice(mark)).toHaveLength(0)
+    expect(bridge.saved.get(profile.credentialId!)?.endpoint).toBe(profile.endpoint)
+  })
+})
+
+describe('native conversation menu actions', () => {
+  test('rename updates metadata only after the server acknowledgement', async () => {
+    let release: (() => void) | undefined
+    archiveTransport = (method, params, reply) => { if (method !== 'thread/name/set') return false; expect(params).toEqual({ threadId: 'a', name: 'New name' }); release = () => reply({}); return true }
+    const pending = state.renameThread('a', ' New name ')
+    await eventually(() => !!release, 'rename request should arrive')
+    expect(state.active.value?.name).toBe('a')
+    release!(); await pending
+    expect(state.active.value?.name).toBe('New name')
+  })
+  test('fork asks the native server to defer goals and does not start another model turn', async () => {
+    const fork = { ...store.get('a')!, id: 'forked', turns: [] }
+    archiveTransport = (method, params, reply) => { if (method !== 'thread/fork') return false; expect(params).toEqual({ threadId: 'a', lastTurnId: 'last', excludeTurns: true, deferGoalContinuation: true }); reply({ thread: fork }); return true }
+    const result = await state.forkThread('a', 'last')
+    expect(result.id).toBe('forked'); expect(state.active.value?.id).toBe('a')
+    expect(requests.some(call => call.method === 'turn/start')).toBe(false)
+  })
+  test('late fork results from a disconnected device are not inserted into another device', async () => {
+    let release: (() => void) | undefined
+    archiveTransport = (method, _params, reply) => { if (method !== 'thread/fork') return false; release = () => reply({ thread: { ...store.get('a')!, id: 'old-fork' } }); return true }
+    const pending = state.forkThread('a')
+    const rejected = pending.catch(cause => cause)
+    await eventually(() => !!release, 'fork request should arrive')
+    await state.connect({ ...primaryDevice, id: 'different', endpoint: 'ws://different.test' })
+    release!(); expect(await rejected).toBeInstanceOf(Error)
+    expect(state.threads.value.some(thread => thread.id === 'old-fork')).toBe(false)
+  })
+})
+
 function beginReasoning() {
   const turn: Turn = { id: 'thought-turn', status: 'inProgress', items: [] }
   socket.emit('turn/started', { threadId: 'a', turn })
@@ -435,6 +557,32 @@ describe('archived thread service through the real RPC pipeline', () => {
   })
 })
 describe('runtime retry, timing, and projects without network ports', () => {
+  test.each(['summaryTextDelta', 'textDelta'])('moves live %s reasoning to completed history without losing streamed text', async deltaType => {
+    const turn: Turn = { id: 'reasoning-lifecycle', status: 'inProgress', items: [] }
+    socket.emit('turn/started', { threadId: 'a', turn })
+    socket.emit('item/started', { threadId: 'a', turnId: turn.id, item: { id: 'thought-move', type: 'reasoning', summary: [], content: [] } })
+    await settle()
+    expect(state.liveReasoning.value).toBe('')
+    socket.emit('item/reasoning/' + deltaType, { threadId: 'a', turnId: turn.id, itemId: 'thought-move', summaryIndex: 0, contentIndex: 0, delta: '实际思考正文' })
+    await settle()
+    expect(state.liveReasoning.value).toBe('实际思考正文')
+    socket.emit('item/completed', { threadId: 'a', turnId: turn.id, item: { id: 'thought-move', type: 'reasoning', summary: [], content: [] } })
+    await settle()
+    expect(state.liveReasoning.value).toBe('')
+    expect(state.thinkingElapsed.value).toBeUndefined()
+    const items = state.items.value.filter(item => item.id === 'thought-move')
+    expect(items).toHaveLength(1)
+    expect(items[0]?.status).toBe('completed')
+    expect(JSON.stringify(items[0])).toContain('实际思考正文')
+    expect(state.activeTurn.value?.id).toBe(turn.id)
+  })
+  test('live reasoning never leaks into another selected conversation', async () => {
+    beginReasoning(); await settle()
+    expect(state.liveReasoning.value).not.toBe('')
+    await state.openThread('b'); await settle()
+    expect(state.liveReasoning.value).toBe('')
+    expect(state.thinkingElapsed.value).toBeUndefined()
+  })
   test('work time advances without reasoning and resets for a new turn', async () => {
     const turn: Turn = { id: 'working-turn', status: 'inProgress', items: [] }
     store.get('a')!.turns = [turn]
@@ -462,6 +610,23 @@ describe('runtime retry, timing, and projects without network ports', () => {
     expect(state.workingElapsed.value).toBe(125)
   })
 
+  test('preserves native turn start when completion omits it and freezes summary duration', async () => {
+    const turn: Turn = { id: 'native-timed', status: 'inProgress', startedAt: 1000, items: [] }
+    socket.emit('turn/started', { threadId: 'a', turn })
+    socket.emit('item/completed', { threadId: 'a', turnId: turn.id, item: { id: 'timed-final', type: 'agentMessage', phase: 'final_answer', text: 'done' } })
+    expect(completedTurnDurations(state.displayTurns.value).size).toBe(0)
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, startedAt: null, completedAt: 1138, durationMs: null, status: 'completed' } })
+    expect(state.active.value!.turns.find(item => item.id === turn.id)!.startedAt).toBe(1000)
+    expect(completedTurnDurations(state.displayTurns.value).get('timed-final')).toBe(138)
+    setSystemTime(new Date('2026-10-03T10:00:00Z'))
+    expect(completedTurnDurations(state.displayTurns.value).get('timed-final')).toBe(138)
+  })
+  test('restores native completed work duration from history without using local join time', async () => {
+    store.get('a')!.turns = [{ id: 'stored-timed', status: 'completed', durationMs: 138000, items: [{ id: 'stored-final', type: 'agentMessage', phase: 'final_answer', text: 'stored summary' }] }, { id: 'unknown-time', status: 'completed', items: [{ id: 'unknown-final', type: 'agentMessage', text: 'no timing' }] }]
+    await state.openThread('a')
+    expect(completedTurnDurations(state.displayTurns.value).get('stored-final')).toBe(138)
+    expect(completedTurnDurations(state.displayTurns.value).has('unknown-final')).toBe(false)
+  })
   test('tracks compaction lifecycle even when server items omit their status', async () => {
     const turn: Turn = { id: 'compact-turn', status: 'inProgress', items: [] }
     socket.emit('turn/started', { threadId: 'a', turn })
@@ -518,6 +683,29 @@ describe('runtime retry, timing, and projects without network ports', () => {
     expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(1)
   })
 
+  test('shows a sent user message before a new thread/start is acknowledged', async () => {
+    let release: (() => void) | undefined
+    archiveTransport = (method, _params, reply) => {
+      if (method !== 'thread/start') return false
+      release = () => {
+        const created: Thread = { ...store.get('a')!, id: 'created', preview: '', turns: [] }
+        store.set(created.id, created)
+        reply({ thread: created, model: 'm' })
+      }
+      return true
+    }
+    state.newThread()
+    const sending = state.send([{ type: 'text', text: 'new conversation message' }])
+    await eventually(() => !!release, 'thread/start should be waiting for its acknowledgement')
+    expect(state.active.value?.id).toStartWith('pending-thread-')
+    expect(state.items.value.filter(item => item.type === 'userMessage').map(item => item.content?.[0])).toEqual([{ type: 'text', text: 'new conversation message', text_elements: [] }])
+    release!()
+    expect(await sending).toBe(true)
+    await settle()
+    expect(state.active.value?.id).toBe('created')
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(1)
+  })
+
   test('retryable errors use the working status and recover without a banner', async () => {
     const turn = beginReasoning(); await settle()
     socket.emit('error', { threadId: 'a', turnId: turn.id, willRetry: true, error: { message: 'Reconnecting... 1/5' } }); await settle()
@@ -526,6 +714,13 @@ describe('runtime retry, timing, and projects without network ports', () => {
     expect(state.reconnectStatus.value).toBe(''); expect(state.liveReasoning.value).toContain('Resumed.'); expect(state.error.value).toBe('')
     socket.emit('error', { threadId: 'a', turnId: turn.id, willRetry: false, error: { message: 'Final failure' } })
     expect(state.error.value).toBe(''); expect(state.currentTurnFailure.value).toBe('Final failure')
+  })
+  test('retry status includes upstream details instead of only Reconnecting', async () => {
+    const turn = beginReasoning(); await settle()
+    socket.emit('error', { threadId: 'a', turnId: turn.id, willRetry: true, error: { message: 'Reconnecting... 1/5', additionalDetails: '429 Too Many Requests, request id: req-42' } })
+    await settle()
+    expect(state.reconnectStatus.value).toBe('429 Too Many Requests, request id: req-42 · Reconnecting... 1/5')
+    expect(state.error.value).toBe(''); expect(state.currentTurnFailure.value).toBe('')
   })
   test('thinking time advances and stops on turn completion', async () => {
     const turn = beginReasoning(); await settle()
@@ -1351,6 +1546,24 @@ describe('thread goals through the real RPC pipeline', () => {
 })
 
 describe('file search scoped to the current remote directory', () => {
+  test('skills/list uses the selected directory and preserves native skill metadata', async () => {
+    archiveTransport = (method, p, reply) => { if (method !== 'skills/list') return false; reply({ data: [{ cwd: p.cwds[0], skills: [{ name: 'audit', description: 'Inspect', path: '/skills/audit/SKILL.md', scope: 'user', enabled: true }], errors: [] }] }); return true }
+    const catalog = await state.listSkills({ forceReload: true })
+    expect(catalog.skills[0]?.path).toBe('/skills/audit/SKILL.md')
+    expect(requests.findLast(request => request.method === 'skills/list')?.params).toEqual({ cwds: ['/projects/a'], forceReload: true })
+    await state.send([{ type: 'skill', id: 'chosen', name: 'audit', path: '/skills/audit/SKILL.md' }])
+    expect(requests.findLast(request => request.method === 'turn/start')?.params.input).toEqual([{ type: 'text', text: '$audit', text_elements: [{ byteRange: { start: 0, end: 6 }, placeholder: 'audit' }] }, { type: 'skill', name: 'audit', path: '/skills/audit/SKILL.md' }])
+  })
+  test('late skill results cannot overwrite a newer conversation', async () => {
+    let release: (() => void) | undefined
+    archiveTransport = (method, p, reply) => { if (method !== 'skills/list') return false; release = () => reply({ data: [{ cwd: p.cwds[0], skills: [], errors: [] }] }); return true }
+    const loading = state.listSkills().catch(error => error as Error)
+    await eventually(() => !!release, 'skill request pending')
+    await state.openThread('b'); release!()
+    expect(await loading).toBeInstanceOf(Error)
+    const before = state.skillsRevision.value
+    socket.emit('skills/changed', {}); expect(state.skillsRevision.value).toBe(before + 1)
+  })
   const file = (patch: Record<string, unknown> = {}) => ({ root: '/projects/a', path: 'src/my file.ts', match_type: 'file', file_name: 'my file.ts', score: 10, indices: [0, 2], ...patch })
   test('uses only active cwd and UUID cancellation token, returning at most 50 validated results', async () => {
     archiveTransport = (method, _p, reply) => { if (method !== 'fuzzyFileSearch') return false; reply({ files: Array.from({ length: 70 }, () => file()) }); return true }
@@ -1628,6 +1841,104 @@ describe('workspace commands and native turn patches', () => {
 })
 
 describe('explicit steer versus queued input', () => {
+  test('shows an optimistic steer before acknowledgement and keeps it until its own user item arrives', async () => {
+    const turn = await running()
+    let release: (() => void) | undefined
+    archiveTransport = (method, _params, reply) => { if (method !== 'turn/steer') return false; release = () => reply({ turnId: turn.id }); return true }
+    // Deliberately repeat the previous user text: replaying old history must not
+    // consume the new optimistic message just because the content is identical.
+    const repeated = [{ type: 'text' as const, text: 'original task' }]
+    const sent = state.steer(repeated)
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(1)
+    expect(state.pendingSteers.value).toHaveLength(1)
+    await eventually(() => !!release, 'steer ack pending')
+    release!(); expect(await sent).toBe(true)
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(1)
+    expect(state.pendingSteers.value).toHaveLength(1)
+    socket.emit('turn/started', { threadId: 'a', turn }); await settle()
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(1)
+    expect(state.pendingSteers.value).toHaveLength(1)
+    const item: Item = { id: 'accepted-steer', type: 'userMessage', content: [{ type: 'text', text: 'original task', text_elements: [] }] }
+    socket.emit('item/started', { threadId: 'a', turnId: turn.id, item }); await settle()
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(2)
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(state.items.value.some(item => item.id.startsWith('pending-'))).toBe(false)
+    expect(state.currentQueue.value).toHaveLength(0)
+  })
+  test('rejected steer removes its temporary message and reports failure', async () => {
+    await running()
+    archiveTransport = (method, _params, _reply, fail) => { if (method !== 'turn/steer') return false; fail(-32602, 'steer denied'); return true }
+    const notices: string[] = []; const off = state.onTaskNotice(notice => { notices.push(notice.kind) })
+    expect(await state.steer(parts)).toBe(false)
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(1)
+    expect(state.currentTurnFailure.value).toContain('steer denied')
+    expect(notices).toEqual(['failed']); off()
+  })
+  test('matches native steer clientId even when the server normalizes attachment content', async () => {
+    const turn = await running()
+    archiveTransport = (method, p, reply) => { if (method !== 'turn/steer') return false; reply({ turnId: p.expectedTurnId }); return true }
+    expect(await state.steer([{ type: 'image', id: 'picture', name: '图片.png', size: 4, url: 'data:image/png;base64,abcd' }])).toBe(true)
+    expect(state.pendingSteers.value).toHaveLength(1)
+    const request = requests.findLast(request => request.method === 'turn/steer')!
+    const item: Item = { id: 'normalized-image', clientId: request.params.clientUserMessageId, type: 'userMessage', content: [{ type: 'localImage', path: '/device/image.png' }] }
+    socket.emit('item/started', { threadId: 'a', turnId: turn.id, item }); await settle()
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(2)
+  })
+  test('background acceptance clears its island placeholder before revisiting the thread', async () => {
+    const turn = await running()
+    archiveTransport = (method, p, reply) => { if (method !== 'turn/steer') return false; reply({ turnId: p.expectedTurnId }); return true }
+    await state.steer(parts)
+    const request = requests.findLast(request => request.method === 'turn/steer')!
+    await state.openThread('b')
+    const item: Item = { id: 'background-steer', clientId: request.params.clientUserMessageId, type: 'userMessage', content: request.params.input }
+    store.get('a')!.turns[0]!.items.push(item)
+    socket.emit('item/started', { threadId: 'a', turnId: turn.id, item })
+    await state.openThread('a')
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(2)
+  })
+  test('withdraws an unsent steer while settings are still being acknowledged', async () => {
+    await running(true)
+    holdSettings = true; state.permission.value = 'readOnly'
+    const pending = state.steer(parts)
+    await eventually(() => !!releaseSettings, 'settings should still be pending')
+    const local = state.pendingSteers.value[0]!
+    expect(local.cancelable).toBe(true)
+    expect(state.withdrawPendingSteer(local.id)).toBe(true)
+    expect(state.pendingSteers.value).toHaveLength(0)
+    releaseSettings!(); expect(await pending).toBe(false)
+    expect(requests.some(call => call.method === 'turn/steer')).toBe(false)
+    expect(state.activeTurn.value).toBeDefined()
+  })
+  test('never pretends an already accepted steer was cancelled', async () => {
+    await running()
+    archiveTransport = (method, params, reply) => { if (method !== 'turn/steer') return false; reply({ turnId: params.expectedTurnId }); return true }
+    expect(await state.steer(parts)).toBe(true)
+    const local = state.pendingSteers.value[0]!
+    expect(local.cancelable).toBe(false)
+    expect(state.withdrawPendingSteer(local.id)).toBe(false)
+    expect(state.pendingSteers.value).toHaveLength(1)
+    expect(requests.some(call => call.method === 'turn/interrupt')).toBe(false)
+  })
+  test('too many referenced threads are rejected before a steer request is emitted', async () => {
+    await running()
+    const mentions = Array.from({ length: 17 }, (_, i) => ({ type: 'mention' as const, id: String(i), kind: 'thread' as const, name: 'chat ' + i, path: 'thread://chat-' + i }))
+    expect(await state.steer(mentions)).toBe(false)
+    expect(state.steering.value).toBe(false); expect(state.pendingSteers.value).toHaveLength(0)
+    expect(requests.some(call => call.method === 'turn/steer')).toBe(false)
+    expect(state.currentTurnFailure.value).toContain('16')
+  })
+  test('invalid replacement references never interrupt or revert the original message', async () => {
+    await running()
+    const item = state.items.value.find(item => item.type === 'userMessage')!
+    const mentions = Array.from({ length: 17 }, (_, i) => ({ type: 'mention' as const, id: String(i), kind: 'thread' as const, name: 'chat ' + i, path: 'thread://chat-' + i }))
+    const mark = requests.length, result = await state.editMessage(item.id, mentions)
+    expect(result.ok).toBe(false); expect(result.reverted).toBe(false)
+    expect(result.error).toContain('16')
+    expect(requests.slice(mark)).toHaveLength(0)
+    expect(state.items.value.some(message => message.id === item.id)).toBe(true)
+  })
   const parts = [{ type: 'text' as const, text: 'steer this turn' }]
   async function running(native = false) {
     if (native) { nativeQueueEnabled = true; await state.connect(primaryDevice, true); await eventually(() => state.serverQueueSupported.value, 'native capability should be ready') }
@@ -1739,6 +2050,21 @@ describe('explicit steer versus queued input', () => {
 })
 
 describe('turn failures stay with their conversation', () => {
+  test('publishes actionable task events but never notifies on retry or manual interruption', async () => {
+    const notices: { kind: string; threadId: string }[] = []
+    const off = state.onTaskNotice(notice => { notices.push(notice) })
+    const turn = await start()
+    socket.deliver({ id: 99, method: 'item/tool/requestUserInput', params: { threadId: 'a', turnId: turn.id, itemId: 'question', questions: [] } })
+    socket.emit('error', { threadId: 'a', turnId: turn.id, willRetry: true, error: { message: 'retry' } })
+    expect(notices.map(notice => notice.kind)).toEqual(['attention'])
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status: 'interrupted' } })
+    expect(notices.map(notice => notice.kind)).toEqual(['attention'])
+    const second = await start()
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...second, status: 'completed' } })
+    expect(notices.map(notice => notice.kind)).toEqual(['attention', 'completed'])
+    off(); await state.openThread('b')
+    expect(notices).toHaveLength(2)
+  })
   async function start() { await state.send([{ type: 'text', text: 'task' }]); return state.activeTurn.value! }
   test.each(['usageLimitExceeded', { responseTooManyFailedAttempts: { httpStatusCode: 429 } }])('terminal quota/retry failure is inline: %p', async codexErrorInfo => {
     const turn = await start(), failure = { message: '429: retry limit exceeded', codexErrorInfo }

@@ -1,10 +1,20 @@
 import type { Item, MessageContent } from '../../shared/protocol'
-export type PromptPart = { type: 'text'; text: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent }
-export const promptText = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? p.text : '[' + p.name + ']').join('')
-export const hasPrompt = (parts: PromptPart[]) => parts.some(p => p.type === 'image' || !!p.text.trim())
+import { THREAD_REFERENCE_MARKER, threadReferenceContext, threadReferenceLink } from './mentions'
+export type PromptPart = { type: 'text'; text: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
+export const promptText = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? p.text : p.type === 'skill' ? '$' + p.name : '[' + p.name + ']').join('')
+export const hasPrompt = (parts: PromptPart[]) => parts.some(p => p.type !== 'text' || !!p.text.trim())
 export function toInputs(parts: PromptPart[]): MessageContent[] {
   const input: MessageContent[] = []
+  const markedText = (text: string, placeholder: string): MessageContent => ({ type: 'text', text, text_elements: [{ byteRange: { start: 0, end: new TextEncoder().encode(text).length }, placeholder }] })
+  const context = threadReferenceContext(parts.filter((part): part is Extract<PromptPart, { type: 'mention' }> => part.type === 'mention' && part.path.startsWith('thread://')).map(part => part.path))
+  if (context) input.push(markedText(context, THREAD_REFERENCE_MARKER))
   for (const part of parts) {
+    if (part.type === 'mention') {
+      if (part.path.startsWith('thread://')) input.push(markedText(threadReferenceLink(part.name, part.path), part.name))
+      else input.push(markedText('@' + part.name, part.name), { type: 'mention', name: part.name, path: part.path })
+      continue
+    }
+    if (part.type === 'skill') { input.push(markedText('$' + part.name, part.name), { type: 'skill', name: part.name, path: part.path }); continue }
     if (part.type === 'text') { if (part.text) input.push({ type: 'text', text: part.text, text_elements: [] }); continue }
     // text_elements is the App Server's native UI-placeholder mechanism. Keep filenames
     // in the recorded input without adding unsupported fields to the image union.
@@ -22,8 +32,18 @@ export function messageParts(content: Item['content']): PromptPart[] {
     if (typeof part === 'string') { result.push({ type: 'text', text: part }); continue }
     if (part.type === 'text') {
       const element = part.text_elements?.[0]
+      if (part.text_elements?.length === 1 && element?.byteRange.start === 0 && element.byteRange.end === new TextEncoder().encode(part.text || '').length) {
+        if (element.placeholder === THREAD_REFERENCE_MARKER && part.text?.startsWith('## Referenced chats with Codex:')) continue
+        if (next && typeof next === 'object' && ['skill', 'mention'].includes(next.type) && next.name === element.placeholder) continue
+        const match = /^\[@[\s\S]*\]\((thread:\/\/[a-z0-9_-]{1,64})\)$/i.exec(part.text || '')
+        if (match && element.placeholder) { result.push({ type: 'mention', id: 'mention-' + i, name: element.placeholder, path: match[1]!, kind: 'thread' }); continue }
+      }
       if (part.text_elements?.length === 1 && element?.byteRange.start === 0 && element.byteRange.end === new TextEncoder().encode(part.text || '').length && element.placeholder && typeof next === 'object' && ['image', 'localImage'].includes(next.type)) { imageName = element.placeholder; continue }
       result.push({ type: 'text', text: part.text || '' })
+    } else if (part.type === 'mention' && part.name && part.path) {
+      result.push({ type: 'mention', id: 'mention-' + i, name: part.name, path: part.path, kind: part.path.startsWith('plugin://') ? 'plugin' : 'thread' })
+    } else if (part.type === 'skill' && part.name && part.path) {
+      result.push({ type: 'skill', id: 'skill-' + i, name: part.name, path: part.path })
     } else if (['image', 'localImage'].includes(part.type)) {
       imageIndex++
       result.push({ type: 'image', id: 'image-' + imageIndex, name: imageName || part.name || part.path?.split(/[\\/]/).pop() || '图片 ' + imageIndex, url: safeImageUrl(part.url), size: 0, source: { ...part } }); imageName = ''
@@ -75,6 +95,8 @@ export function messageEditError(item: Item): string | undefined {
   if (item.type !== 'userMessage') return '只能编辑自己的消息。'
   for (const part of item.content || []) {
     if (typeof part === 'string' || part.type === 'text') continue
+    if (part.type === 'skill' && part.name && part.path) continue
+    if (part.type === 'mention' && part.name && part.path && /^(plugin|thread):\/\//.test(part.path)) continue
     if (part.type === 'localImage' && part.path || part.type === 'image' && (part.fileId || safeImageUrl(part.url))) continue
     return '这条消息包含暂不支持编辑的附件类型。'
   }

@@ -1,7 +1,7 @@
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type BackgroundMode = 'animated' | 'image' | 'none'
 export type ImageBackgroundSettings = { opacity: number; blur: number; color: string; colorOpacity: number }
-export type UiPreferences = { contentWidth: number; theme: ThemePreference; autoConnect: boolean; backgroundMode: BackgroundMode; imageBackground: ImageBackgroundSettings }
+export type UiPreferences = { contentWidth: number; theme: ThemePreference; autoConnect: boolean; autoWrap: boolean; backgroundMode: BackgroundMode; imageBackground: ImageBackgroundSettings }
 export function defaultImageBackground(theme: 'light' | 'dark' = 'light'): ImageBackgroundSettings {
   return { opacity: 35, blur: 0, color: theme === 'dark' ? '#181818' : '#ffffff', colorOpacity: 0 }
 }
@@ -12,7 +12,7 @@ export function normalizeImageBackground(value: unknown, theme: 'light' | 'dark'
 }
 export const UI_PREFERENCES_KEY = 'codex-remote.ui.v1'
 export function readUiPreferences(storage?: Pick<Storage, 'getItem'>, systemDark = false): UiPreferences {
-  const defaults: UiPreferences = { contentWidth: 1080, theme: 'system', autoConnect: true, backgroundMode: 'animated', imageBackground: defaultImageBackground() }
+  const defaults: UiPreferences = { contentWidth: 1080, theme: 'system', autoConnect: true, autoWrap: false, backgroundMode: 'animated', imageBackground: defaultImageBackground() }
   const mode = (value: unknown): BackgroundMode => value === 'image' || value === 'none' || value === 'animated' ? value : 'animated'
   try {
     const saved = JSON.parse(storage?.getItem(UI_PREFERENCES_KEY) || '{}')
@@ -22,6 +22,7 @@ export function readUiPreferences(storage?: Pick<Storage, 'getItem'>, systemDark
       contentWidth: saved.contentWidth === 0 || (typeof saved.contentWidth === 'number' && saved.contentWidth >= 720 && saved.contentWidth <= 1600) ? saved.contentWidth : defaults.contentWidth,
       theme,
       autoConnect: typeof saved.autoConnect === 'boolean' ? saved.autoConnect : defaults.autoConnect,
+      autoWrap: typeof saved.autoWrap === 'boolean' ? saved.autoWrap : defaults.autoWrap,
       backgroundMode: mode(saved.backgroundMode ?? saved.backgrounds?.[previousTheme]),
       imageBackground: saved.imageBackground !== undefined ? normalizeImageBackground(saved.imageBackground)
         : saved.imageBackgrounds?.[previousTheme] ? normalizeImageBackground(saved.imageBackgrounds[previousTheme], previousTheme) : defaultImageBackground(),

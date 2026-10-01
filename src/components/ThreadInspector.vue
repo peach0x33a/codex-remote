@@ -138,7 +138,7 @@ watch(() => props.disabled ? [] : visibleAgents.value.map(agent => agent.id), (i
 <style scoped>
 .thread-inspector { display: flex; flex-direction: column; width: 100%; height: var(--inspector-height, 100%); min-width: 0; min-height: 0; color: var(--ink-soft); background: var(--sidebar); }
 .inspector-header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; min-height: 52px; padding: 8px 12px 8px 18px; }
-.inspector-header h2 { margin: 0; font-size: 14px; line-height: 22px; font-weight: 500; }
+.inspector-header h2 { margin: 0; font-size: calc(14px * var(--ui-font-scale, 1)); line-height: calc(22px * var(--ui-font-scale, 1)); font-weight: 500; }
 .inspector-header-actions { display: flex; align-items: center; gap: 2px; }
 .inspector-header .icon-button { width: 30px; height: 30px; }
 .inspector-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 10px 20px; }
@@ -148,41 +148,41 @@ watch(() => props.disabled ? [] : visibleAgents.value.map(agent => agent.id), (i
 .output-create > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .output-create[open] > summary { color: var(--ink-soft); }
 .output-create [role="menu"] { padding: 3px 0 3px 12px; }
-.inspector-section h3 { display: flex; align-items: baseline; gap: 7px; margin: 0 0 6px; padding: 6px 8px; color: var(--muted); font-size: 12px; line-height: 20px; font-weight: 500; }
+.inspector-section h3 { display: flex; align-items: baseline; gap: 7px; margin: 0 0 6px; padding: 6px 8px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); font-weight: 500; }
 .inspector-section h3 > span { font-weight: 400; font-variant-numeric: tabular-nums; }
 .inspector-list { list-style: none; margin: 0; padding: 0; }
 .inspector-files { max-height: min(34dvh, 360px); overflow-y: auto; }
-.inspector-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border-radius: var(--radius-sm); text-align: left; color: var(--ink-soft); font-size: 13px; line-height: 20px; transition: background-color 120ms ease, color 120ms ease; }
+.inspector-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border-radius: var(--radius-sm); text-align: left; color: var(--ink-soft); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); transition: background-color 120ms ease, color 120ms ease; }
 .inspector-row:hover:not(:disabled) { background: var(--hover); }
 .inspector-row:active:not(:disabled) { background: var(--active); }
 .inspector-row[aria-expanded="true"] { background: var(--hover); }
 .inspector-row > svg { color: var(--muted); }
 .inspector-path, .inspector-agent-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspector-agent-name { font-size: 14px; }
+.inspector-agent-name { font-size: calc(14px * var(--ui-font-scale, 1)); }
 .inspector-row .inspector-agent-icon { color: color-mix(in srgb, var(--agent-color) 78%, var(--muted)); }
-.inspector-agent-state { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
-.inspector-counts { display: flex; flex-shrink: 0; gap: 5px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.inspector-agent-state { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.inspector-counts { display: flex; flex-shrink: 0; gap: 5px; font-size: calc(11px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
 .added { color: var(--diff-added); }
 .removed { color: var(--diff-removed); }
-.inspector-agent-detail { padding: 8px 8px 12px 34px; font-size: 13px; line-height: 1.7; }
+.inspector-agent-detail { padding: 8px 8px 12px 34px; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.7; }
 .inspector-metadata { margin: 0; }
 .inspector-metadata > div { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; }
 .inspector-metadata dt { color: var(--muted); }
 .inspector-metadata dd { margin: 0; overflow-wrap: anywhere; }
 .inspector-result { margin-top: 10px; }
-.inspector-result h4 { margin: 0 0 4px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.inspector-result h4 { margin: 0 0 4px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 400; }
 .inspector-result p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; }
-.thread-inspector .text-button { min-height: 32px; padding: 4px 8px; border-radius: var(--radius-sm); font-size: 12px; }
+.thread-inspector .text-button { min-height: 32px; padding: 4px 8px; border-radius: var(--radius-sm); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .thread-inspector .text-button:hover:not(:disabled) { background: var(--hover); }
 .inspector-open { margin-top: 8px; margin-left: -8px; }
 .inspector-more { margin: 4px 0 0 26px; }
 .inspector-caret, .inspector-more svg { transition: transform 180ms var(--ease); }
 .inspector-caret.rotated { transform: rotate(90deg); }
 .reversed { transform: rotate(180deg); }
-.inspector-error { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 12px; color: var(--danger); font-size: 13px; line-height: 1.6; }
+.inspector-error { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 12px; color: var(--danger); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
 .inspector-error p { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .inspector-error button { flex-shrink: 0; }
-.inspector-note { padding: 6px 8px 12px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.inspector-note { padding: 6px 8px 12px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.7; }
 .inspector-empty { padding-top: 20px; }
 .thread-inspector button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (max-width: 760px), (hover: none), (pointer: coarse) {

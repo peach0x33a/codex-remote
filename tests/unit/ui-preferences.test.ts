@@ -6,7 +6,7 @@ const defaultImageBackgrounds = {
   light: { opacity: 35, blur: 0, color: '#ffffff', colorOpacity: 0 },
   dark: { opacity: 35, blur: 0, color: '#181818', colorOpacity: 0 },
 }
-const defaultPreferences = { contentWidth: 1080, theme: 'system' as const, autoConnect: true, backgroundMode: 'animated' as const, imageBackground: defaultImageBackgrounds.light }
+const defaultPreferences = { contentWidth: 1080, theme: 'system' as const, autoConnect: true, autoWrap: false, backgroundMode: 'animated' as const, imageBackground: defaultImageBackgrounds.light }
 function preferenceStorage(value: unknown) {
   const entries = new Map([[UI_PREFERENCES_KEY, JSON.stringify(value)]])
   return { getItem: (key: string) => entries.get(key) ?? null, setItem: (key: string, raw: string) => { entries.set(key, raw) } }
@@ -106,7 +106,7 @@ for (const [theme, systemDark, activeTheme] of [['light', true, 'light'], ['dark
     const imageBackgrounds = { light: { opacity: 72, blur: 9, color: '#123456', colorOpacity: 28 }, dark: { opacity: 54, blur: 18, color: '#abcdef', colorOpacity: 61 } }
     const storage = preferenceStorage({ contentWidth: 1280, theme, backgrounds, imageBackgrounds, otherPreference: 'keep' })
     const migrated = migrateUiPreferences(storage, systemDark)
-    expect(migrated).toEqual({ contentWidth: 1280, theme, autoConnect: true, backgroundMode: backgrounds[activeTheme], imageBackground: imageBackgrounds[activeTheme] })
+    expect(migrated).toEqual({ contentWidth: 1280, theme, autoConnect: true, autoWrap: false, backgroundMode: backgrounds[activeTheme], imageBackground: imageBackgrounds[activeTheme] })
     expect(JSON.parse(storage.getItem(UI_PREFERENCES_KEY)!)).toEqual({ ...migrated, otherPreference: 'keep' })
     expect(migrateUiPreferences(storage, !systemDark)).toEqual(migrated)
     expect(writeUiPreferences(storage, { ...migrated, theme: activeTheme === 'light' ? 'dark' : 'light' })).toBe(true)

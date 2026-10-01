@@ -19,6 +19,7 @@ const app = createBridge({
   allowedHosts: process.env.APP_ALLOWED_HOSTS?.split(',').map(s => s.trim()).filter(Boolean),
   allowUnix: process.env.ALLOW_UNIX_SOCKETS !== 'false',
   staticDir: new URL('../dist/', import.meta.url).pathname,
+  credentialFile: process.env.APP_CREDENTIALS_FILE || '.local/credentials.json',
 })
 console.log('Codex Remote listening on ' + (origin || 'http://' + host + ':' + app.server.port))
 const stop = () => { app.stop(); process.exit(0) }

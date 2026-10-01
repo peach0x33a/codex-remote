@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useStoredChoice, isBoolean, oneOf } from '../composables/useStoredChoice'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { PhArrowDown, PhArrowUp, PhArrowUUpLeft, PhArrowsClockwise, PhArrowsInLineVertical, PhCaretDown, PhCaretLeft, PhCaretRight, PhCheck, PhColumns, PhCopy, PhDotsThree, PhFileMagnifyingGlass, PhFolderSimple, PhGitDiff, PhTextAlignLeft, PhX } from '@phosphor-icons/vue'
 import ComposerPopover from './ComposerPopover.vue'
@@ -8,18 +9,19 @@ import MotionCollapse from './MotionCollapse.vue'
 import { createWorktreeChanges, parseGitPatch, undoUnavailableReason, type ChangeScope, type GitBranch, type GitCommit, type Request, type UndoReceipt } from '../lib/worktree-changes'
 import type { ChangedFile } from '../lib/thread-insights'
 
-const props = defineProps<{ open: boolean; wide: boolean; cwd: string; turnId: string; turnPatch: string; files: ChangedFile[]; historyFiles: ChangedFile[]; request: Request; connected: boolean; busy: boolean }>()
+const props = defineProps<{ deviceKey?: string; open: boolean; wide: boolean; cwd: string; turnId: string; turnPatch: string; files: ChangedFile[]; historyFiles: ChangedFile[]; request: Request; connected: boolean; busy: boolean }>()
 const emit = defineEmits<{ close: []; state: [state: { undone: boolean; applying: boolean }]; toast: [message: string] }>()
 const compactToolbar = ref(false)
 const scopePopover = ref<InstanceType<typeof ComposerPopover>>()
 let toolbarObserver: ResizeObserver | undefined
 const root = ref<HTMLElement>(), body = ref<HTMLElement>(), searchInput = ref<HTMLInputElement>()
 const historyPath = ref('')
-const scope = ref<ChangeScope['kind']>('lastTurn'), selectedRef = ref(''), refTitle = ref('')
+const choice = useStoredChoice<{ kind: ChangeScope['kind']; ref: string; title: string }>(() => 'codex-remote.diff-scope.' + (props.deviceKey || '') + '/' + props.cwd, { kind: 'lastTurn', ref: '', title: '' }, (value): value is { kind: ChangeScope['kind']; ref: string; title: string } => !!value && typeof value === 'object' && ['lastTurn', 'uncommitted', 'unstaged', 'staged', 'commit', 'branch'].includes(String((value as any).kind)) && typeof (value as any).ref === 'string' && typeof (value as any).title === 'string')
+const scope = computed({ get: () => choice.value.kind, set: kind => { choice.value = { ...choice.value, kind } } }), selectedRef = computed({ get: () => choice.value.ref, set: ref => { choice.value = { ...choice.value, ref } } }), refTitle = computed({ get: () => choice.value.title, set: title => { choice.value = { ...choice.value, title } } })
 const files = ref<ChangedFile[]>([]), patch = ref(''), error = ref(''), loading = ref(false)
 const refsMenu = ref<'commit' | 'branch' | ''>(''), refsLoading = ref(false), refsError = ref('')
 const commits = ref<GitCommit[]>([]), branches = ref<GitBranch[]>([])
-const wrap = ref(false), layout = ref<'unified' | 'split' | 'auto'>('unified'), tree = ref(false), searching = ref(false), query = ref(''), fileQuery = ref('')
+const wrap = useStoredChoice('codex-remote.diff-wrap.v1', false, isBoolean), layout = useStoredChoice<'unified' | 'split' | 'auto'>('codex-remote.diff-layout.v1', 'unified', oneOf(['unified', 'split', 'auto'])), tree = useStoredChoice('codex-remote.diff-tree.v1', false, isBoolean), searching = ref(false), query = ref(''), fileQuery = ref('')
 const filteredFiles = computed(() => files.value.filter(file => file.path.toLocaleLowerCase().includes(fileQuery.value.toLocaleLowerCase())))
 const layoutLabels = { unified: '统一', split: '并排', auto: '自动' }
 const confirmation = ref<{ turnId: string; patch: string }>()
@@ -78,8 +80,8 @@ async function reveal(path: string) {
   const row = [...(body.value?.querySelectorAll<HTMLElement>('[data-diff-path]') || [])].find(element => element.dataset.diffPath === path)
   row?.scrollIntoView({ block: 'start', behavior: 'instant' }); row?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
 }
-async function show(path?: string) {
-  historyPath.value = ''; scope.value = 'lastTurn'; selectedRef.value = refTitle.value = ''; await refresh()
+async function show(path?: string, lastTurn = false) {
+  historyPath.value = ''; if (path || lastTurn) { scope.value = 'lastTurn'; selectedRef.value = refTitle.value = '' }; await refresh()
   if (path && !files.value.some(file => file.path === path)) {
     const historic = props.historyFiles.find(file => file.path === path)
     if (historic) { historyPath.value = path; files.value = [historic]; patch.value = historic.diff }
@@ -87,7 +89,7 @@ async function show(path?: string) {
   if (path) await reveal(path)
 }
 async function requestUndo() {
-  await show()
+  await show(undefined, true)
   if (!undoHint.value && !applying.value) { confirmation.value = { turnId: props.turnId, patch: props.turnPatch }; confirm.value = true }
 }
 async function apply() {
@@ -178,7 +180,7 @@ defineExpose({ show, requestUndo })
 <style scoped>
 .changes-panel { display: flex; flex-direction: column; flex: 0 0 min(48%, 720px); width: min(48%, 720px); min-width: 0; min-height: 0; margin: 6px 8px 6px 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--canvas); color: var(--ink-soft); box-shadow: 0 5px 18px -14px rgba(0, 0, 0, .45); }
 .diff-heading { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 4px 12px; border-bottom: 1px solid var(--line); }
-.diff-heading > span { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.diff-heading > span { display: flex; align-items: center; gap: 7px; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .diff-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 8px 12px; }
 .diff-toolbar-actions { display: flex; align-items: center; gap: 1px; margin-left: auto; padding: 2px; background: var(--hover); border-radius: var(--radius-round); }
 .diff-toolbar-actions .icon-button { width: 29px; height: 29px; border-radius: var(--radius-round); }
@@ -186,25 +188,25 @@ defineExpose({ show, requestUndo })
 .diff-toolbar-actions [aria-pressed="true"] { background: var(--active); color: var(--ink); }
 .diff-toolbar > :deep(.composer-control) { background: var(--hover); max-width: 100%; }
 .diff-scope-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
-.diff-counts { display: inline-flex; flex-shrink: 0; gap: 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.diff-counts { display: inline-flex; flex-shrink: 0; gap: 4px; font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
 .added { color: var(--diff-added); }.removed { color: var(--diff-removed); }
 .diff-menu-divider { height: 1px; margin: 6px 10px; background: var(--line); }
 .diff-jump input { width: 100%; padding: 9px 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 0; }.diff-jump [role="menu"] { max-height: 300px; overflow-y: auto; }.diff-jump .composer-menu-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diff-ref-list { max-height: 300px; overflow-y: auto; }
 .diff-ref-list button > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.diff-ref-list small { display: block; font-size: 11px; color: var(--muted); }
+.diff-ref-list small { display: block; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted); }
 .diff-content { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .diff-body { flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; }
 .diff-file + .diff-file { border-top: 1px solid var(--line); }
-.diff-file-heading { display: flex; align-items: center; gap: 8px; min-height: 38px; width: 100%; padding: 7px 14px; text-align: left; font-size: 12px; }
+.diff-file-heading { display: flex; align-items: center; gap: 8px; min-height: 38px; width: 100%; padding: 7px 14px; text-align: left; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .diff-file-heading:hover { background: var(--hover); }.diff-file-heading > svg { flex-shrink: 0; transition: transform 180ms var(--ease); }.diff-file-heading .rotated { transform: rotate(-90deg); }
 .diff-file-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.diff-note { margin: 0; padding: 14px; font-size: 13px; color: var(--muted); }.diff-error { padding: 8px 14px; color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+.diff-note { margin: 0; padding: 14px; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--muted); }.diff-error { padding: 8px 14px; color: var(--danger); font-size: calc(13px * var(--ui-font-scale, 1)); overflow-wrap: anywhere; }
 .diff-search { display: flex; align-items: center; padding: 4px 12px 8px; gap: 4px; }.diff-search input { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 10px; }
-.diff-confirm { padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); font-size: 13px; }.diff-confirm > div { display: flex; flex-shrink: 0; }.diff-confirm .text-button { font-size: 12px; }
-.diff-file-tree { flex: 0 0 170px; min-width: 0; padding: 6px; border-right: 1px solid var(--line); overflow-y: auto; font-size: 12px; }.diff-file-tree p { display: flex; gap: 5px; padding: 8px 6px; color: var(--muted); overflow-wrap: anywhere; }.diff-file-tree button { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; min-height: 30px; padding: 5px 7px; border-radius: var(--radius-sm); }.diff-file-tree button:hover { background: var(--hover); }.diff-file-tree button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-confirm { padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); font-size: calc(13px * var(--ui-font-scale, 1)); }.diff-confirm > div { display: flex; flex-shrink: 0; }.diff-confirm .text-button { font-size: calc(12px * var(--ui-font-scale, 1)); }
+.diff-file-tree { flex: 0 0 170px; min-width: 0; padding: 6px; border-right: 1px solid var(--line); overflow-y: auto; font-size: calc(12px * var(--ui-font-scale, 1)); }.diff-file-tree p { display: flex; gap: 5px; padding: 8px 6px; color: var(--muted); overflow-wrap: anywhere; }.diff-file-tree button { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; min-height: 30px; padding: 5px 7px; border-radius: var(--radius-sm); }.diff-file-tree button:hover { background: var(--hover); }.diff-file-tree button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .changes-modal { position: fixed; margin: auto; width: calc(100vw - 24px); height: calc(100dvh - 24px); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); z-index: 70; }.changes-modal::backdrop { background: #0006; }
-.changes-reveal-enter-active { transition: flex-basis 260ms var(--ease), width 260ms var(--ease), opacity 180ms ease; }.changes-reveal-leave-active { transition: flex-basis 200ms var(--ease), width 200ms var(--ease), opacity 120ms ease; pointer-events: none; }.changes-reveal-enter-from, .changes-reveal-leave-to { flex-basis: 0; width: 0; opacity: 0; }
+.changes-reveal-enter-active { transition: opacity 180ms ease, transform 260ms var(--ease); }.changes-reveal-leave-active { transition: opacity 120ms ease, transform 200ms var(--ease); pointer-events: none; }.changes-reveal-enter-from, .changes-reveal-leave-to { opacity: 0; transform: translateX(24px); }
 .changes-modal.changes-reveal-enter-active, .changes-modal.changes-reveal-leave-active { transition: opacity 160ms ease, transform 180ms var(--ease); }.changes-modal.changes-reveal-enter-from, .changes-modal.changes-reveal-leave-to { transform: translateY(8px); }
 :global(.diff-scope-popover .composer-menu-item) { min-height: 36px; padding: 7px 10px; gap: 9px; }
 :global(.diff-scope-popover .diff-note) { padding: 9px 10px; }

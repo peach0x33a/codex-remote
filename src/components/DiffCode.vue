@@ -16,7 +16,7 @@ const matches = (text: string) => !!props.query && text.toLowerCase().includes(p
   </div>
 </template>
 <style scoped>
-.diff-code { min-width: 0; overflow: auto; font: 12px/1.75 var(--font-mono, ui-monospace, monospace); tab-size: 2; overscroll-behavior: contain; }
+.diff-code { min-width: 0; overflow: auto; font: var(--code-font-size, 13px)/1.75 var(--code-font-family, ui-monospace, monospace); tab-size: 2; overscroll-behavior: contain; }
 .diff-code-lines { min-width: 100%; width: max-content; }
 .diff-line { display: flex; min-height: 21px; min-width: 0; padding-right: 16px; color: var(--ink-soft); border-left: 3px solid transparent; }
 .diff-line code { white-space: pre; font: inherit; padding: 0 10px; }

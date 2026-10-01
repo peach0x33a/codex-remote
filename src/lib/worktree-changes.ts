@@ -30,9 +30,9 @@ export const MAX_PATCH_BYTES = 2 * 1024 * 1024
 export const MAX_UNDO_BYTES = 512 * 1024
 const encoder = new TextEncoder()
 const oidPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i
-const git = ['git', '--no-pager', '-c', 'core.quotePath=true', '-c', 'color.ui=false', '-c', 'core.fsmonitor=false']
+export const git = ['git', '--no-pager', '-c', 'core.quotePath=true', '-c', 'color.ui=false', '-c', 'core.fsmonitor=false']
 const diffOptions = ['--no-ext-diff', '--no-textconv', '--no-color', '--binary', '--full-index', '--find-renames', '--src-prefix=a/', '--dst-prefix=b/', '--relative']
-const remoteEnv = {
+export const remoteEnv = {
   GIT_DIR: null, GIT_WORK_TREE: null, GIT_INDEX_FILE: null, GIT_COMMON_DIR: null,
   GIT_OBJECT_DIRECTORY: null, GIT_ALTERNATE_OBJECT_DIRECTORIES: null,
   GIT_CONFIG_COUNT: null, GIT_CONFIG_PARAMETERS: null, GIT_EXTERNAL_DIFF: null, GIT_DIFF_OPTS: null,

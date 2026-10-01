@@ -1,27 +1,37 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
+import { PhArchive, PhAt, PhBrain, PhChatCircle, PhCopy, PhCpu, PhCube, PhFile, PhFolder, PhGearSix, PhGitDiff, PhLightning, PhMagnifyingGlass, PhPencilSimple, PhPlus, PhQuestion, PhRobot, PhShieldCheck, PhTarget, PhTerminal } from '@phosphor-icons/vue'
 import ImagePreview from './ImagePreview.vue'
 import { captureComposerTrigger, composerSuggestionInsertion, type CapturedComposerToken, type ComposerTrigger } from '../lib/composer-trigger'
 import type { PromptPart } from '../lib/prompt'
+import { atEditorBoundary, createInputHistory } from '../lib/input-history'
 type ImagePart = Extract<PromptPart, { type: 'image' }>
-type Suggestion = { id: string; label: string; description?: string; insertText?: string }
-const props = defineProps<{ modelValue: PromptPart[]; disabled?: boolean; id?: string; label?: string; suggestions?: Suggestion[]; suggestionsLoading?: boolean; suggestionsError?: string }>()
-const emit = defineEmits<{ 'update:modelValue': [parts: PromptPart[]]; keydown: [event: KeyboardEvent]; files: [files: File[]]; trigger: [trigger: ComposerTrigger | null]; selectSuggestion: [id: string] }>()
+type SkillPart = Extract<PromptPart, { type: 'skill' }>
+type MentionPart = Extract<PromptPart, { type: 'mention' }>
+type Suggestion = { id: string; label: string; description?: string; insertText?: string; group?: string; source?: string; category?: string; accessibleLabel?: string }
+const props = defineProps<{ modelValue: PromptPart[]; disabled?: boolean; id?: string; label?: string; placeholder?: string; suggestions?: Suggestion[]; suggestionsLoading?: boolean; suggestionsError?: string; externalSuggestions?: boolean; suggestionTarget?: HTMLElement | null; suggestionsActive?: boolean; inputHistory?: PromptPart[][]; historyScope?: string }>()
+const emit = defineEmits<{ 'update:modelValue': [parts: PromptPart[]]; keydown: [event: KeyboardEvent]; files: [files: File[]]; trigger: [trigger: ComposerTrigger | null]; selectSuggestion: [id: string]; navigateCompletion: [direction: number] }>()
 const editor = ref<HTMLDivElement>()
 const fallbackId = useId()
-const empty = computed(() => !props.modelValue.some(p => p.type === 'image' || p.text))
+const empty = computed(() => !props.modelValue.some(p => p.type !== 'text' || p.text))
 let savedRange: Range | undefined, lastFingerprint = ''
 const caretMarker = String.fromCharCode(0x200b)
+const inputHistory = createInputHistory()
+let recalledFingerprint = ''
+function resetHistory() { inputHistory.reset(); recalledFingerprint = '' }
+watch(() => props.historyScope, resetHistory, { flush: 'sync' })
+watch(() => props.modelValue, parts => { if (recalledFingerprint && fingerprint(parts) !== recalledFingerprint) resetHistory() })
 const images = new Map<string, ImagePart>()
+const skills = new Map<string, SkillPart | MentionPart>()
 const preview = ref<{ image: ImagePart; anchor: DOMRect; pinned: boolean }>()
-const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? 't:' + p.text : 'i:' + p.id).join('\0')
+const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? 't:' + p.text : p.type === 'image' ? 'i:' + p.id : JSON.stringify([p.type, p.id, p.name, p.path])).join('\0')
 const trigger = shallowRef<CapturedComposerToken | null>(null)
 const menu = ref<HTMLDivElement>(), highlighted = ref(0), composing = ref(false)
 const menuId = fallbackId + '-suggestions'
 const menuStyle = ref<Record<string, string>>({ visibility: 'hidden' })
 const menuOpen = computed(() => !!trigger.value && props.suggestions !== undefined && !props.disabled && !composing.value)
-const selectable = computed(() => !props.suggestionsLoading && !props.suggestionsError ? props.suggestions || [] : [])
-const activeOption = computed(() => menuOpen.value && selectable.value[highlighted.value] ? menuId + '-' + highlighted.value : undefined)
+const selectable = computed(() => props.suggestions || [])
+const activeOption = computed(() => menuOpen.value && props.suggestionsActive !== false && selectable.value[highlighted.value] ? menuId + '-' + highlighted.value : undefined)
 let capturedToken: { token: CapturedComposerToken; text: string } | undefined
 let dismissedToken = '', reportedTrigger = '', compositionCommitPending = false
 let compositionTimer: ReturnType<typeof setTimeout> | undefined, menuObserver: ResizeObserver | undefined
@@ -55,7 +65,7 @@ function refreshTrigger() {
 }
 function selectionChanged() { captureSelection(); refreshTrigger() }
 function focused() { void nextTick(refreshTrigger) }
-function blur() { captureSelection(); dismissSuggestions(true) }
+function blur(event: FocusEvent) { captureSelection(); if (props.externalSuggestions && (event.relatedTarget as HTMLElement | null)?.closest?.('.composer-island')) return; dismissSuggestions(true) }
 function compositionStart() {
   clearTimeout(compositionTimer); composing.value = true; compositionCommitPending = false
   dismissedToken = ''
@@ -75,6 +85,7 @@ function keyup(event: KeyboardEvent) {
   selectionChanged()
 }
 function placeMenu() {
+  if (props.externalSuggestions) return
   if (!menuOpen.value || !editor.value) return
   const anchor = editor.value.getBoundingClientRect(), viewport = window.visualViewport
   const leftEdge = (viewport?.offsetLeft || 0) + 8, topEdge = (viewport?.offsetTop || 0) + 8
@@ -152,6 +163,16 @@ function restoreSelection() {
   if (!savedRange || !root.contains(range.commonAncestorContainer)) { range.selectNodeContents(root); range.collapse(false) }
   selection?.removeAllRanges(); selection?.addRange(range); return range
 }
+function makeSkillChip(skill: SkillPart | MentionPart) {
+  const chip = document.createElement('span'); chip.className = 'inline-skill editor-skill-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = skill.id; chip.dataset.skillId = skill.id; chip.title = skill.path
+  const label = document.createElement('span'); label.textContent = skill.name
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('width', '16'); icon.setAttribute('height', '16'); icon.setAttribute('aria-hidden', 'true')
+  const outline = document.createElementNS('http://www.w3.org/2000/svg', 'path'); outline.setAttribute('d', 'M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z'); outline.setAttribute('fill', 'none'); outline.setAttribute('stroke', 'currentColor'); outline.setAttribute('stroke-width', '1.5'); outline.setAttribute('stroke-linejoin', 'round'); icon.append(outline)
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'image-chip-remove'; remove.dataset.imageRemove = skill.id; remove.tabIndex = -1; remove.setAttribute('aria-label', '移除技能 ' + skill.name)
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M6 6l12 12M18 6L6 18'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-linecap', 'round'); svg.append(path); remove.append(svg)
+  chip.append(icon, label, remove); return chip
+}
 function makeChip(image: ImagePart) {
   const chip = document.createElement('span'); chip.className = 'inline-image editor-image-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = image.id; chip.tabIndex = 0; chip.setAttribute('role', 'button'); chip.setAttribute('aria-label', '预览图片 ' + image.name)
   let thumb: HTMLElement | SVGElement
@@ -173,7 +194,7 @@ function read(): PromptPart[] {
       text(value); return
     }
     if (!(node instanceof HTMLElement)) return
-    if (node.dataset.attachmentId) { const image = images.get(node.dataset.attachmentId); if (image) parts.push(image); return }
+    if (node.dataset.attachmentId) { const part = images.get(node.dataset.attachmentId) || skills.get(node.dataset.attachmentId); if (part) parts.push(part); return }
     if (node.tagName === 'BR') { text('\n'); return }
     const block = ['DIV', 'P'].includes(node.tagName) && node !== editor.value
     const last = parts.at(-1)
@@ -190,8 +211,14 @@ function input(event: Event) { if ((event as InputEvent).isComposing && !composi
 function render(parts: PromptPart[]) {
   if (!editor.value) return
   dismissedToken = ''; closeSuggestions()
-  images.clear(); editor.value.replaceChildren(); savedRange = undefined
-  for (const part of parts) { if (part.type === 'text') editor.value.append(document.createTextNode(part.text)); else { images.set(part.id, part); const chip = makeChip(part); editor.value.append(chip); ensureImageCarets(chip) } }
+  images.clear(); skills.clear(); editor.value.replaceChildren(); savedRange = undefined
+  for (const part of parts) {
+    if (part.type === 'text') editor.value.append(document.createTextNode(part.text))
+    else {
+      if (part.type === 'image') images.set(part.id, part); else skills.set(part.id, part)
+      const chip = part.type === 'image' ? makeChip(part) : makeSkillChip(part); editor.value.append(chip); ensureImageCarets(chip)
+    }
+  }
   lastFingerprint = fingerprint(parts)
 }
 watch(() => props.modelValue, async parts => { await nextTick(); if (fingerprint(parts) !== lastFingerprint) render(parts) }, { immediate: true })
@@ -208,7 +235,28 @@ function insertNode(node: Node) {
   publish()
 }
 function reserveInsertion() { captureSelection(); return savedRange?.cloneRange() }
+function insertLineBreak() {
+  captureSelection()
+  const range = restoreSelection(); if (!range) return
+  range.deleteContents()
+  const fragment = document.createDocumentFragment(), anchor = makeCaretAnchor()
+  fragment.append(document.createTextNode('\n'), anchor)
+  range.insertNode(fragment)
+  placeCaretInside(anchor)
+  publish()
+}
 function insertImage(image: ImagePart, insertion?: Range) { if (insertion && editor.value?.contains(insertion.commonAncestorContainer)) savedRange = insertion.cloneRange(); images.set(image.id, image); insertNode(makeChip(image)) }
+function insertSkill(skill: { name: string; path: string }, replaceToken = false) {
+  if (props.disabled || replaceToken && !applySuggestion('')) return false
+  const part: SkillPart = { type: 'skill', id: 'skill-' + crypto.randomUUID(), name: skill.name, path: skill.path }
+  skills.set(part.id, part); insertNode(makeSkillChip(part)); return true
+}
+function insertMention(mention: { name: string; path: string; kind: MentionPart['kind'] }, replaceToken = false) {
+  if (props.disabled || replaceToken && !applySuggestion('')) return false
+  const part: MentionPart = { type: 'mention', id: 'mention-' + crypto.randomUUID(), ...mention }
+  skills.set(part.id, part); insertNode(makeSkillChip(part)); return true
+}
+function insertText(text: string) { if (!props.disabled) insertNode(document.createTextNode(text)) }
 function applySuggestion(text: string) {
   const root = editor.value, captured = capturedToken
   if (!root || !captured || props.disabled || composing.value || compositionCommitPending) return false
@@ -284,9 +332,12 @@ function deleteAdjacentImage(event: KeyboardEvent) {
 }
 function key(event: KeyboardEvent) {
   if (composing.value || compositionCommitPending || event.isComposing || event.keyCode === 229) { event.stopPropagation(); return }
+  if (event.key === 'Enter' && event.shiftKey && !props.disabled) { event.preventDefault(); event.stopPropagation(); insertLineBreak(); return }
   refreshTrigger()
   if (menuOpen.value && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismissSuggestions(); return }
+    if (props.externalSuggestions && ['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); emit('navigateCompletion', event.key === 'ArrowLeft' ? -1 : 1); return }
+    if (props.externalSuggestions && props.suggestionsActive === false && ['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) { event.preventDefault(); return }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault(); event.stopPropagation()
       if (selectable.value.length) highlighted.value = (highlighted.value + (event.key === 'ArrowDown' ? 1 : -1) + selectable.value.length) % selectable.value.length
@@ -296,45 +347,80 @@ function key(event: KeyboardEvent) {
       event.preventDefault(); event.stopPropagation(); selectSuggestion(highlighted.value); return
     }
   }
+  if (recallInput(event)) return
   if (deleteAdjacentImage(event)) return
   const chip = chipAt(event)
   if (chip && ['Enter', ' '].includes(event.key)) { event.preventDefault(); showImage(chip, true); return }
   emit('keydown', event)
 }
+function recallInput(event: KeyboardEvent) {
+  if (props.disabled || !props.inputHistory || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return false
+  const root = editor.value, selection = window.getSelection()
+  if (!root || document.activeElement !== root || !selection?.rangeCount || !selection.isCollapsed) return false
+  const range = selection.getRangeAt(0)
+  const atStart = atEditorBoundary(root, range, 'start')
+  const browsingEnd = inputHistory.active && atEditorBoundary(root, range, 'end')
+  if (!atStart && !empty.value && !browsingEnd) return false
+  const parts = event.key === 'ArrowUp' ? inputHistory.previous(props.modelValue, props.inputHistory) : inputHistory.next()
+  if (!parts) return false
+  event.preventDefault(); event.stopPropagation()
+  preview.value = undefined
+  recalledFingerprint = fingerprint(parts)
+  render(parts)
+  const caret = document.createRange(); caret.selectNodeContents(root); caret.collapse(false); savedRange = caret
+  restoreSelection()
+  const token = captureComposerTrigger(root, caret)
+  if (token) dismissedToken = tokenKey(token)
+  emit('update:modelValue', parts)
+  return true
+}
 function hover(event: PointerEvent) { if (event.pointerType !== 'mouse' || preview.value?.pinned) return; const chip = chipAt(event); if (chip) showImage(chip, false) }
 function leave(event: PointerEvent) { if (!preview.value?.pinned && !chipAt(event)?.contains(event.relatedTarget as Node)) preview.value = undefined }
-async function focus(end = false) { await nextTick(); if (end && editor.value) { const range = document.createRange(); range.selectNodeContents(editor.value); range.collapse(false); savedRange = range }; restoreSelection() }
-defineExpose({ focus, captureSelection, reserveInsertion, insertImage, applySuggestion })
+async function focus(end = false) { await nextTick(); if (end && editor.value) { const range = document.createRange(); range.selectNodeContents(editor.value); range.collapse(false); savedRange = range }; restoreSelection(); refreshTrigger() }
+function suggestionIcon(suggestion: Suggestion) {
+  if (suggestion.category === 'skills' || suggestion.category === 'plugins') return PhCube
+  if (suggestion.category === 'agents') return PhRobot
+  if (suggestion.category === 'threads') return PhChatCircle
+  if (suggestion.category === 'files') return PhFile
+  const command = suggestion.id.replace('command:', '')
+  if (command.startsWith('service-tier:')) return PhLightning
+  return ({ rename: PhPencilSimple, archive: PhArchive, new: PhPlus, model: PhCpu, effort: PhBrain, permissions: PhShieldCheck, skills: PhCube, goal: PhTarget, agents: PhRobot, tasks: PhRobot, resume: PhMagnifyingGlass, diff: PhGitDiff, mention: PhAt, project: PhFolder, cd: PhFolder, pwd: PhFolder, settings: PhGearSix, help: PhQuestion, copy: PhCopy } as Record<string, unknown>)[command] || PhTerminal
+}
+defineExpose({ focus, captureSelection, reserveInsertion, insertImage, insertSkill, insertMention, insertText, applySuggestion, dismissSuggestions })
 </script>
 <template>
-  <div :id="id || fallbackId" ref="editor" class="prompt-editor" :class="{ empty }" role="textbox" :aria-label="label || '发送给 Codex 的消息'" aria-multiline="true" :aria-disabled="disabled" :aria-autocomplete="suggestions !== undefined ? 'list' : undefined" :aria-controls="menuOpen ? menuId : undefined" :aria-expanded="suggestions !== undefined ? menuOpen : undefined" :aria-activedescendant="activeOption" :contenteditable="!disabled" data-placeholder="向 Codex 提问，或描述你想完成的任务" spellcheck="false" @input="input" @keyup="keyup" @mouseup="selectionChanged" @focus="focused" @blur="blur" @compositionstart="compositionStart" @compositionend="compositionEnd" @keydown="key" @paste="paste" @dragover.prevent @drop="drop" @click="click" @pointerover="hover" @pointerout="leave" @pointerdown="($event.target as HTMLElement).closest('[data-image-remove]') && $event.preventDefault()" />
-  <Teleport to="body">
-    <div v-if="menuOpen" ref="menu" class="prompt-suggestions" :style="menuStyle" @mousedown.prevent @click.stop>
-      <div :id="menuId" role="listbox" :aria-label="trigger?.kind === 'command' ? '命令' : '项目文件'" :aria-busy="suggestionsLoading || undefined">
-        <button v-for="(suggestion, index) in selectable" :id="menuId + '-' + index" :key="suggestion.id" type="button" role="option" tabindex="-1" class="prompt-suggestion" :class="{ highlighted: index === highlighted }" :aria-selected="index === highlighted" @pointermove="$event.pointerType === 'mouse' && (highlighted = index)" @click="selectSuggestion(index)">
-          <span class="prompt-suggestion-label">{{ suggestion.label }}</span>
-          <span v-if="suggestion.description" class="prompt-suggestion-description">{{ suggestion.description }}</span>
-        </button>
+  <div :id="id || fallbackId" ref="editor" class="prompt-editor" :class="{ empty }" role="textbox" :aria-label="label || '发送给 Codex 的消息'" aria-multiline="true" :aria-disabled="disabled" :aria-autocomplete="suggestions !== undefined ? 'list' : undefined" :aria-controls="menuOpen ? menuId : undefined" :aria-expanded="suggestions !== undefined ? menuOpen && suggestionsActive !== false : undefined" :aria-activedescendant="activeOption" :contenteditable="!disabled" :data-placeholder="placeholder || '向 Codex 提问，或描述你想完成的任务'" spellcheck="false" @input="input" @keyup="keyup" @mouseup="selectionChanged" @focus="focused" @blur="blur" @compositionstart="compositionStart" @compositionend="compositionEnd" @keydown="key" @paste="paste" @dragover.prevent @drop="drop" @click="click" @pointerover="hover" @pointerout="leave" @pointerdown="($event.target as HTMLElement).closest('[data-image-remove]') && $event.preventDefault()" />
+  <Teleport :to="suggestionTarget || 'body'">
+    <div v-if="menuOpen && (!externalSuggestions || suggestionTarget)" ref="menu" class="prompt-suggestions" :class="{ 'in-island': externalSuggestions }" :style="externalSuggestions ? undefined : menuStyle" @mousedown.prevent @click.stop>
+      <div :id="menuId" role="listbox" :aria-label="trigger?.kind === 'command' ? '命令' : trigger?.kind === 'skill' ? '技能' : '提及'" :aria-busy="suggestionsLoading || undefined">
+        <template v-for="(suggestion, index) in selectable" :key="suggestion.id">
+          <div v-if="suggestion.group && (index === 0 || selectable[index - 1]?.group !== suggestion.group)" class="prompt-suggestion-group" role="presentation">{{ suggestion.group }}</div>
+          <button :id="menuId + '-' + index" type="button" role="option" tabindex="-1" class="prompt-suggestion" :class="{ highlighted: index === highlighted }" :aria-label="suggestion.accessibleLabel" :aria-selected="index === highlighted" @pointermove="$event.pointerType === 'mouse' && (highlighted = index)" @click="selectSuggestion(index)">
+            <component :is="suggestionIcon(suggestion)" :size="18" class="prompt-suggestion-icon" aria-hidden="true" />
+            <span class="prompt-suggestion-label">{{ suggestion.label }}</span><span v-if="suggestion.description" class="prompt-suggestion-description">{{ suggestion.description }}</span><span v-if="suggestion.source" class="prompt-suggestion-source">{{ suggestion.source }}</span>
+          </button>
+        </template>
       </div>
-      <p v-if="suggestionsLoading" class="prompt-suggestion-status" role="status">{{ trigger?.kind === 'file' ? '正在查找文件…' : '正在加载命令…' }}</p>
-      <p v-else-if="suggestionsError" class="prompt-suggestion-status error" role="status">{{ suggestionsError }}</p>
-      <p v-else-if="!selectable.length" class="prompt-suggestion-status" role="status">{{ trigger?.kind === 'file' ? (trigger.query ? '没有匹配的文件，试试其他关键词' : '输入文件名搜索') : '没有匹配的命令' }}</p>
+      <p v-if="suggestionsLoading" class="prompt-suggestion-status" role="status">正在读取…</p>
+      <p v-if="suggestionsError" class="prompt-suggestion-status error" role="status">{{ suggestionsError }}</p>
+      <p v-if="!suggestionsLoading && !suggestionsError && !selectable.length" class="prompt-suggestion-status" role="status">没有匹配结果</p>
     </div>
   </Teleport>
   <ImagePreview :open="!!preview" :src="preview?.image.url || ''" :name="preview?.image.name || ''" :anchor="preview?.anchor" :pinned="preview?.pinned" @close="preview = undefined; focus()" />
 </template>
 <style scoped>
 .prompt-suggestions { position: fixed; z-index: 70; transform: translateY(-100%); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border-radius: var(--radius-lg); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-pop); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-.prompt-suggestion { display: flex; align-items: baseline; gap: 14px; width: 100%; min-height: 32px; padding: 6px 9px; border-radius: var(--radius-sm); text-align: left; font-size: 14px; line-height: 20px; }
+.prompt-suggestions.in-island { position: static; z-index: auto; transform: none; width: 100%; max-height: min(34dvh, 300px); padding: 3px 0 6px; background: transparent; box-shadow: none; border-radius: 0; }
+.prompt-suggestion { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; padding: 6px 10px; border-radius: var(--radius-round); text-align: left; font-size: calc(14px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); white-space: nowrap; }
 .prompt-suggestion.highlighted, .prompt-suggestion:hover { background: var(--hover); }
 .prompt-suggestion:active { background: var(--active); }
 .prompt-suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.prompt-suggestion-label { min-width: 0; overflow-wrap: anywhere; }
-.prompt-suggestion-description { min-width: 0; margin-left: auto; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; text-align: right; }
-.prompt-suggestion-status { margin: 0; padding: 10px 9px; font-size: 13px; line-height: 20px; color: var(--muted); overflow-wrap: anywhere; }
+.prompt-suggestion-icon { flex: 0 0 auto; color: var(--muted); }
+.prompt-suggestion-label { flex: 0 1 auto; min-width: 60px; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); }
+.prompt-suggestion-description { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); text-align: left; }
+.prompt-suggestion-source { flex-shrink: 0; margin-left: auto; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted); }
+.prompt-suggestion-group { padding: 10px 10px 4px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.prompt-suggestion-status { margin: 0; padding: 8px 10px; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
 .prompt-suggestion-status.error { color: var(--danger); }
-@media (max-width: 640px), (pointer: coarse) {
-  .prompt-suggestion { min-height: 44px; flex-wrap: wrap; align-content: center; gap: 0 10px; }
-  .prompt-suggestion-description { flex-basis: 100%; text-align: left; }
-}
+@media (max-width: 640px), (pointer: coarse) { .prompt-suggestion { min-height: 44px; gap: 7px; } }
 </style>

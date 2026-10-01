@@ -9,6 +9,8 @@ let archived = new Map<string, Thread>()
 let received: string[] = []
 let approved = 0
 let scenario = ''
+let configVersion = 1
+let userConfig: Record<string, unknown> = {}
 type NativeSubmission = { id: string; clientUserMessageId: string; input: MessageContent[] }
 const nativeQueues = new Map<string, NativeSubmission[]>()
 const nativeSettings = new Map<string, Record<string, unknown>>()
@@ -22,7 +24,30 @@ let resumed: string[] = []
 let pending = new Map<number, { thread: Thread; turn: Turn; kind: string }>()
 const timers = new Map<string, ReturnType<typeof setInterval>>()
 let requestId = 10000
+const fileFixtureBytes = (path: string) => {
+  if (path === '/test/files/build.AppImage') return Uint8Array.from({ length: 600123 }, (_, i) => i % 256)
+  if (path === '/test/files/pixel.gif') return Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
+  const text: Record<string, string> = {
+    '/test/files/README.md': '# 发布说明\n\n这是远端设备的 Markdown 文件。\n\n[下一页](./guide.md)\n\n<script>window.__filePreviewScript = true</script>\n',
+    '/test/files/guide.md': '# 使用指南\n\n相对链接解析到文件所在目录。',
+    '/test/files/slow.md': '# 延迟返回的旧文件',
+    '/test/project/src/main.ts': 'const one = 1\nconst two = 2\nexport { one, two }\n',
+  }
+  return text[path] === undefined ? null : new TextEncoder().encode(text[path])
+}
+function fileFixtureReport(command: string[]) {
+  const [operation, cwd, requested, fingerprint, _size, offset] = command.slice(command.indexOf('-c') + 2)
+  const parts: string[] = []
+  for (const part of (requested!.startsWith('/') ? requested! : cwd + '/' + requested).split('/')) { if (part === '..') parts.pop(); else if (part && part !== '.') parts.push(part) }
+  const path = '/' + parts.join('/'), name = parts.at(-1) || '/'
+  if (path === '/test/files' && operation === 'inspect') return { ok: true, file: { path, name, kind: 'directory', size: 0, fingerprint: '1:1:0:1:1', truncated: false, entries: ['README.md', 'guide.md', 'build.AppImage', 'pixel.gif'].map(name => ({ path: path + '/' + name, name, kind: 'file', size: fileFixtureBytes(path + '/' + name)!.length })) } }
+  const bytes = fileFixtureBytes(path)
+  if (!bytes) return { ok: false, code: 'read-failed', message: '文件不存在。' }
+  if (operation === 'chunk') return { ok: true, path, fingerprint, size: bytes.length, offset: Number(offset), dataBase64: Buffer.from(bytes.slice(Number(offset), Number(offset) + 262144)).toString('base64') }
+  return { ok: true, file: { path, name, kind: 'file', size: bytes.length, fingerprint: '1:1:' + bytes.length + ':1:1', preview: path.endsWith('.AppImage') ? { kind: 'binary' } : path.endsWith('.gif') ? { kind: 'image', mime: 'image/gif' } : { kind: 'text', text: new TextDecoder().decode(bytes), mime: 'text/plain', truncated: false } } }
+}
 function reset() {
+  configVersion = 1; userConfig = { approvals_reviewer: 'user', model: 'test-model', model_reasoning_effort: 'medium', approval_policy: 'on-request', sandbox_mode: 'workspace-write', web_search: 'cached', model_verbosity: 'medium' }
   for (const timer of timers.values()) clearInterval(timer)
   timers.clear(); pending.clear(); nativeQueues.clear(); nativeSettings.clear(); goals.clear(); received = []; approved = 0; scenario = ''; requests = []; resumed = []
   const recent = Math.floor(Date.now() / 1000)
@@ -32,9 +57,11 @@ function reset() {
 }
 reset()
 function emit(threadId: string, method: string, params: object, id?: number) { for (const ws of clients) if (ws.data.threadIds.includes(threadId)) ws.send(JSON.stringify({ ...(id !== undefined ? { id } : {}), method, params: { threadId, ...params } })) }
+function finishTiming(turn: Turn) { if (scenario === 'work-duration') { turn.startedAt = 1_790_000_000; turn.completedAt = 1_790_000_138; turn.durationMs = 138_000 } }
 function finish(thread: Thread, turn: Turn, text: string) {
   const item: Item = { id: crypto.randomUUID(), type: 'agentMessage', text, phase: 'final_answer' }
   turn.items.push(item); turn.status = 'completed'; thread.status = { type: 'idle' }
+  finishTiming(turn)
   emit(thread.id, 'item/completed', { turnId: turn.id, item }); emit(thread.id, 'turn/completed', { turn })
 }
 function stream(thread: Thread, turn: Turn, long: boolean, unsafe: boolean) {
@@ -48,6 +75,7 @@ function stream(thread: Thread, turn: Turn, long: boolean, unsafe: boolean) {
     emit(thread.id, 'item/agentMessage/delta', { turnId: turn.id, itemId: item.id, delta })
     if (position >= text.length) {
       clearInterval(timer); timers.delete(turn.id); turn.status = 'completed'; thread.status = { type: 'idle' }
+      finishTiming(turn)
       emit(thread.id, 'item/completed', { turnId: turn.id, item }); emit(thread.id, 'turn/completed', { turn })
     }
   }, 45)
@@ -59,7 +87,7 @@ const server = Bun.serve<Peer>({
     const path = new URL(request.url).pathname
     if (path === '/health') return new Response('ok')
     if (path === '/test/reset') { reset(); return Response.json({ ok: true }) }
-    if (path === '/test/metrics') return Response.json({ received, approved, requests, resumed, nativeQueues: Object.fromEntries(nativeQueues), nativeSettings: Object.fromEntries(nativeSettings) })
+    if (path === '/test/metrics') return Response.json({ received, approved, requests, resumed, forks: [...threads.values()].filter(thread => 'forkedFromId' in thread), nativeQueues: Object.fromEntries(nativeQueues), nativeSettings: Object.fromEntries(nativeSettings) })
     if (path === '/test/native-queue' || path === '/test/native-settings') {
       if (scenario !== 'native-queue' || request.method !== 'POST') return Response.json({ error: 'Native queue scenario required' }, { status: 409 })
       const body = await request.json() as { threadId: string; action?: string; id?: string; text?: string; threadSettings?: Record<string, unknown> }
@@ -83,7 +111,7 @@ const server = Bun.serve<Peer>({
       emit(body.threadId, 'thread/queue/changed', {})
       return Response.json({ ok: true, id })
     }
-    if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario === 'paged') { const thread = threads.get('existing-thread')!; thread.turns = Array.from({ length: 45 }, (_, i) => ({ id: 'history-turn-' + i, status: 'completed', items: [{ id: 'user-' + i, type: 'userMessage', content: [{ type: 'text', text: '历史问题 ' + i }] }, { id: 'agent-' + i, type: 'agentMessage', text: '历史回答 ' + i }] })) }; return Response.json({ ok: true }) }
+    if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'file-links') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '[说明文档](/test/files/README.md) · [AppImage](/test/files/build.AppImage) · [目录](/test/files) · [源代码](src/main.ts:2) · [图片](file:///test/files/pixel.gif) · [网站](https://example.com) · [慢文件](/test/files/slow.md) · [不存在](/test/files/missing.md)' }; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario === 'paged') { const thread = threads.get('existing-thread')!; thread.turns = Array.from({ length: 45 }, (_, i) => ({ id: 'history-turn-' + i, status: 'completed', items: [{ id: 'user-' + i, type: 'userMessage', content: [{ type: 'text', text: '历史问题 ' + i }] }, { id: 'agent-' + i, type: 'agentMessage', text: '历史回答 ' + i }] })) }; return Response.json({ ok: true }) }
     if (path === '/test/finish') { for (const thread of threads.values()) { const turn = thread.turns.find(t => t.status === 'inProgress'); if (turn) { clearInterval(timers.get(turn.id)); timers.delete(turn.id); finish(thread, turn, '当前任务已完成。') } }; return Response.json({ ok: true }) }
     if (path === '/test/upstream-retry' || path === '/test/upstream-resume') {
       for (const thread of threads.values()) {
@@ -121,6 +149,22 @@ const server = Bun.serve<Peer>({
       if (method === 'initialize') { if (ws.data.initialized) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Already initialized' } })); return }; ws.data.initialized = true; respond({ userAgent: 'codex-test/0.159.0', platformFamily: 'unix', platformOs: 'linux' }); return }
       if (method === 'initialized') { ws.data.acknowledged = true; return }
       if (!ws.data.initialized || !ws.data.acknowledged) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Not initialized' } })); return }
+      if (method === 'command/exec' && scenario === 'file-links') {
+        const command = Array.isArray(p.command) ? p.command as string[] : []
+        if (command.some(part => part.startsWith('# codex-remote workspace files'))) {
+          const reply = { exitCode: 0, stdout: JSON.stringify(fileFixtureReport(command)), stderr: '' }
+          if (command.includes('/test/files/slow.md')) setTimeout(() => respond(reply), 1000)
+          else respond(reply)
+        } else respond({ exitCode: 128, stdout: '', stderr: 'not a Git repository' })
+        return
+      }
+      if (method === 'command/exec' && (scenario === 'worktree' || scenario === 'branch')) {
+        const command = Array.isArray(p.command) ? p.command as string[] : []
+        const linked = scenario === 'worktree', root = String(p.cwd || '/test/project')
+        if (command.includes('symbolic-ref')) { respond({ exitCode: 0, stdout: linked ? 'refs/heads/feature/island\n' : 'refs/heads/main\n', stderr: '' }); return }
+        if (command.includes('rev-parse')) { respond({ exitCode: 0, stdout: ['true', linked ? '/repo/.git/worktrees/feature' : '.git', linked ? '/repo/.git' : '.git', root, ''].join('\n'), stderr: '' }); return }
+        respond({ exitCode: 1, stdout: '', stderr: 'unsupported' }); return
+      }
       if (method === 'command/exec' && scenario === 'inspector') {
         const command = Array.isArray(p.command) ? p.command as string[] : []
         const diff = 'diff --git a/src/App.vue b/src/App.vue\n--- a/src/App.vue\n+++ b/src/App.vue\n@@ -1 +1,2 @@\n-old line\n+new line\n+another line\n'
@@ -194,10 +238,28 @@ const server = Bun.serve<Peer>({
         } else { fail(-32601, 'Unknown method: ' + method); return }
         emit(threadId, 'thread/queue/changed', {}); return
       }
-      if (method === 'config/read') { respond({ config: { approvals_reviewer: 'user' } }); return }
+      if (method === 'skills/list') {
+        if (scenario === 'skills-unavailable') { fail(-32601, 'Unknown method: skills/list'); return }
+        respond({ data: [{ cwd: Array.isArray(p.cwds) && p.cwds[0] || '/test/project', skills: [
+          { name: 'audit', description: '审查当前项目的代码', path: '/test/skills/audit/SKILL.md', scope: 'user', enabled: true },
+          { name: 'disabled-skill', description: '已关闭的技能', path: '/test/skills/disabled/SKILL.md', scope: 'user', enabled: false },
+        ], errors: [] }] }); return
+      }
+      if (method === 'plugin/installed') { respond({ marketplaces: [{ name: 'local', plugins: [{ id: 'browser@local', name: 'browser', installed: true, enabled: true, interface: { displayName: 'Browser', shortDescription: '浏览器操作' } }] }], marketplaceLoadErrors: [] }); return }
+      if (method === 'thread/search') { const query = String(p.searchTerm).toLowerCase(); respond({ data: [...threads.values()].filter(thread => (thread.name || thread.preview).toLowerCase().includes(query)).slice(0, 30).map(thread => ({ thread: { ...thread, turns: [] }, snippet: thread.preview })), nextCursor: null }); return }
+      if (method === 'thread/name/set') { const thread = threads.get(String(p.threadId)); if (!thread) { fail(-32602, 'Thread not found'); return }; thread.name = String(p.name); emit(thread.id, 'thread/name/updated', { threadName: thread.name }); respond({}); return }
+      if (method === 'config/read') {
+        if (scenario === 'config-unsupported' && p.includeLayers) { fail(-32601, '配置接口不可用'); return }
+        respond({ config: userConfig, origins: {}, ...(p.includeLayers ? { layers: [{ name: { type: 'user', file: '/test/codex/config.toml' }, version: String(configVersion), config: userConfig }] } : {}) }); return
+      }
+      if (method === 'config/batchWrite') {
+        if (scenario === 'config-conflict' || p.expectedVersion !== String(configVersion)) { fail(-32600, '配置已被其他客户端修改'); return }
+        for (const edit of p.edits as { keyPath: string; value: unknown }[]) { if (edit.value === null) delete userConfig[edit.keyPath]; else userConfig[edit.keyPath] = edit.value }
+        configVersion++; respond({ status: 'ok', version: String(configVersion), filePath: '/test/codex/config.toml' }); return
+      }
       if (method === 'configRequirements/read') { respond({ requirements: scenario === 'restricted' ? { allowedSandboxModes: ['read-only', 'workspace-write'], allowedApprovalPolicies: ['on-request'] } : null }); return }
       if (method === 'model/list') { if (scenario === 'model-never') return; respond({ data: [
-        { id: 'test-model', model: 'test-model', displayName: '测试模型', isDefault: true, defaultReasoningEffort: 'medium', description: '适合复杂的编码任务', supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(reasoningEffort => ({ reasoningEffort, description: reasoningEffort })) },
+        { id: 'test-model', model: 'test-model', displayName: '测试模型', isDefault: true, defaultReasoningEffort: 'medium', defaultServiceTier: 'fast', serviceTiers: [{ id: 'fast', name: 'Fast', description: '更快的响应' }], description: '适合复杂的编码任务', supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(reasoningEffort => ({ reasoningEffort, description: reasoningEffort })) },
         { id: 'quick-model', model: 'quick-model', displayName: '轻量模型', defaultReasoningEffort: 'low', description: '快速完成日常任务', supportedReasoningEfforts: ['low', 'medium'].map(reasoningEffort => ({ reasoningEffort, description: reasoningEffort })) },
       ], nextCursor: null }); return }
       if (method === 'thread/list') {
@@ -210,6 +272,30 @@ const server = Bun.serve<Peer>({
       if (method === 'thread/start') {
         const thread: Thread = { id: crypto.randomUUID(), preview: '', cwd: String(p.cwd || '/test/project'), createdAt: Date.now() / 1000, updatedAt: Date.now() / 1000, status: { type: 'idle' }, turns: [] }
         threads.set(thread.id, thread); ws.data.threadId = thread.id; if (!ws.data.threadIds.includes(thread.id)) ws.data.threadIds.push(thread.id); emit(thread.id, 'thread/started', { thread }); respond({ thread, model: 'test-model' }); return
+      }
+      if (method === 'thread/fork') {
+        const source = threads.get(String(p.threadId))
+        if (!source) { fail(-32602, 'Thread not found'); return }
+        const lastTurnIndex = p.lastTurnId === undefined ? source.turns.length - 1 : source.turns.findIndex(turn => turn.id === p.lastTurnId)
+        if (p.lastTurnId !== undefined && lastTurnIndex < 0) { fail(-32602, 'Fork turn not found'); return }
+        const now = Math.floor(Date.now() / 1000)
+        const thread: Thread & { forkedFromId: string } = {
+          ...structuredClone(source), id: crypto.randomUUID(), forkedFromId: source.id,
+          source: source.source ?? 'cli', createdAt: now, updatedAt: now, recencyAt: now, status: { type: 'idle' },
+          turns: structuredClone(source.turns.slice(0, lastTurnIndex + 1)).map(turn => ({ ...turn, status: turn.status === 'inProgress' ? 'interrupted' : turn.status })),
+        }
+        threads.set(thread.id, thread)
+        const settings = nativeSettings.get(source.id)
+        if (settings) nativeSettings.set(thread.id, structuredClone(settings))
+        const goal = goals.get(source.id)
+        if (goal) goals.set(thread.id, { ...structuredClone(goal), threadId: thread.id, createdAt: now, updatedAt: now })
+        ws.data.threadId = thread.id
+        if (!ws.data.threadIds.includes(thread.id)) ws.data.threadIds.push(thread.id)
+        const summary = { ...thread, turns: p.excludeTurns ? [] : thread.turns }
+        emit(thread.id, 'thread/started', { thread: summary })
+        // Native fork metadata and inherited history only; opening a fork never starts generation.
+        respond({ thread: summary, model: settings?.model ?? source.model ?? 'test-model', reasoningEffort: settings?.effort ?? 'high', approvalPolicy: settings?.approvalPolicy ?? 'on-request', approvalsReviewer: settings?.approvalsReviewer ?? 'user', sandbox: settings?.sandboxPolicy ?? { type: 'workspaceWrite', networkAccess: false, writableRoots: [] } })
+        return
       }
       if (method === 'thread/resume') {
         const thread = threads.get(String(p.threadId))

@@ -55,22 +55,22 @@ watch(() => props.files.map(file => file.path), paths => {
 .changes-emblem { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; border-radius: var(--radius-sm); background: var(--hover); color: var(--ink-soft); }
 .changes-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .changes-toggle { border: 1px solid var(--line); }
-.changes-heading h3 { margin: 0; font-size: 13px; font-weight: 500; line-height: 22px; }
-.file-change-summary .text-button { min-height: 30px; padding: 4px 8px; border-radius: var(--radius-sm); color: var(--muted); font-size: 12px; }
+.changes-heading h3 { margin: 0; font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 500; line-height: calc(22px * var(--ui-font-scale, 1)); }
+.file-change-summary .text-button { min-height: 30px; padding: 4px 8px; border-radius: var(--radius-sm); color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .file-change-summary .text-button:hover:not(:disabled) { background: var(--hover); color: var(--ink-soft); }
 .changes-list { list-style: none; padding: 0; margin: 0; }
 .changes-file { min-width: 0; }
-.changes-row { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; min-height: 32px; padding: 6px 8px; border-radius: var(--radius-sm); text-align: left; color: var(--ink-soft); font-size: 12px; line-height: 20px; }
+.changes-row { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; min-height: 32px; padding: 6px 8px; border-radius: var(--radius-sm); text-align: left; color: var(--ink-soft); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); }
 .changes-row:hover:not(:disabled) { background: var(--hover); }
 .changes-row:active:not(:disabled) { background: var(--active); }
 .changes-row > svg { color: var(--muted); }
 .changes-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.changes-kind { flex-shrink: 0; max-width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
-.changes-counts { display: flex; flex-shrink: 0; gap: 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.changes-kind { flex-shrink: 0; max-width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.changes-counts { display: flex; flex-shrink: 0; gap: 4px; font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
 .added { color: var(--diff-added); }
 .removed { color: var(--diff-removed); }
 .changes-diff { min-width: 0; padding: 4px 8px 12px; }
-.changes-diff pre { max-height: min(42dvh, 420px); margin: 0; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: var(--ink-soft); font-size: 12px; line-height: 1.7; white-space: pre; tab-size: 2; overflow: auto; overscroll-behavior: contain; }
+.changes-diff pre { max-height: min(42dvh, 420px); margin: 0; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: var(--ink-soft); font-size: var(--code-font-size, 13px); line-height: 1.7; white-space: pre; tab-size: 2; overflow: auto; overscroll-behavior: contain; }
 .changes-more { margin-top: 4px; }
 .changes-toggle svg, .changes-more svg { transition: transform 180ms var(--ease); }
 .reversed { transform: rotate(180deg); }

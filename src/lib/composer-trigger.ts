@@ -1,14 +1,14 @@
-export type ComposerTrigger = { kind: 'command' | 'file'; query: string }
+export type ComposerTrigger = { kind: 'command' | 'file' | 'skill'; query: string }
 export type ComposerToken = ComposerTrigger & { start: number; end: number }
 export type CapturedComposerToken = ComposerToken & { range: Range; trailingSpace?: Range }
 
 // Attachments occupy a boundary, never contribute their filename to a query.
 const attachmentBoundary = '\ufffc'
 const tokenBoundary = /[\s\ufffc@]/u
-const mentionWord = /[\p{L}\p{N}\p{M}\p{Pc}.%+/@\\-]/u
+const mentionWord = /[\p{L}\p{N}\p{M}\p{Pc}.%+/@$\\-]/u
 
 export function composerSuggestionInsertion(kind: ComposerTrigger['kind'], text: string, followingSpace = '') {
-  const separateFile = kind === 'file' && text !== '' && !/\s$/u.test(text)
+  const separateFile = (kind === 'file' || kind === 'skill') && text !== '' && !/\s$/u.test(text)
   const reuseTrailingSpace = separateFile && /^[\t\p{Zs}]$/u.test(followingSpace)
   return { text: text + (separateFile && !reuseTrailingSpace ? ' ' : ''), reuseTrailingSpace }
 }
@@ -20,8 +20,12 @@ export function detectComposerTrigger(text: string, caret: number): ComposerToke
   let start = caret
   while (start > 0 && !tokenBoundary.test(text[start - 1]!)) start--
   if (start > 0 && text[start - 1] === '@') start--
+  if (text[start] !== '@' && text[start] !== '/') {
+    const dollar = text.lastIndexOf('$', caret - 1)
+    if (dollar >= start && (dollar === 0 || !mentionWord.test(Array.from(text.slice(0, dollar)).at(-1)!))) start = dollar
+  }
   const prefix = text[start]
-  if (caret <= start || (prefix !== '/' && prefix !== '@')) return null
+  if (caret <= start || !['/', '@', '$'].includes(prefix || '')) return null
   if (prefix === '/') {
     const lineStart = Math.max(text.lastIndexOf('\n', start - 1), text.lastIndexOf('\r', start - 1)) + 1
     if (!/^[\t\p{Zs}]*$/u.test(text.slice(lineStart, start))) return null
@@ -31,7 +35,8 @@ export function detectComposerTrigger(text: string, caret: number): ComposerToke
   }
   let end = caret
   while (end < text.length && !tokenBoundary.test(text[end]!)) end++
-  return { kind: prefix === '/' ? 'command' : 'file', query: text.slice(start + 1, caret), start, end }
+  if (prefix === '$' && !/^[\p{L}\p{N}\p{M}_.:-]*$/u.test(text.slice(start + 1, caret))) return null
+  return { kind: prefix === '/' ? 'command' : prefix === '$' ? 'skill' : 'file', query: text.slice(start + 1, caret), start, end }
 }
 
 /** Project editable text into a string while retaining its DOM coordinates.

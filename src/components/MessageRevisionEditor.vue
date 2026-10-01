@@ -15,7 +15,7 @@ function save() { if (!props.saving && !reading.value && hasPrompt(draft.value))
 </template>
 <style scoped>
 .message-revision-editor { width: min(100%, 860px); margin: 0 0 28px auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); padding: 8px 10px; background: var(--surface, var(--canvas)); }
-.revision-impact { font-size: 12px; line-height: 1.7; color: var(--muted); padding: 6px 10px 10px; }
-.revision-error { color: var(--danger); padding: 6px 10px; font-size: 13px; }
-.revision-actions { display: flex; align-items: center; gap: 8px; }.revision-actions .button { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+.revision-impact { font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.7; color: var(--muted); padding: 6px 10px 10px; }
+.revision-error { color: var(--danger); padding: 6px 10px; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.revision-actions { display: flex; align-items: center; gap: 8px; }.revision-actions .button { min-height: 34px; padding: 6px 12px; font-size: calc(13px * var(--ui-font-scale, 1)); }
 </style>

@@ -1,6 +1,9 @@
 import MarkdownIt from 'markdown-it'
+import { parseFileLink } from './file-links'
 
 export const markdownEngine = new MarkdownIt({ html: false, linkify: true, breaks: true })
+const validateLink = markdownEngine.validateLink
+markdownEngine.validateLink = href => /^file:/i.test(href) ? !!parseFileLink(href) : validateLink(href)
 type Token = ReturnType<typeof markdownEngine.parse>[number]
 const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
 const cjkNext = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
@@ -39,8 +42,29 @@ markdownEngine.core.ruler.after('inline', 'cjk_label_strong', state => {
   }
 })
 
+markdownEngine.core.ruler.after('inline', 'workspace_file_links', state => {
+  for (const block of state.tokens) {
+    const links: boolean[] = []
+    for (const token of block.children || []) {
+      if (token.type === 'link_open') {
+        const target = parseFileLink(String(token.attrGet('href') || ''))
+        links.push(!!target)
+        if (!target) continue
+        token.tag = 'button'
+        token.attrs = (token.attrs || []).filter(([name]) => name !== 'href' && name !== 'target' && name !== 'rel')
+        token.attrSet('type', 'button')
+        token.attrSet('class', 'workspace-file-link')
+        token.attrSet('data-workspace-path', target.path)
+        token.attrSet('title', target.path + (target.line ? ':' + target.line : ''))
+        if (target.line) token.attrSet('data-workspace-line', String(target.line))
+        if (target.column) token.attrSet('data-workspace-column', String(target.column))
+      } else if (token.type === 'link_close' && links.pop()) token.tag = 'button'
+    }
+  }
+})
 const originalLink = markdownEngine.renderer.rules.link_open
 markdownEngine.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
+  if (tokens[index].tag === 'button') return renderer.renderToken(tokens, index, options)
   tokens[index].attrSet('target', '_blank')
   tokens[index].attrSet('rel', 'noopener noreferrer')
   return originalLink ? originalLink(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options)

@@ -1,9 +1,14 @@
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, getCurrentInstance, getCurrentScope, onMounted, onScopeDispose, ref, watch } from 'vue'
 import type { Approval, ConnectionProfile, Item, MessageContent, Model, RpcId, RpcMessage, Thread, ThreadItemsPage, ThreadResult, ThreadTokenUsage, Turn } from '../../shared/protocol'
 import { normalizeEndpoint } from '../../shared/endpoint'
 import { loadProfiles, saveProfiles } from '../lib/profiles'
+import { deleteCredential, storeCredential } from '../lib/credentials'
 import { readUiPreferences } from '../lib/ui-preferences'
 import { RpcClient, RpcError } from '../lib/rpc'
+import { retryStatusMessage } from '../lib/turn-failure'
+import { parseSkills, type SkillCatalog } from '../lib/skills'
+import { parsePluginMentions, type MentionReference } from '../lib/mentions'
+import { taskNoticeFromMessage, type TaskNotice } from '../lib/task-notifications'
 import { ServerQueueClient } from '../lib/server-queue'
 import { activityTime, fetchRecentThreads, recentWindow, withinRecentWindow, type RecentWindow } from '../lib/recent-window'
 import { hasPrompt, mergeItem, messageEditError, messageParts, promptText, reasoningPreview, textFragment, toInputs, type PromptPart } from '../lib/prompt'
@@ -12,9 +17,9 @@ import { GOAL_UNAVAILABLE, goalUnavailable, isRecord, isThreadGoal, readGoalResp
 
 export type FuzzyFileSearchResult = { root: string; path: string; match_type: 'file' | 'directory'; file_name: string; score: number; indices: number[] | null }
 
-export type ComposerSettings = { model: string; effort: string; permission: PermissionMode }
+export type ComposerSettings = { model: string; effort: string; permission: PermissionMode; serviceTier?: string | null }
 export type QueuedMessage = { id: string; deviceId: string; threadId: string; parts: PromptPart[]; settings: ComposerSettings; state: 'queued' | 'sending' | 'failed'; source?: 'server'; editError?: string; error?: string }
-type PendingUserMessage = { id: string; threadId: string; input: MessageContent[] }
+type PendingUserMessage = { id: string; clientId: string; threadId: string; input: MessageContent[]; priorUserIds: string[]; placement: 'conversation' | 'island'; accepted: boolean; cancelable: boolean }
 
 function isThreadSummary(value: unknown): value is Thread {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -24,7 +29,12 @@ function isThreadSummary(value: unknown): value is Thread {
     && typeof thread.updatedAt === 'number' && Number.isFinite(thread.updatedAt) && Array.isArray(thread.turns)
 }
 
-export function useCodex() {
+export function useCodex(options: { autoConnect?: boolean; persistConnection?: boolean; deferLifecycle?: boolean } = {}) {
+  const skillsRevision = ref(0)
+  const noticeListeners = new Set<(notice: TaskNotice) => void>()
+  function onTaskNotice(listener: (notice: TaskNotice) => void) { noticeListeners.add(listener); return () => { noticeListeners.delete(listener) } }
+  function emitTaskNotice(notice: TaskNotice) { for (const listener of noticeListeners) { try { listener(notice) } catch { /* Notification delivery cannot interrupt the conversation. */ } } }
+  function noticeThreadName(id: string) { const thread = active.value?.id === id ? active.value : threads.value.find(thread => thread.id === id) || projectThreads.value.find(thread => thread.id === id); return (thread?.name || thread?.preview || 'Codex 对话').slice(0, 80) }
   let storage: Storage | undefined
   try { storage = localStorage } catch { /* Browser privacy mode may disallow storage. */ }
   const stored = storage ? loadProfiles(storage) : { profiles: [], selectedId: '', error: '此浏览器禁止本地存储，连接仅在当前页面保留。' }
@@ -75,7 +85,11 @@ export function useCodex() {
     const turn = active.value?.id === threadId ? active.value.turns.find(turn => turn.id === turnId) : undefined
     if (turn) turn.error = value
   }
+  function notifyRequestFailure(threadId: string) {
+    emitTaskNotice({ id: crypto.randomUUID(), kind: 'failed', deviceId: selectedId.value, deviceName: selected.value?.name || '当前设备', threadId, threadName: noticeThreadName(threadId) })
+  }
   function submissionFailed(threadId: string, message: string) {
+    notifyRequestFailure(threadId)
     const turnId = active.value?.id === threadId ? active.value.turns.at(-1)?.id ?? null : null
     const key = turnDiffKey(threadId, '')
     submissionFailures.value.delete(key); submissionFailures.value.set(key, { turnId, message })
@@ -96,6 +110,7 @@ export function useCodex() {
   const models = ref<Model[]>([])
   const model = ref('')
   const effort = ref('')
+  const serviceTier = ref<string | null | undefined>(undefined)
   const tokenUsageByThread = ref(new Map<string, ThreadTokenUsage>())
   const contextUsage = computed(() => active.value ? tokenUsageByThread.value.get(selectedId.value + '/' + active.value.id) : undefined)
   // Composer permission mode, mapped onto the App Server's approval policy and sandbox.
@@ -123,6 +138,12 @@ export function useCodex() {
   const revising = computed(() => revisionThreadId.value !== null)
   const queuedMessages = ref<QueuedMessage[]>([])
   const pendingUserMessages = ref<PendingUserMessage[]>([])
+  const steerWithdrawals = new Map<string, () => void>()
+  function withdrawPendingSteer(id: string) {
+    const withdraw = steerWithdrawals.get(id)
+    if (!withdraw) { toast('当前服务端不支持撤回已提交的插话。'); return false }
+    steerWithdrawals.delete(id); withdraw(); return true
+  }
   const serverQueueSupported = ref(false)
   let serverQueue: ServerQueueClient | undefined, queueAdding = false
   let queueRefreshTimer: ReturnType<typeof setInterval> | undefined, settingsTimer: ReturnType<typeof setTimeout> | undefined
@@ -154,8 +175,8 @@ export function useCodex() {
   const turnStartedAt = ref(new Map<string, number>())
   const currentQueue = computed(() => queuedMessages.value.filter(job => job.deviceId === selectedId.value && job.threadId === active.value?.id))
   const queuePaused = computed(() => !!active.value && pausedQueues.value.has(queueKey(active.value.id)))
-  const settingsSnapshot = (): ComposerSettings => ({ model: model.value, effort: effort.value, permission: permission.value })
-  watch([model, effort, permission], () => {
+  const settingsSnapshot = (): ComposerSettings => ({ model: model.value, effort: effort.value, permission: permission.value, serviceTier: serviceTier.value })
+  watch([model, effort, permission, serviceTier], () => {
     if (restoringSettings || !active.value) return
     const settings = settingsSnapshot(); rememberSettings(queueKey(active.value.id), settings, true)
     for (const job of currentQueue.value) if (job.source !== 'server' && job.state !== 'sending') job.settings = { ...settings }
@@ -177,26 +198,32 @@ export function useCodex() {
       text_elements: part.text_elements,
     }))
   }
-  function addPendingUserMessage(threadId: string, input: MessageContent[]) {
-    const pending = { id: 'pending-' + crypto.randomUUID(), threadId, input }
+  function addPendingUserMessage(threadId: string, input: MessageContent[], placement: PendingUserMessage['placement'] = 'conversation') {
+    const priorUserIds = active.value?.id === threadId ? active.value.turns.flatMap(turn => turn.items.filter(item => item.type === 'userMessage').map(item => item.id)) : []
+    const clientId = crypto.randomUUID()
+    const pending = { id: 'pending-' + clientId, clientId, threadId, input, priorUserIds, placement, accepted: false, cancelable: false }
     pendingUserMessages.value.push(pending)
     return pending
   }
   function removePendingUserMessage(id: string) {
     pendingUserMessages.value = pendingUserMessages.value.filter(message => message.id !== id)
   }
-  function reconcilePendingUserMessage(threadId: string, input?: (MessageContent | string)[]) {
-    if (!input?.length) return
-    const fingerprint = inputFingerprint(input)
-    const pending = pendingUserMessages.value.find(message => message.threadId === threadId && inputFingerprint(message.input) === fingerprint)
-    if (pending) removePendingUserMessage(pending.id)
+  function reconcilePendingUserMessage(threadId: string, itemId: string, input?: (MessageContent | string)[], clientId?: string | null) {
+    if (!input?.length && !clientId) return
+    const fingerprint = inputFingerprint(input || [])
+    const pending = pendingUserMessages.value.find(message => message.threadId === threadId && (clientId ? message.clientId === clientId : !message.priorUserIds.includes(itemId) && inputFingerprint(message.input) === fingerprint))
+    if (pending) {
+      removePendingUserMessage(pending.id)
+      for (const message of pendingUserMessages.value) if (message.threadId === threadId && !message.priorUserIds.includes(itemId)) message.priorUserIds.push(itemId)
+    }
   }
+  const pendingSteers = computed(() => pendingUserMessages.value.filter(message => message.threadId === active.value?.id && message.placement === 'island').map(message => ({ id: message.id, accepted: message.accepted, cancelable: message.cancelable, parts: messageParts(message.input) })))
   const displayTurns = computed(() => {
     const thread = active.value
     if (!thread) return [] as Turn[]
     const turns = thread.turns.map(turn => ({ ...turn, items: [...turn.items] }))
     const pending = pendingUserMessages.value
-      .filter(message => message.threadId === thread.id)
+      .filter(message => message.threadId === thread.id && message.placement === 'conversation')
       .map(message => ({ id: message.id, type: 'userMessage', content: message.input } as Item))
     if (pending.length) {
       const last = turns.at(-1)
@@ -305,35 +332,66 @@ export function useCodex() {
   }
   function toast(text: string) { notice.value = text; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.value = '' }, 4500) }
   function persist() {
+    if (options.persistConnection === false) return
     try { if (!storage) throw new Error(); saveProfiles(storage, profiles.value, selectedId.value) }
     catch { error.value = '保存失败：浏览器存储不可用或已满。连接仍可用于当前页面。' }
   }
-  function saveProfile(input: { id?: string; name: string; endpoint: string; cwd: string; token: string }) {
+  let profileWriting = false
+  async function saveProfile(input: { id?: string; name: string; endpoint: string; cwd: string; token: string; rememberToken?: boolean; clearToken?: boolean }) {
+    if (profileWriting) throw new Error('正在保存连接，请稍候。')
     const endpoint = normalizeEndpoint(input.endpoint)
     if (!input.name.trim()) throw new Error('请为这台设备填写名称。')
+    if (input.token.length > 8192 || /[\r\n]/.test(input.token)) throw new Error('访问令牌格式无效。')
     if (profiles.value.some(p => p.id !== input.id && p.endpoint === endpoint)) throw new Error('这个地址已保存，请直接连接已有设备。')
     const old = profiles.value.find(p => p.id === input.id)
+    const token = input.token.trim(), remember = input.rememberToken ?? !!old?.credentialId
+    if (old?.credentialId && old.endpoint !== endpoint && !token && remember && !input.clearToken) throw new Error('地址已更改，请填写新令牌，或清除已保存的令牌。')
     const profile: ConnectionProfile = { id: old?.id || crypto.randomUUID(), name: input.name.trim(), endpoint, cwd: input.cwd.trim(), createdAt: old?.createdAt || Date.now() }
-    const nextProfiles = old ? profiles.value.map(p => p.id === old.id ? profile : p) : [...profiles.value, profile]
+    if (remember && !input.clearToken && old?.endpoint === endpoint && old.credentialId) profile.credentialId = old.credentialId
+    const previousProfiles = [...profiles.value], previousSelected = selectedId.value
+    let createdCredential: string | undefined, savedLocally = false
+    profileWriting = true
     try {
-      if (!storage) throw new Error('Storage unavailable')
+      if (!storage) throw new Error('连接未保存：浏览器存储不可用。')
+      // Check storage before sending any credential, and keep the old reference
+      // until both the new record and removal of the old secret succeed.
+      saveProfiles(storage, previousProfiles, previousSelected)
+      if (remember && token) { createdCredential = await storeCredential(endpoint, token); profile.credentialId = createdCredential }
+      const nextProfiles = old ? profiles.value.map(p => p.id === old.id ? profile : p) : [...profiles.value, profile]
       saveProfiles(storage, nextProfiles, selectedId.value || profile.id)
-    } catch { throw new Error('连接未保存：浏览器存储不可用或已满。请允许此站点使用本地存储后重试。') }
-    if (old?.id === selectedId.value && (old.endpoint !== endpoint || tokenFor(old.id) !== input.token.trim())) disconnect()
-    profiles.value = nextProfiles
-    tokens.set(profile.id, input.token.trim())
-    if (!selectedId.value) selectedId.value = profile.id
-    return profile
+      savedLocally = true
+      if (old?.credentialId && old.credentialId !== profile.credentialId) await deleteCredential(old.credentialId)
+      if (old?.id === selectedId.value && (old.endpoint !== endpoint || old.credentialId !== profile.credentialId || (!profile.credentialId && tokenFor(old.id) !== token))) disconnect()
+      profiles.value = nextProfiles
+      if (profile.credentialId) tokens.delete(profile.id); else tokens.set(profile.id, token)
+      if (!selectedId.value) selectedId.value = profile.id
+      return profile
+    } catch (cause) {
+      if (savedLocally && storage) { try { saveProfiles(storage, previousProfiles, previousSelected) } catch { /* Report failure without claiming success. */ } }
+      if (createdCredential) { try { await deleteCredential(createdCredential) } catch { toast('保存未完成，服务器可能保留了未使用的令牌记录。') } }
+      throw cause instanceof Error ? cause : new Error('连接未保存，请重试。')
+    } finally { profileWriting = false }
   }
-  function removeProfile(id: string) {
-    if (queuedMessages.value.some(job => job.deviceId === id)) { toast('该设备还有待发送消息，请先发送或移除队列。'); return }
-    if (id === selectedId.value) disconnect()
-    profiles.value = profiles.value.filter(p => p.id !== id); tokens.delete(id)
-    if (selectedId.value === id) selectedId.value = profiles.value[0]?.id || ''
-    persist(); toast('已移除连接，服务器上的会话不受影响。')
+  async function removeProfile(id: string) {
+    if (profileWriting) throw new Error('正在保存连接，请稍候。')
+    if (queuedMessages.value.some(job => job.deviceId === id)) throw new Error('该设备还有待发送消息，请先发送或移除队列。')
+    const profile = profiles.value.find(p => p.id === id)
+    if (!profile) return true
+    const previous = [...profiles.value], previousSelected = selectedId.value
+    const next = previous.filter(p => p.id !== id), nextSelected = selectedId.value === id ? next[0]?.id || '' : selectedId.value
+    profileWriting = true
+    try {
+      if (!storage) throw new Error('无法更新浏览器中的连接记录。')
+      saveProfiles(storage, next, nextSelected)
+      try { if (profile.credentialId) await deleteCredential(profile.credentialId) }
+      catch (cause) { saveProfiles(storage, previous, previousSelected); throw cause }
+      if (id === selectedId.value) disconnect()
+      profiles.value = next; selectedId.value = nextSelected; tokens.delete(id)
+      toast('已移除连接及保存的令牌，服务器上的会话不受影响。'); return true
+    } finally { profileWriting = false }
   }
   function tokenFor(id: string) { return tokens.get(id) || '' }
-  let startupConnectionPending = true
+  let startupConnectionPending = options.autoConnect !== false
   function connectOnStartup() {
     if (!startupConnectionPending || disposed || !readUiPreferences(storage).autoConnect) return
     if (!authenticated.value || !bridgeReachable.value || !online.value || status.value !== 'disconnected' || !selected.value) return
@@ -345,10 +403,11 @@ export function useCodex() {
       const response = await fetch('/api/session', { signal: AbortSignal.timeout(5000) })
       if (!response.ok) throw new Error()
       const result = await response.json()
+      if (disposed) return
       bridgeReachable.value = true
       authenticated.value = result.authenticated; requiresKey.value = result.requiresKey
       connectOnStartup()
-    } catch { bridgeReachable.value = false }
+    } catch { if (!disposed) bridgeReachable.value = false }
   }
   async function login(key: string) {
     const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) })
@@ -393,6 +452,7 @@ export function useCodex() {
     reconnectTimer = setTimeout(() => { reconnectTimer = undefined; if (selected.value) void connect(selected.value, true) }, delay)
   }
   async function connect(profile: ConnectionProfile, reconnecting = false) {
+    if (disposed) return
     const resumeId = reconnecting ? pendingThreadId.value || active.value?.id : undefined
     if (!reconnecting) disconnect()
     else { resetGoals(); serverQueue?.dispose(); clearInterval(queueRefreshTimer); clearTimeout(settingsTimer); pendingSettings.clear(); settingsWrites.clear(); client?.disconnect(); approvals.value = [] }
@@ -428,7 +488,7 @@ export function useCodex() {
     }, message => { if (epoch === generation) toast(message) })
     try {
       if (!online.value) throw new Error('当前处于离线状态，联网后可连接 App Server。')
-      await rpc.connect(profile.endpoint, tokens.get(profile.id) || '')
+      await rpc.connect(profile.endpoint, tokens.get(profile.id) || '', profile.credentialId)
       if (epoch !== generation) return
       initialized = true; status.value = 'connected'; reconnectCount = 0; authenticated.value = true; bridgeReachable.value = true
       // A slow model listing must not hold the conversation behind a loading screen.
@@ -535,6 +595,7 @@ export function useCodex() {
       }
       if (epoch !== generation || requestId !== threadGeneration) return
       active.value = { ...result.thread, turns }; historyCursor.value = cursor
+      for (const turn of turns) for (const item of turn.items) if (item.type === 'userMessage') reconcilePendingUserMessage(id, item.id, item.content, item.clientId)
       workingDirectory.value = result.thread.cwd
       rememberProjects([active.value])
       const savedSettings = settingsByThread.get(settingsKey)
@@ -543,10 +604,11 @@ export function useCodex() {
         model: resumedSettings.model ?? savedSettings?.model ?? '',
         effort: resumedSettings.reasoningEffort !== undefined ? resumedSettings.reasoningEffort ?? '' : savedSettings?.effort ?? '',
         permission: restoredPermission(resumedSettings) ?? savedSettings?.permission ?? 'custom',
+        serviceTier: resumedSettings.serviceTier !== undefined ? resumedSettings.serviceTier : savedSettings?.serviceTier,
       }
       if (!retained) rememberSettings(settingsKey, restored)
       restoringSettings = true
-      model.value = restored.model; effort.value = restored.effort; permission.value = restored.permission
+      model.value = restored.model; effort.value = restored.effort; permission.value = restored.permission; serviceTier.value = restored.serviceTier
       restoringSettings = false
       const running = turns.find(t => t.status === 'inProgress')
       if (running) runningTurns.value.set(id, running.id); else runningTurns.value.delete(id)
@@ -603,20 +665,27 @@ export function useCodex() {
     return turn
   }
   function mergeTurn(incoming: Turn, responseSnapshot = false) {
-    for (const item of incoming.items || []) if (item.type === 'userMessage') reconcilePendingUserMessage(active.value?.id || '', item.content)
+    for (const item of incoming.items || []) if (item.type === 'userMessage') reconcilePendingUserMessage(active.value?.id || '', item.id, item.content, item.clientId)
     const turn = ensureTurn(incoming.id)
     if (!turn) return
     const items = new Map(turn.items.map(item => [item.id, item]))
     for (const item of incoming.items || []) items.set(item.id, responseSnapshot ? mergeItem(item, items.get(item.id) || item) : mergeItem(items.get(item.id), item))
     const finalStatus = responseSnapshot && turn.status !== 'inProgress' ? turn.status : incoming.status
-    Object.assign(turn, incoming, { status: finalStatus, items: [...items.values()].map(item => rememberReasoning(active.value!.id, incoming.id, (item.type === 'reasoning' || item.type === 'contextCompaction') && finalStatus !== 'inProgress' ? { ...item, status: item.type === 'contextCompaction' && finalStatus !== 'completed' ? 'failed' : 'completed' } : item)) })
+    const timing: Partial<Turn> = {}
+    for (const field of ['startedAt', 'completedAt', 'durationMs'] as const) {
+      // Completion snapshots may omit the start. Preserve native metadata, never
+      // derive a historical work duration from when this client joined a turn.
+      const next = responseSnapshot && turn.status !== 'inProgress' ? turn[field] ?? incoming[field] : incoming[field] ?? turn[field]
+      if (typeof next === 'number' && Number.isFinite(next) && next >= 0) timing[field] = next
+    }
+    Object.assign(turn, incoming, timing, { status: finalStatus, items: [...items.values()].map(item => rememberReasoning(active.value!.id, incoming.id, (item.type === 'reasoning' || item.type === 'contextCompaction') && finalStatus !== 'inProgress' ? { ...item, status: item.type === 'contextCompaction' && finalStatus !== 'completed' ? 'failed' : 'completed' } : item)) })
   }
   function wireSettings(settings: ComposerSettings, start = false) {
     const access = permissionParams(settings.permission)
     const selectedModel = models.value.find(model => model.model === settings.model) || (!settings.model ? models.value.find(model => model.isDefault) : undefined)
     const effectiveModel = settings.model || selectedModel?.model
     const effectiveEffort = settings.effort || selectedModel?.defaultReasoningEffort
-    return { ...(effectiveModel ? { model: effectiveModel } : {}), ...(effectiveEffort && !start ? { effort: effectiveEffort } : {}), approvalPolicy: access.approvalPolicy, approvalsReviewer: access.approvalsReviewer, ...(start ? { sandbox: access.sandbox } : { sandboxPolicy: access.sandboxPolicy }) }
+    return { ...(effectiveModel ? { model: effectiveModel } : {}), ...(effectiveEffort && !start ? { effort: effectiveEffort } : {}), ...(settings.serviceTier !== undefined ? { serviceTier: settings.serviceTier } : {}), approvalPolicy: access.approvalPolicy, approvalsReviewer: access.approvalsReviewer, ...(start ? { sandbox: access.sandbox } : { sandboxPolicy: access.sandboxPolicy }) }
   }
   async function refreshThreadGoal(threadId: string, retryUnavailable = false): Promise<boolean> {
     const key = goalKey(threadId)
@@ -732,24 +801,32 @@ export function useCodex() {
   }
   async function dispatchInput(parts: PromptPart[], settings: ComposerSettings, targetId?: string) {
     if (!client || !connected.value) throw new Error('设备未连接。')
+    const input = toInputs(parts)
     const rpc = client, epoch = generation, viewEpoch = threadGeneration
     const foreground = !targetId || targetId === active.value?.id
     if (foreground) sending.value = true
     let threadId = targetId || active.value?.id
     let pending: PendingUserMessage | undefined
     let startConfirmed = false
+    let optimisticThreadId = ''
     try {
       if (!threadId) {
+        if (foreground) {
+          optimisticThreadId = 'pending-thread-' + crypto.randomUUID()
+          active.value = { id: optimisticThreadId, name: null, preview: promptText(parts).trim().slice(0, 200), cwd: workingDirectory.value, createdAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000), status: { type: 'active' }, turns: [] }
+          threadId = optimisticThreadId
+          pending = addPendingUserMessage(threadId, input)
+        }
         const cwd = workingDirectory.value
         const result = await rpc.request<ThreadResult>('thread/start', { ...wireSettings(settings, true), ...(cwd ? { cwd } : {}) })
         if (epoch !== generation || viewEpoch !== threadGeneration) throw new Error('对话已切换，消息未发送。')
+        if (pending) pending.threadId = result.thread.id
         active.value = result.thread; threadId = result.thread.id
         if (!threads.value.some(t => t.id === threadId)) threads.value.unshift(result.thread)
         rememberProjects([result.thread])
       }
       const settingsKey = queueKey(threadId)
-      const input = toInputs(parts)
-      if (foreground && active.value?.id === threadId) pending = addPendingUserMessage(threadId, input)
+      if (foreground && active.value?.id === threadId && !pending) pending = addPendingUserMessage(threadId, input)
       rememberSettings(settingsKey, settings, true)
       pendingTurnStarts.add(settingsKey)
       const result = await rpc.request<{ turn: Turn }>('turn/start', { threadId, input, ...wireSettings(settings) })
@@ -772,6 +849,7 @@ export function useCodex() {
           // No acknowledgement is different from an observed failed turn: its
           // start may already have committed. Hold later work for reconciliation.
           if (!startConfirmed && pending) removePendingUserMessage(pending.id)
+          if (!startConfirmed && optimisticThreadId && active.value?.id === optimisticThreadId) active.value = null
           if (!startConfirmed && pendingTurnStarts.has(queueKey(threadId))) pausedQueues.value.add(queueKey(threadId))
           pendingTurnStarts.delete(queueKey(threadId))
           // Completion can arrive before the RPC ack; it must not strand the
@@ -835,6 +913,7 @@ export function useCodex() {
         void drainQueue(threadId); return true
       } catch (cause) {
         if (epoch === generation) error.value = submitted && (!(cause instanceof RpcError) || cause.code === undefined) ? '排队结果尚未确认，请先检查共享队列和会话，未自动重发。' : '无法加入队列：' + messageOf(cause)
+        if (epoch === generation) notifyRequestFailure(threadId)
         return false
       } finally { if (epoch === generation) queueAdding = false }
     }
@@ -853,8 +932,17 @@ export function useCodex() {
     const currentView = () => current() && viewEpoch === threadGeneration && active.value?.id === threadId
     const key = queueKey(threadId)
     if (permissionUnavailable.value[permission.value]) { submissionFailed(threadId, permissionUnavailable.value[permission.value]!); return false }
+    let input: MessageContent[]
+    try { input = toInputs(parts) }
+    catch (cause) { submissionFailed(threadId, messageOf(cause)); return false }
     steering.value = true
     submissionFailures.value.delete(turnDiffKey(threadId, ''))
+    const pending = addPendingUserMessage(threadId, input, 'island')
+    let cancelled = false
+    const local = pendingUserMessages.value.find(message => message.id === pending.id)!
+    local.cancelable = true
+    steerWithdrawals.set(pending.id, () => { cancelled = true; removePendingUserMessage(pending.id) })
+    let accepted = false
     let attempted = false
     try {
       // Settings are a separate acknowledged update. turn/steer itself has no
@@ -862,14 +950,18 @@ export function useCodex() {
       if (serverQueueSupported.value && (unsavedSettings.has(key) || pendingSettings.has(threadId) || settingsWrites.has(threadId))) {
         await persistServerSettings(rpc, threadId, settingsSnapshot(), { isCurrent: currentView })
       }
-      if (!currentView()) return false
+      if (!currentView() || cancelled) return false
       if (permissionUnavailable.value[permission.value]) throw new Error(permissionUnavailable.value[permission.value])
       const running = activeTurn.value?.id || runningTurns.value.get(threadId)
       if (running !== turnId || terminalTurns.has(turnId)) { submissionFailed(threadId, '当前回合已变化，请重新发送。'); return false }
       attempted = true
-      const response = await rpc.request<{ turnId: string }>('turn/steer', { threadId, expectedTurnId: turnId, input: toInputs(parts), clientUserMessageId: crypto.randomUUID() })
+      local.cancelable = false; steerWithdrawals.delete(pending.id)
+      const response = await rpc.request<{ turnId: string }>('turn/steer', { threadId, expectedTurnId: turnId, input, clientUserMessageId: pending.clientId })
       if (!currentView()) return false
       if (!isRecord(response) || response.turnId !== turnId) throw new RpcError('插话响应无效，发送结果尚未确认。')
+      accepted = true
+      const row = pendingUserMessages.value.find(message => message.id === pending.id)
+      if (row) row.accepted = true
       return true
     } catch (cause) {
       if (!currentView()) return false
@@ -879,12 +971,17 @@ export function useCodex() {
       // This is the installed TUI's structured rejection, not a string match.
       // An uncertain timeout/malformed acknowledgement must never enqueue again.
       if (attempted && cause instanceof RpcError && cause.code === -32602 && notSteerable && ['review', 'compact'].includes(String(notSteerable.turnKind))) {
+        removePendingUserMessage(pending.id)
         return await send(parts)
       }
       submissionFailed(threadId, attempted && (!(cause instanceof RpcError) || cause.code === undefined)
         ? '插话结果尚未确认，请先查看会话。' : messageOf(cause))
       return false
-    } finally { if (epoch === generation) steering.value = false }
+    } finally {
+      steerWithdrawals.delete(pending.id)
+      if (!accepted) removePendingUserMessage(pending.id)
+      if (epoch === generation) steering.value = false
+    }
   }
   async function drainQueue(threadId: string) {
     const key = queueKey(threadId)
@@ -907,7 +1004,7 @@ export function useCodex() {
       } else await dispatchInput(job.parts, job.settings, job.threadId)
       queuedMessages.value = queuedMessages.value.filter(message => message.id !== job.id)
     }
-    catch (e) { job.state = 'failed'; job.error = messageOf(e); pausedQueues.value.add(key) }
+    catch (e) { job.state = 'failed'; job.error = messageOf(e); pausedQueues.value.add(key); if (epoch === generation) notifyRequestFailure(threadId) }
     finally { drainingQueues.delete(key); if (epoch === generation) queueMicrotask(() => void drainQueue(threadId)) }
   }
   async function removeQueued(id: string) {
@@ -964,6 +1061,10 @@ export function useCodex() {
     const target = messageTarget(itemId), threadId = active.value?.id
     if (!client || !connected.value || !target || !threadId || revising.value || loadingThread.value || sending.value) return { ok: false, reverted: false, error: '会话当前无法修改，请稍后重试。' }
     if (replacement && (!hasPrompt(replacement) || messageEditError(target.item))) return { ok: false, reverted: false, error: messageEditError(target.item) || '消息不能为空。' }
+    if (replacement) {
+      try { toInputs(replacement) }
+      catch (cause) { return { ok: false, reverted: false, error: messageOf(cause) } }
+    }
     const rpc = client, epoch = generation, settings = settingsSnapshot(), key = queueKey(threadId)
     const wasPaused = pausedQueues.value.has(key)
     let reverted = false, attempted = false, stopped = false, completed = false
@@ -1028,11 +1129,45 @@ export function useCodex() {
     if (epoch !== generation) throw new Error('设备连接已变化，请重新刷新任务中心。')
     return result
   }
+  async function readMentions<T>(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    if (!['plugin/installed', 'plugin/list', 'thread/search'].includes(method)) throw new RpcError('不支持的提及查询。')
+    if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
+    const rpc = client, epoch = generation, view = threadGeneration, cwd = active.value?.cwd || workingDirectory.value
+    const result = await rpc.request<T>(method, params, { signal, timeoutMs: 10_000 })
+    if (rpc !== client || epoch !== generation || view !== threadGeneration || cwd !== (active.value?.cwd || workingDirectory.value) || disposed) throw new RpcError('设备或工作目录已变化，请重新查询。')
+    return result
+  }
+  async function listMentionPlugins(signal?: AbortSignal): Promise<MentionReference[]> {
+    const cwd = active.value?.cwd || workingDirectory.value, params = cwd ? { cwds: [cwd] } : {}
+    try { return parsePluginMentions(await readMentions('plugin/installed', params, signal)) }
+    catch (cause) { if (!(cause instanceof RpcError) || cause.code !== -32601) throw cause; return parsePluginMentions(await readMentions('plugin/list', { ...params, marketplaceKinds: ['local'] }, signal)) }
+  }
+  async function searchMentionThreads(query: string, signal?: AbortSignal): Promise<Thread[]> {
+    if (!query.trim()) return []
+    const result = await readMentions<{ data: { thread: Thread }[] }>('thread/search', { searchTerm: query.trim(), limit: 30, sortKey: 'recency_at', sortDirection: 'desc', archived: false, sourceKinds: [] }, signal)
+    if (!result || !Array.isArray(result.data) || result.data.length > 30 || result.data.some(row => !isThreadSummary(row.thread))) throw new RpcError('会话搜索响应无效。')
+    return result.data.map(row => row.thread)
+  }
+  async function listSkills(options: { signal?: AbortSignal; forceReload?: boolean } = {}): Promise<SkillCatalog> {
+    if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
+    const rpc = client, epoch = generation, view = threadGeneration, cwd = active.value?.cwd || workingDirectory.value
+    const result = await rpc.request('skills/list', { cwds: cwd ? [cwd] : [], ...(options.forceReload ? { forceReload: true } : {}) }, { signal: options.signal, timeoutMs: 10_000 })
+    if (rpc !== client || epoch !== generation || view !== threadGeneration || cwd !== (active.value?.cwd || workingDirectory.value) || disposed) throw new RpcError('设备或工作目录已变化，请重新读取技能。')
+    return parseSkills(result, cwd)
+  }
   async function runWorkspaceCommand<T>(params: Record<string, unknown>, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<T> {
     if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
     const rpc = client, epoch = generation, device = selectedId.value
     const result = await rpc.request<T>('command/exec', params, options)
     if (rpc !== client || epoch !== generation || device !== selectedId.value || !connected.value || disposed) throw new RpcError('设备连接已变化，命令结果未确认。')
+    return result
+  }
+  async function requestConfig<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    if (!['config/read', 'configRequirements/read', 'config/batchWrite'].includes(method)) throw new RpcError('不支持的配置操作。')
+    if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
+    const rpc = client, epoch = generation
+    const result = await rpc.request<T>(method, params, { timeoutMs: 10_000 })
+    if (rpc !== client || epoch !== generation || !connected.value || disposed) throw new RpcError('设备连接已变化，请重新读取配置。')
     return result
   }
   const withdrawMessage = (itemId: string) => reviseMessage(itemId)
@@ -1096,6 +1231,24 @@ export function useCodex() {
       rememberProjects([result.thread])
     } catch (cause) { if (current()) toast('归档已恢复，但近期列表同步失败：' + messageOf(cause)) }
   }
+  async function connectWithToken(profile: ConnectionProfile, token: string) { tokens.set(profile.id, token); await connect(profile) }
+  async function forkThread(id: string, lastTurnId?: string) {
+    if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
+    const rpc = client, epoch = generation
+    const result = await rpc.request<ThreadResult>('thread/fork', { threadId: id, excludeTurns: true, deferGoalContinuation: true, ...(lastTurnId ? { lastTurnId } : {}) }, { timeoutMs: 15_000 })
+    if (rpc !== client || epoch !== generation || disposed) throw new RpcError('连接已变化，请刷新会话列表确认分叉结果。')
+    if (!isThreadSummary(result?.thread)) throw new RpcError('分叉响应无效，请刷新会话列表后确认。')
+    rememberProjects([result.thread]); return result.thread
+  }
+  async function renameThread(id: string, value: string) {
+    const name = value.trim()
+    if (!name || name.length > 200) throw new RpcError('名称需要包含 1–200 个字符。')
+    if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
+    const rpc = client, epoch = generation
+    await rpc.request('thread/name/set', { threadId: id, name }, { timeoutMs: 10_000 })
+    if (rpc !== client || epoch !== generation || disposed) throw new RpcError('连接已变化，请刷新后确认名称。')
+    updateThreadMetadata(id, { name })
+  }
   async function archive(id: string) {
     if (revising.value) return
     if (queuedMessages.value.some(job => job.deviceId === selectedId.value && job.threadId === id)) { toast('此会话仍有待发送消息，请先处理队列。'); return }
@@ -1115,6 +1268,9 @@ export function useCodex() {
     catch (e) { error.value = messageOf(e) }
   }
   function handleMessage(message: RpcMessage) {
+    if (message.method === 'skills/changed') { skillsRevision.value++; return }
+    const taskNotice = taskNoticeFromMessage(message, { id: selectedId.value, name: selected.value?.name || '当前设备' }, noticeThreadName)
+    if (taskNotice) emitTaskNotice(taskNotice)
     const method = message.method || '', p = message.params || {}
     if (message.id !== undefined && method) {
       if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'tool/requestUserInput'].includes(method)) {
@@ -1193,12 +1349,13 @@ export function useCodex() {
       if (serverQueueSupported.value) serverQueue?.notification(id)
       updateThreadMetadata(id, { status: { type: runningTurns.value.has(id) ? 'active' : 'idle' } })
     }
+    if (receivedItem?.type === 'userMessage' && typeof p.threadId === 'string') reconcilePendingUserMessage(p.threadId, receivedItem.id, receivedItem.content, receivedItem.clientId)
     if (openingThread && p.threadId === openingThread) { bufferedEvents.push(message); return }
     if (p.threadId) {
       const key = queueKey(String(p.threadId)), retry = retries.value.get(key)
       if (method === 'error') {
         if (p.willRetry === true) {
-          if (!terminalTurns.has(String(p.turnId))) retries.value.set(key, { turnId: String(p.turnId), message: (p.error as { message?: string })?.message || '连接中断，正在重试…' })
+          if (!terminalTurns.has(String(p.turnId))) retries.value.set(key, { turnId: String(p.turnId), message: retryStatusMessage(p.error) })
         } else {
           if (retry?.turnId === p.turnId) retries.value.delete(key)
           if (typeof p.turnId === 'string') rememberTurnFailure(String(p.threadId), p.turnId, p.error)
@@ -1245,7 +1402,6 @@ export function useCodex() {
       const item = receivedItem!
       const index = turn.items.findIndex(i => i.id === item.id)
       const incoming = { ...item, ...(item.type === 'reasoning' || item.type === 'contextCompaction' ? { status: item.completedAtMs != null || method === 'item/completed' ? 'completed' : 'inProgress' } : {}) }
-      if (incoming.type === 'userMessage') reconcilePendingUserMessage(String(p.threadId), incoming.content)
       if (index < 0) turn.items.push(incoming)
       else turn.items[index] = mergeItem(turn.items[index], incoming)
       return
@@ -1265,14 +1421,33 @@ export function useCodex() {
     }
   }
   const wentOffline = () => { online.value = false; clearTimeout(reconnectTimer); reconnectTimer = undefined; if (connected.value) { client?.disconnect(); status.value = 'reconnecting'; error.value = '网络已断开，联网后会重新连接；不会自动重发消息。' } }
-  const wentOnline = () => { online.value = true; void checkSession(); if (status.value === 'reconnecting') { reconnectCount = 0; scheduleReconnect() } }
+  let checksSession = true
+  const wentOnline = () => { online.value = true; if (checksSession) void checkSession(); if (status.value === 'reconnecting') { reconnectCount = 0; scheduleReconnect() } }
   watch([connected, () => active.value && activeTurn.value ? queueKey(active.value.id) + '/' + activeTurn.value.id : ''], ([online, key]) => {
     clearInterval(clockTimer); clockTimer = undefined
     clockNow.value = Date.now()
     if (key && !turnStartedAt.value.has(key)) turnStartedAt.value.set(key, clockNow.value)
     if (online && key) clockTimer = setInterval(() => { clockNow.value = Date.now() }, 1000)
   }, { flush: 'sync' })
-  onMounted(() => { void checkSession(); window.addEventListener('offline', wentOffline); window.addEventListener('online', wentOnline) })
-  onUnmounted(() => { disposed = true; disconnect(); clearInterval(clockTimer); clearTimeout(noticeTimer); window.removeEventListener('offline', wentOffline); window.removeEventListener('online', wentOnline) })
-  return { steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
+  let starting: Promise<void> | undefined
+  function start(lifecycle: { checkSession?: boolean } = {}) {
+    if (disposed) return Promise.resolve()
+    if (!starting) {
+      checksSession = lifecycle.checkSession !== false
+      window.addEventListener('offline', wentOffline); window.addEventListener('online', wentOnline)
+      starting = checksSession ? checkSession() : Promise.resolve()
+    }
+    return starting
+  }
+  function dispose() {
+    if (disposed) return
+    disposed = true; disconnect(); clearInterval(clockTimer); clearTimeout(noticeTimer); noticeListeners.clear()
+    window.removeEventListener('offline', wentOffline); window.removeEventListener('online', wentOnline)
+  }
+  if (getCurrentScope()) onScopeDispose(dispose)
+  if (!options.deferLifecycle) {
+    if (getCurrentInstance()) onMounted(() => { void start() })
+    else void start()
+  }
+  return { start, dispose, connectWithToken, forkThread, withdrawPendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
 }

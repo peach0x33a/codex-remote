@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { PhArrowsClockwise, PhFlag, PhPause, PhPencilSimple, PhPlay } from '@phosphor-icons/vue'
 import MotionCollapse from './MotionCollapse.vue'
 import BaseDialog from './BaseDialog.vue'
@@ -24,6 +24,8 @@ const labels: Record<GoalStatus, string> = {
 }
 const id = useId()
 const open = ref(false), objective = ref(''), budget = ref('')
+const statusVisible = ref(false)
+let statusTimer: ReturnType<typeof setTimeout> | undefined
 const baseline = ref({ objective: '', budget: '' })
 const editingExisting = ref(false), confirmingClear = ref(false), attempted = ref(false)
 const objectiveInput = ref<HTMLTextAreaElement>(), budgetInput = ref<HTMLInputElement>()
@@ -36,6 +38,8 @@ const busy = computed(() => props.saving || pending.value !== null)
 const reading = computed(() => props.loading || requestingRefresh.value)
 const canRefresh = computed(() => !props.disabled && !busy.value && !reading.value)
 const canMutate = computed(() => !props.disabled && !busy.value && !reading.value && props.supported !== false)
+const canChangeStatus = computed(() => canMutate.value && !confirmingClear.value
+  && (props.scopeKey === undefined || props.goal?.threadId === props.scopeKey))
 const removed = computed(() => editingExisting.value && !props.goal && !reading.value)
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 })
 const formatCount = (value: number) => Number.isFinite(value) && value >= 0 ? number.format(value) : '—'
@@ -50,6 +54,11 @@ const elapsed = computed(() => {
   const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60)
   return hours ? `${number.format(hours)} 小时 ${minutes} 分 ${seconds % 60} 秒`
     : minutes ? `${minutes} 分 ${seconds % 60} 秒` : `${seconds} 秒`
+})
+const compactElapsed = computed(() => {
+  if (elapsed.value === '—') return '—'
+  const seconds = Math.floor(props.goal!.timeUsedSeconds)
+  return `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds % 3600 / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 })
 const budgetError = computed(() => {
   const value = budget.value.trim()
@@ -74,6 +83,9 @@ watch(() => [props.goal?.objective, props.goal?.tokenBudget], () => {
   if (!dirty.value && !busy.value) synchronizeDraft()
 }, { immediate: true })
 watch(() => props.goal, goal => { if (!goal) confirmingClear.value = false })
+// Status belongs to the viewed scope, even while an earlier save is pending.
+watch(() => props.scopeKey, hideStatus, { flush: 'sync' })
+onBeforeUnmount(hideStatus)
 watch(() => props.scopeKey, (scope, previous) => {
   // Creating a thread while saving changes "new" to its real ID; preserve that draft.
   if (scope === previous || props.saving) return
@@ -90,9 +102,21 @@ async function refresh() {
   await nextTick()
   requestingRefresh.value = false
 }
+function hideStatus() {
+  if (statusTimer !== undefined) clearTimeout(statusTimer)
+  statusTimer = undefined
+  statusVisible.value = false
+}
+function showStatus() {
+  hideStatus()
+  statusVisible.value = true
+  statusTimer = setTimeout(hideStatus, 8000)
+  if (props.supported !== false) void refresh()
+}
 async function show(preset = '') {
+  hideStatus()
   if (!open.value) {
-    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    opener = typeof document !== 'undefined' && typeof HTMLElement !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null
     if (!dirty.value || editingExisting.value !== !!props.goal) synchronizeDraft()
     confirmingClear.value = false
     attempted.value = false
@@ -113,7 +137,7 @@ async function close() {
   await nextTick()
   if (!open.value) (opener?.isConnected ? opener : editButton.value)?.focus()
 }
-defineExpose({ show })
+defineExpose({ show, showStatus })
 
 const snapshot = (goal: ThreadGoal | null) => JSON.stringify(goal)
 function finishMutation() {
@@ -157,9 +181,13 @@ function save() {
   if (value && Number(value) !== props.goal?.tokenBudget) update.tokenBudget = Number(value)
   void dispatch('save', update)
 }
-function toggleStatus() {
-  if (!props.goal || confirmingClear.value) return
-  void dispatch('status', { status: props.goal.status === 'active' ? 'paused' : 'active' })
+function resume() {
+  if (!canChangeStatus.value || props.goal?.status !== 'paused') return
+  void dispatch('status', { status: 'active' })
+}
+function pause() {
+  if (!canChangeStatus.value || props.goal?.status !== 'active') return
+  void dispatch('status', { status: 'paused' })
 }
 function clear() {
   if (!props.goal || !canMutate.value) return
@@ -169,15 +197,29 @@ function clear() {
 </script>
 
 <template>
-  <MotionCollapse :open="!!goal && showSummary"><section v-if="goal" class="goal-panel" aria-label="当前目标" :aria-busy="reading || busy">
-    <div class="goal-row">
+  <MotionCollapse :open="(!!goal && showSummary) || statusVisible"><section v-if="goal || statusVisible" class="goal-panel" :class="{ 'is-status-preview': statusVisible }" aria-label="当前目标" :aria-busy="reading || busy">
+    <div v-if="goal" class="goal-row">
       <PhFlag :size="16" class="goal-icon" aria-hidden="true" />
-      <div class="goal-summary">
-        <div class="goal-heading"><span class="goal-objective" :title="goal.objective">{{ goal.objective }}</span><span class="goal-status">{{ labels[goal.status] }}</span></div>
-        <div class="goal-metrics"><span>已用 {{ formatCount(goal.tokensUsed) }} tokens</span><span v-if="remaining !== null">剩余 {{ formatCount(remaining) }}</span><span>{{ elapsed }}</span><span v-if="reading" role="status">刷新中…</span></div>
-      </div>
-      <button ref="editButton" type="button" class="icon-button goal-edit" aria-label="编辑目标" title="编辑目标" @click="show()"><PhPencilSimple :size="17" aria-hidden="true" /></button>
+      <button ref="editButton" type="button" class="goal-summary" aria-label="查看目标" :title="goal.objective" @click="show()">
+        <span class="goal-heading"><span class="goal-objective">{{ goal.objective }}</span><span class="goal-status" :data-status="goal.status" :title="labels[goal.status]"><span class="goal-status-label">{{ labels[goal.status] }}</span></span><span v-if="elapsed !== '—'" class="goal-time" :title="'已用 ' + elapsed" :aria-label="'已用 ' + elapsed"><span class="goal-time-full">已用 {{ elapsed }}</span><span class="goal-time-compact" aria-hidden="true">{{ compactElapsed }}</span></span></span>
+      </button>
+      <button v-if="goal.status === 'active'" type="button" class="icon-button goal-status-toggle" aria-label="暂停目标" title="暂停目标" :disabled="!canChangeStatus" @click="pause"><PhPause :size="17" aria-hidden="true" /></button>
+      <button v-else-if="goal.status === 'paused'" type="button" class="icon-button goal-status-toggle" aria-label="恢复目标" title="恢复目标" :disabled="!canChangeStatus" @click="resume"><PhPlay :size="17" aria-hidden="true" /></button>
+      <button type="button" class="icon-button goal-edit" aria-label="编辑目标" title="编辑目标" :disabled="!canMutate" @click="show()"><PhPencilSimple :size="17" aria-hidden="true" /></button>
       <button type="button" class="icon-button goal-refresh" aria-label="刷新目标" title="刷新目标" :disabled="!canRefresh" @click="refresh"><PhArrowsClockwise :size="17" aria-hidden="true" /></button>
+    </div>
+    <div v-if="statusVisible" class="goal-status-details" role="status" aria-live="polite" aria-atomic="true">
+      <template v-if="goal">
+        <dl class="goal-details">
+          <div><dt>状态</dt><dd>{{ labels[goal.status] }}</dd></div>
+          <div><dt>已用 tokens</dt><dd>{{ formatCount(goal.tokensUsed) }}</dd></div>
+          <div><dt>Token 预算</dt><dd>{{ goal.tokenBudget === null ? '未设置' : formatCount(goal.tokenBudget) }}</dd></div>
+          <div v-if="remaining !== null"><dt>剩余 tokens</dt><dd>{{ formatCount(remaining) }}</dd></div>
+          <div><dt>已用时间</dt><dd>{{ elapsed }}</dd></div>
+        </dl>
+        <span v-if="reading">刷新中…</span>
+      </template>
+      <p v-else>{{ reading ? '正在读取目标…' : supported === false ? '当前服务不支持目标模式。' : '当前没有目标。' }}</p>
     </div>
     <div v-if="error && !open" class="goal-row-error"><p role="alert">{{ error }}</p><button type="button" class="text-button" :disabled="!canRefresh" @click="refresh">重试</button></div>
   </section></MotionCollapse>
@@ -214,7 +256,7 @@ function clear() {
             </label>
             <p v-if="budgetError" :id="`${id}-budget-error`" class="goal-validation" role="alert">{{ budgetError }}</p>
             <div v-if="goal && !confirmingClear" class="goal-controls">
-              <button type="button" class="text-button" :disabled="!canMutate" @click="toggleStatus"><PhPause v-if="goal.status === 'active'" :size="16" aria-hidden="true" /><PhPlay v-else :size="16" aria-hidden="true" />{{ pending?.kind === 'status' ? '正在更新…' : goal.status === 'active' ? '暂停目标' : '继续目标' }}</button>
+              <button v-if="goal.status === 'active' || goal.status === 'paused'" type="button" class="text-button" :disabled="!canChangeStatus" @click="goal.status === 'active' ? pause() : resume()"><PhPause v-if="goal.status === 'active'" :size="16" aria-hidden="true" /><PhPlay v-else :size="16" aria-hidden="true" />{{ pending?.kind === 'status' ? '正在更新…' : goal.status === 'active' ? '暂停目标' : '恢复目标' }}</button>
               <button type="button" class="text-button danger" :disabled="!canMutate" @click="clear">移除目标</button>
             </div>
             <div v-if="goal && confirmingClear" class="goal-confirm" role="group" :aria-labelledby="`${id}-confirm`">
@@ -233,58 +275,85 @@ function clear() {
 </template>
 
 <style scoped>
-.goal-panel { min-width: 0; padding: 4px 0; color: var(--ink-soft); }
+.goal-panel { min-width: 0; padding: 4px 0; color: var(--ink-soft); container: goal-panel / inline-size; }
 .goal-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.goal-icon { color: var(--muted); margin-inline: 5px 3px; }
-.goal-summary { flex: 1; min-width: 0; }
-.goal-heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: 13px; line-height: 20px; }
+.goal-icon { flex-shrink: 0; color: var(--muted); margin-inline: 5px 3px; }
+.goal-row > .icon-button { flex-shrink: 0; }
+.goal-summary { flex: 1; min-width: 0; padding: 0; text-align: left; border-radius: var(--radius-sm); }
+.goal-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.goal-heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); }
 .goal-objective { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.goal-status { flex-shrink: 0; color: var(--muted); font-size: 12px; }
-.goal-metrics { display: flex; flex-wrap: wrap; column-gap: 12px; color: var(--muted); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
-.goal-metrics > span { overflow-wrap: anywhere; }
-.goal-row-error, .goal-error { display: flex; align-items: baseline; gap: 10px; color: var(--danger); font-size: 13px; line-height: 1.6; }
+.goal-status { flex-shrink: 0; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.goal-time { flex-shrink: 0; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
+.goal-time-compact { display: none; }
+@container goal-panel (max-width: 520px) {
+  .goal-row { gap: 0; }
+  .goal-row > .icon-button { flex: 0 0 44px; width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  .goal-icon { display: none; }
+  .goal-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px; row-gap: 0; align-items: center; }
+  .goal-objective { grid-column: 1 / -1; }
+  .goal-time { white-space: nowrap; }
+  .goal-time-full { display: none; }
+  .goal-time-compact { display: inline; }
+}
+@container goal-panel (max-width: 330px) {
+  .goal-heading { column-gap: 3px; }
+  .goal-objective { grid-column: 1; }
+  .goal-heading > .goal-status { grid-column: 2; grid-row: 1; padding-inline: 2px; }
+  .goal-heading > .goal-status::before { content: ''; display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .goal-heading > .goal-status[data-status="active"]::before { background: var(--accent); }
+  .goal-heading > .goal-status > .goal-status-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .goal-time { grid-column: 1 / -1; grid-row: 2; }
+}
+.goal-row-error, .goal-error { display: flex; align-items: baseline; gap: 10px; color: var(--danger); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
 .goal-row-error { padding: 4px 6px; }
 .goal-row-error p, .goal-error p { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .goal-row-error button, .goal-error button { flex-shrink: 0; }
 .goal-dialog { max-height: min(84dvh, 720px); background: var(--surface); }
 .goal-dialog :deep(.dialog-inner) { display: flex; flex-direction: column; max-height: inherit; padding: 24px; }
 .goal-dialog :deep(.dialog-header) { flex-shrink: 0; margin-bottom: 12px; }
-.goal-dialog :deep(.dialog-header h2) { font-size: 18px; }
+.goal-dialog :deep(.dialog-header h2) { font-size: calc(18px * var(--ui-font-scale, 1)); }
 .goal-form { display: flex; flex-direction: column; min-height: 0; }
 .goal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 2px 4px 8px; }
 .goal-body:focus { outline: none; }
-.goal-toolbar { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
-.goal-notice { margin: 8px 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.goal-toolbar { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); margin-bottom: 12px; }
+.goal-notice { margin: 8px 0 16px; color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
 .goal-error { margin-bottom: 16px; }
-.goal-details { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; padding: 0 0 16px; margin: 0 0 16px; border-bottom: 1px solid var(--line-soft); font-size: 12px; line-height: 1.6; }
+.goal-details { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; padding: 0 0 16px; margin: 0 0 16px; border-bottom: 1px solid var(--line-soft); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; }
 .goal-details > div { min-width: 0; }
 .goal-details dt { color: var(--muted); }
-.goal-details dd { margin: 0; color: var(--ink-soft); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.goal-details dd { margin: 0; color: var(--ink-soft); font-size: calc(13px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.is-status-preview .goal-heading { align-items: flex-start; flex-wrap: wrap; }
+.is-status-preview .goal-objective { max-height: 120px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.goal-status-details { padding: 6px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; }
+.goal-status-details .goal-details { padding: 0; margin: 0; border: 0; }
+.goal-status-details p { margin: 0; }
 .goal-dialog .field { margin-bottom: 16px; }
-.goal-dialog .goal-input { display: block; width: 100%; min-width: 0; margin-top: 6px; padding: 10px 14px; border: 1px solid var(--line); background: var(--sidebar); color: var(--ink); font-size: 14px; font-weight: 400; line-height: 1.6; }
+.goal-dialog .goal-input { display: block; width: 100%; min-width: 0; margin-top: 6px; padding: 10px 14px; border: 1px solid var(--line); background: var(--sidebar); color: var(--ink); font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 400; line-height: 1.6; }
 .goal-dialog textarea.goal-input { min-height: 100px; max-height: 240px; resize: vertical; border-radius: var(--radius-md); }
 .goal-dialog input.goal-input { height: 44px; border-radius: var(--radius-round); }
 .goal-dialog .goal-input:focus { border-color: var(--accent); background: var(--surface); }
 .goal-dialog .goal-input:disabled { opacity: .65; cursor: not-allowed; }
 .goal-dialog .goal-input[aria-invalid="true"] { border-color: var(--danger); }
 .goal-dialog .field-hint { color: var(--muted); padding-inline: 0; }
-.goal-validation { margin: -8px 0 16px; color: var(--danger); font-size: 13px; line-height: 1.6; }
+.goal-validation { margin: -8px 0 16px; color: var(--danger); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
 .goal-controls, .goal-confirm > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; }
 .goal-controls .text-button, .goal-confirm .text-button { min-height: 34px; padding: 4px 8px; border-radius: var(--radius-sm); }
 .goal-controls .text-button:hover:not(:disabled), .goal-confirm .text-button:hover:not(:disabled) { background: var(--hover); }
 .goal-controls .danger, .goal-confirm .danger { color: var(--danger); }
-.goal-confirm { padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 13px; line-height: 1.6; }
+.goal-confirm { padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
 .goal-confirm p { margin-bottom: 6px; }
 .goal-actions { flex-shrink: 0; justify-content: flex-end; position: static; padding: 14px 0 0; margin: 4px 0 0; background: var(--surface); }
 .goal-actions .secondary { background: var(--surface); }
 .goal-actions .secondary:hover:not(:disabled) { background: var(--hover); }
 @media (max-width: 600px) {
   .goal-dialog :deep(.dialog-inner) { padding: 20px 16px; }
-  .goal-heading { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
-  .goal-dialog .goal-input { font-size: 16px; }
+  .goal-heading { column-gap: 6px; }
+  .goal-dialog .goal-input { font-size: calc(16px * var(--ui-font-scale, 1)); }
 }
 @media (max-width: 760px), (hover: none), (pointer: coarse) {
   .goal-panel .icon-button, .goal-dialog :deep(.icon-button) { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
   .goal-panel .text-button, .goal-dialog .text-button, .goal-dialog .button { min-height: 44px; }
+  .goal-panel .goal-summary { min-height: 44px; }
 }
 </style>

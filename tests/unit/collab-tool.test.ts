@@ -15,13 +15,15 @@ const call = (fields: Record<string, unknown> = {}) => ({
 })
 
 // Compile the actual SFC to a temporary module, including its toggle handler, without a browser or TCP.
-// InlineImage is the only stub; it is outside the collab/reasoning branches under test.
+// Images and DOM-based Markdown sanitization are stubbed; these tests exercise
+// visibility, lazy expansion and the text passed to the Markdown renderer.
 let MessageItem: Component
 beforeAll(async () => {
   const file = new URL('../../src/components/MessageItem.vue', import.meta.url)
   const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
   const script = compileScript(descriptor, { id: 'collab-tool-test', inlineTemplate: true })
   const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
+    .replace(/import \{ renderMarkdown \} from ["']\.\.\/lib\/markdown["'];?/, 'const renderMarkdown = (text) => text;')
     .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
     .replace(/from (["'])([^"']+)\1/g, (_match, _quote, specifier: string) =>
       'from ' + JSON.stringify(specifier.startsWith('.') ? new URL(specifier + '.ts', file).href : import.meta.resolve(specifier)))
@@ -196,9 +198,25 @@ describe('collab tool cards and reasoning visibility', () => {
     expect(descendants(view.root).some(target => target.type === 'details')).toBe(false)
   })
 
-  test('still displays reasoning when real body text arrives', () => {
-    const view = mount({ id: 'reasoning', type: 'reasoning', summary: [], content: ['已有实际思考正文'], status: 'inProgress' })
-    expect(view.text()).toContain('思考中')
-    expect(view.text()).toContain('已有实际思考正文')
+  test('keeps live reasoning out of the transcript and inserts it collapsed on completion', async () => {
+    const item = { id: 'reasoning', type: 'reasoning', summary: [], content: ['已有实际思考正文'], status: 'inProgress', startedAtMs: 1000 }
+    const view = mount(item)
+    expect(view.text().trim()).toBe('')
+    expect(descendants(view.root).some(target => target.type === 'details')).toBe(false)
+    await view.update({ ...item, status: 'completed', completedAtMs: 4000 })
+    expect(view.text()).toContain('已思考 3秒')
+    expect(view.text()).not.toContain('已有实际思考正文')
+    expect(descendants(view.root).filter(target => target.type === 'details')).toHaveLength(1)
+    expect(descendants(view.root).find(target => target.type === 'details')?.props.open).toBeFalsy()
+    expect(descendants(view.root).some(target => target.props.innerHTML)).toBe(false)
+    await view.open()
+    expect(descendants(view.root).some(target => String(target.props.innerHTML || '').includes('已有实际思考正文'))).toBe(true)
+  })
+  test('historical reasoning starts collapsed even if it has no timestamps', async () => {
+    const view = mount({ id: 'history', type: 'reasoning', summary: ['历史思考正文'] })
+    expect(view.text()).toContain('思考过程')
+    expect(view.text()).not.toContain('历史思考正文')
+    await view.open()
+    expect(descendants(view.root).some(target => String(target.props.innerHTML || '').includes('历史思考正文'))).toBe(true)
   })
 })

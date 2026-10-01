@@ -1,11 +1,11 @@
 <script setup lang="ts" generic="T extends string">
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { PhCaretDown, PhCheck } from '@phosphor-icons/vue'
-const props = defineProps<{ modelValue: T; options: { value: T; label: string; disabled?: boolean }[]; label: string; disabled?: boolean }>()
+const props = defineProps<{ modelValue: T; options: { value: T; label: string; disabled?: boolean }[]; label: string; placeholder?: string; disabled?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
 const id = useId(), root = ref<HTMLElement>(), trigger = ref<HTMLButtonElement>(), panel = ref<HTMLElement>()
 const open = ref(false), above = ref(false)
-const selectedLabel = computed(() => props.options.find(option => option.value === props.modelValue)?.label || props.modelValue)
+const selectedLabel = computed(() => props.options.find(option => option.value === props.modelValue)?.label || props.placeholder || props.modelValue)
 let prefix = '', prefixTimer: ReturnType<typeof setTimeout> | undefined
 const choices = () => [...(panel.value?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') || [])]
 function close(restoreFocus = false) { open.value = false; prefix = ''; clearTimeout(prefixTimer); if (restoreFocus) trigger.value?.focus() }

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { composerCommands, fileMentionText, submittedCommand } from '../../src/lib/composer-commands'
+import { composerCommands, composerPlaceholder, fileMentionText, submittedCommand } from '../../src/lib/composer-commands'
 
 test('command search filters names and Chinese labels and hides device actions offline', () => {
   expect(composerCommands('go', true).map(command => command.id)).toEqual(['goal'])
@@ -19,4 +19,16 @@ test('file completion preserves native paths literally and quotes whitespace lik
   expect(fileMentionText('C:\\work\\my file.ts')).toBe('"C:\\work\\my file.ts"')
   expect(fileMentionText('a"quoted file')).toBe('a"quoted file')
   expect(fileMentionText('$(command).ts')).toBe('$(command).ts')
+})
+test('model service tiers appear after the model command like Codex TUI', () => {
+  const commands = composerCommands('', true, [{ id: 'fast', name: 'Fast', description: '更快的响应' }])
+  expect(commands.map(command => command.id)).toEqual(['goal', 'new', 'model', 'service-tier:fast', 'effort', 'permissions', 'skills', 'rename', 'archive', 'resume', 'agents', 'diff', 'mention', 'status', 'cd', 'pwd', 'copy', 'project', 'tasks', 'settings', 'help'])
+  expect(composerCommands('fast', true, [{ id: 'fast', name: 'Fast', description: '更快的响应' }])).toEqual([{ id: 'service-tier:fast', label: '/fast', description: '更快的响应', serviceTier: 'fast' }])
+})
+test('Astra uses the special placeholder only at the highest reasoning levels', () => {
+  expect(composerPlaceholder('gpt-6-astra', 'xhigh')).toBe('与神对话')
+  expect(composerPlaceholder('GPT-6-ASTRA', 'Max')).toBe('与神对话')
+  expect(composerPlaceholder('gpt-6-astra', 'ultra')).toBe('与神对话')
+  expect(composerPlaceholder('gpt-6-astra', 'high')).toBe('向 Codex 提问，或描述你想完成的任务')
+  expect(composerPlaceholder('test-model', 'xhigh')).toBe('向 Codex 提问，或描述你想完成的任务')
 })

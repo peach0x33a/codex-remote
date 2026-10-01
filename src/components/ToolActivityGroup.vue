@@ -2,13 +2,15 @@
 import { computed, ref } from 'vue'
 import { PhX, PhCode, PhFileText, PhGlobe, PhTerminal } from '@phosphor-icons/vue'
 import type { Item } from '../../shared/protocol'
-import { summarizeToolActivity } from '../lib/tool-activity'
+import { documentActivityTitle, summarizeToolActivity } from '../lib/tool-activity'
 import MessageItem from './MessageItem.vue'
+import type { FileLinkTarget } from '../lib/file-links'
 import { vAnimatedDetails } from '../lib/details-motion'
 
-const props = defineProps<{ items: Item[]; now?: number }>()
+const props = defineProps<{ items: Item[]; now?: number; documentSummary?: boolean }>()
+const emit = defineEmits<{ openFile: [target: FileLinkTarget] }>()
 const expanded = ref(false)
-const summary = computed(() => summarizeToolActivity(props.items))
+const summary = computed(() => { const result = summarizeToolActivity(props.items); return props.documentSummary ? { ...result, title: documentActivityTitle(props.items), kind: 'read' as const } : result })
 </script>
 
 <template>
@@ -22,7 +24,7 @@ const summary = computed(() => summarizeToolActivity(props.items))
       <span v-if="summary.failed" class="activity-state failed" :title="summary.failedCount + ' 项失败'"><PhX :size="13" aria-hidden="true" />失败</span>
     </summary>
     <div v-if="expanded" class="tool-activity-items">
-      <MessageItem v-for="item in items" :key="item.id" :item="item" :now="now" />
+      <MessageItem v-for="item in items" :key="item.id" :item="item" :now="now" @open-file="emit('openFile', $event)" />
     </div>
   </details>
 </template>

@@ -23,7 +23,7 @@ function retry() { if (props.retryable && message.value && !props.loading && !pr
 </template>
 
 <style scoped>
-.turn-failure { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px 10px; min-width: 0; font-size: 13px; line-height: 1.65; }
+.turn-failure { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px 10px; min-width: 0; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.65; }
 .turn-failure-description { display: flex; align-items: flex-start; flex: 1 1 200px; min-width: 0; gap: 7px; color: var(--muted); }
 .turn-failure-icon { flex: 0 0 auto; margin-top: 3px; color: var(--danger); }
 .turn-failure-message { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

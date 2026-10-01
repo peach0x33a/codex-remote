@@ -26,6 +26,16 @@ describe('connection records', () => {
     expect(loadProfiles(storage).error).toContain('原始数据未被修改')
     expect(writes).toBe(0)
   })
+  test('persists only the opaque server credential reference alongside profile metadata', () => {
+    let value = ''
+    const storage = { getItem: () => value, setItem: (_key: string, next: string) => { value = next } }
+    const record = { id: 'a', name: 'Remote', endpoint: 'wss://host', cwd: '', createdAt: 1, credentialId: 'a'.repeat(64), token: 'private-bearer' }
+    saveProfiles(storage, [record], 'a')
+    expect(value).not.toContain('private-bearer')
+    expect(loadProfiles(storage).profiles[0]?.credentialId).toBe(record.credentialId)
+    value = value.replace(record.credentialId, '../credentials')
+    expect(loadProfiles(storage).error).not.toBe('')
+  })
   test('reports storage access denial', () => {
     expect(loadProfiles({ getItem: () => { throw new Error('denied') }, setItem: () => {} }).error).not.toBe('')
   })

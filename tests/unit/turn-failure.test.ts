@@ -1,9 +1,16 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, ref, type App, type Component } from 'vue'
-import { turnFailureMessage, type TurnFailureInfo } from '../../src/lib/turn-failure'
+import { retryStatusMessage, turnFailureMessage, type TurnFailureInfo } from '../../src/lib/turn-failure'
 
 const exhausted = 'exceeded retry limit, last status: 429 Too Many Requests, request id: request-123'
+test('retry text retains the real upstream cause and attempt count', () => {
+  expect(retryStatusMessage({ message: 'Reconnecting... 1/5', additionalDetails: '429 Too Many Requests, request id: abc' })).toBe('429 Too Many Requests, request id: abc · Reconnecting... 1/5')
+  expect(retryStatusMessage({ message: 'Reconnecting... 2/5', additionalDetails: '{"error":{"message":"502 Bad Gateway"}}' })).toBe('502 Bad Gateway · Reconnecting... 2/5')
+  expect(retryStatusMessage({ message: 'Reconnecting... 3/5', codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 503 } } })).toBe('HTTP 503 · Reconnecting... 3/5')
+  expect(retryStatusMessage({ message: 'Reconnecting... 1/5' })).toBe('Reconnecting... 1/5')
+  expect(retryStatusMessage({ message: 'timeout', additionalDetails: 'timeout' })).toBe('timeout')
+})
 
 describe('terminal turn error messages', () => {
   test('uses willRetry, not 429 or exhausted wording, to distinguish a live retry', () => {

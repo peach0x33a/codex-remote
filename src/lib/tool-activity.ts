@@ -8,7 +8,7 @@ export type CommandAction =
   | { type: 'listFiles'; command: string; path: string | null }
   | { type: 'search'; command: string; query: string | null; path: string | null }
   | { type: 'unknown'; command: string }
-export type ActivityRow = { key: string; item: Item } | { key: string; group: Item[] }
+export type ActivityRow = { key: string; item: Item } | { key: string; group: Item[]; documentSummary?: boolean }
 export type CommandActivityKind = 'read' | 'listFiles' | 'search' | 'unknown'
 type ActivityFields = { commandActions?: unknown; namespace?: unknown; exitCode?: unknown; success?: unknown }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -71,6 +71,32 @@ export function buildActivityRows(turns: Turn[]): ActivityRow[] {
   }
   return rows
 }
+
+/** Collapse repeated read/edit calls across intervening activity, but never
+ * across turns or another user message. Other rows keep their source order. */
+export function buildDocumentActivityRows(turns: Turn[]): ActivityRow[] {
+  const result: ActivityRow[] = []
+  const documentCall = (item: Item) => item.type === 'fileChange' || commandActivityKind(item) === 'read'
+  for (const turn of turns) {
+    let segment: Item[] = []
+    const flush = () => {
+      const eligible = [...new Map(segment.filter(documentCall).map(item => [item.id, item])).values()]
+      const positions = segment.flatMap((item, index) => documentCall(item) ? [index] : [])
+      const aggregate = eligible.length > 1 && (new Set(eligible.map(item => item.type)).size > 1 || positions.some((value, index) => index > 0 && value > positions[index - 1]! + 1))
+      let inserted = false
+      for (const row of buildActivityRows([{ ...turn, items: segment }])) {
+        const items = 'group' in row ? row.group : [row.item]
+        if (aggregate && items.every(documentCall)) { if (!inserted) { result.push({ key: row.key, group: eligible, documentSummary: true }); inserted = true } }
+        else result.push(row)
+      }
+      segment = []
+    }
+    for (const item of turn.items) { if (item.type === 'userMessage') flush(); segment.push(item) }
+    flush()
+  }
+  return result
+}
+export function documentActivityTitle(items: Item[]) { return '合计 ' + items.filter(item => commandActivityKind(item) === 'read').length + ' 次读取，' + items.filter(item => item.type === 'fileChange').length + ' 次变更' }
 
 export function toolActivityState(item: Item) {
   const fields = item as Item & ActivityFields

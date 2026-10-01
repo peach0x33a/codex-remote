@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import ComposerPopover from './ComposerPopover.vue'
 import { formatTokenCount as short } from '../lib/format-tokens'
 import type { ThreadTokenUsage } from '../../shared/protocol'
 const props = defineProps<{ usage?: ThreadTokenUsage }>()
+const popover = ref<InstanceType<typeof ComposerPopover>>()
+defineExpose({ show: () => popover.value?.show() })
 const used = computed(() => props.usage?.last.totalTokens)
 const maximum = computed(() => props.usage?.modelContextWindow || undefined)
 const ratio = computed(() => used.value !== undefined && maximum.value ? used.value / maximum.value : undefined)
@@ -19,7 +21,7 @@ const rows = computed(() => props.usage ? [
 ] : [])
 </script>
 <template>
-  <ComposerPopover label="上下文用量" trigger-class="context-trigger" align="end" :width="320" hover>
+  <ComposerPopover ref="popover" label="上下文用量" trigger-class="context-trigger" align="end" :width="320" hover>
     <template #trigger><svg class="context-ring" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="var(--line-strong)" stroke-width="3" /><circle v-if="ratio !== undefined" cx="12" cy="12" r="8.5" fill="none" :stroke="color" stroke-width="3" stroke-linecap="round" stroke-dasharray="53.407" :stroke-dashoffset="53.407 * (1 - Math.min(1, Math.max(0, ratio)))" transform="rotate(-90 12 12)" /></svg><span class="sr-only">{{ percentage }}</span></template>
     <div class="context-panel"><div class="context-heading"><strong>上下文容量</strong><span :title="format(used) + ' / ' + format(maximum) + ' tokens'">{{ short(used) }} / {{ short(maximum) }}<template v-if="ratio !== undefined">（{{ percentage }}）</template></span></div><div class="context-meter" :role="ratio !== undefined ? 'progressbar' : undefined" :aria-valuenow="ratio !== undefined ? Math.min(100, ratio * 100) : undefined" aria-valuemin="0" aria-valuemax="100" aria-label="上下文使用比例"><span :style="{ width: (Math.min(1, ratio || 0) * 100) + '%', background: color }" /></div><template v-if="usage"><dl class="context-details"><div v-for="row in rows" :key="row.name"><dt>{{ row.name }}<small v-if="row.detail">{{ row.detail }}</small></dt><dd :title="format(row.value)">{{ short(row.value) }}</dd></div></dl><div class="context-total"><span>会话累计 token</span><span :title="format(usage.total.totalTokens)">{{ short(usage.total.totalTokens) }}</span></div><p class="context-note">容量按最近一次请求估算。服务端未提供系统工具、技能等占比。</p></template><p v-else class="context-note">服务端尚未发送用量，生成过程中会自动更新。</p></div>
   </ComposerPopover>

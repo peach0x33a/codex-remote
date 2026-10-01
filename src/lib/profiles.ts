@@ -11,7 +11,8 @@ export function loadProfiles(storage: StorageLike): { profiles: ConnectionProfil
     if (data.version !== 1 || !Array.isArray(data.profiles)) throw new Error('invalid')
     const profiles: ConnectionProfile[] = data.profiles.map((p: ConnectionProfile) => {
       if (!p || typeof p.id !== 'string' || typeof p.name !== 'string' || !p.name.trim() || typeof p.endpoint !== 'string' || typeof p.cwd !== 'string' || typeof p.createdAt !== 'number') throw new Error('invalid')
-      return { id: p.id, name: p.name, endpoint: normalizeEndpoint(p.endpoint), cwd: p.cwd, createdAt: p.createdAt }
+      if (p.credentialId !== undefined && (typeof p.credentialId !== 'string' || !/^[a-f0-9]{64}$/.test(p.credentialId))) throw new Error('invalid credential reference')
+      return { id: p.id, name: p.name, endpoint: normalizeEndpoint(p.endpoint), cwd: p.cwd, createdAt: p.createdAt, ...(p.credentialId ? { credentialId: p.credentialId } : {}) }
     })
     if (new Set(profiles.map(p => p.id)).size !== profiles.length) throw new Error('duplicate')
     return { profiles, selectedId: profiles.some(p => p.id === data.selectedId) ? data.selectedId : profiles[0]?.id || '', error: '' }
@@ -20,6 +21,6 @@ export function loadProfiles(storage: StorageLike): { profiles: ConnectionProfil
 export function saveProfiles(storage: StorageLike, profiles: ConnectionProfile[], selectedId: string) {
   // Deliberately serialize an allowlist: never persist transport tokens or chats.
   storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, selectedId, profiles: profiles.map(p => ({
-    id: p.id, name: p.name, endpoint: normalizeEndpoint(p.endpoint), cwd: p.cwd, createdAt: p.createdAt,
+    id: p.id, name: p.name, endpoint: normalizeEndpoint(p.endpoint), cwd: p.cwd, createdAt: p.createdAt, ...(p.credentialId ? { credentialId: p.credentialId } : {}),
   })) }))
 }
