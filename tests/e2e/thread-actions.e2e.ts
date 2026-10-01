@@ -124,6 +124,46 @@ test('keeps the scheduled entry disabled and skips it during menu keyboard navig
   expect(generationCalls((await metrics(request)).requests)).toHaveLength(0)
 })
 
+test('copies the current Session ID from the copy submenu and follows conversation switches', async ({ page, request }) => {
+  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__copiedSession = text } }, configurable: true }) })
+  for (const [name, id] of [['已有项目分析', 'existing-thread'], ['第二个会话', 'second-thread']]) {
+    await openThread(page, name)
+    await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
+    await page.getByRole('menu', { name: '复制对话', exact: true }).getByRole('menuitem', { name: '复制 Session ID', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedSession)).toBe(id)
+    await expect(page.getByRole('menu', { name: '复制对话', exact: true })).toHaveCount(0)
+  }
+  expect(generationCalls((await metrics(request)).requests)).toHaveLength(0)
+})
+
+test('allows copying the Session ID even when the conversation has no messages', async ({ page }) => {
+  await page.routeWebSocket(/\/api\/socket(?:\?|$)/, socket => {
+    const upstream = socket.connectToServer()
+    const emptyPages = new Set<number>()
+    socket.onMessage(raw => {
+      const message = JSON.parse(String(raw))
+      if (message.params?.threadId === 'existing-thread' && ['thread/turns/list', 'thread/items/list'].includes(message.method)) emptyPages.add(message.id)
+      upstream.send(raw)
+    })
+    upstream.onMessage(raw => {
+      const message = JSON.parse(String(raw))
+      if (message.result?.thread?.id === 'existing-thread') message.result.thread.turns = []
+      if (emptyPages.has(message.id)) message.result = { data: [], nextCursor: null }
+      socket.send(JSON.stringify(message))
+    })
+  })
+  await page.reload()
+  await expect(page.getByTestId('selected-device')).toContainText('已连接')
+  await openThread(page)
+  await expect(page.locator('.empty-thread')).toBeVisible()
+  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__copiedSession = text } }, configurable: true }) })
+  await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()
+  const menu = page.getByRole('menu', { name: '复制对话', exact: true })
+  await expect(menu.getByRole('menuitem', { name: '复制已加载的对话', exact: true })).toBeDisabled()
+  await menu.getByRole('menuitem', { name: '复制 Session ID', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedSession)).toBe('existing-thread')
+})
+
 for (const completedOnly of [false, true]) {
   test('uses native fork metadata from ' + (completedOnly ? 'the last completed turn' : 'the latest position') + ' without starting generation', async ({ page, request }) => {
     await send(page, '队列任务保留在原会话')

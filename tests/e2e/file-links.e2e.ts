@@ -48,6 +48,10 @@ test('opens Markdown on the right and resolves its relative file links on the re
   const box = await panel.boundingBox()
   expect(box!.x).toBeGreaterThanOrEqual(0)
   expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+  if (page.viewportSize()!.width >= 1100) await expect.poll(async () => {
+    const [composer, sidebar] = await Promise.all([page.locator('.composer').boundingBox(), panel.boundingBox()])
+    return composer!.x + composer!.width <= sidebar!.x
+  }).toBe(true)
 })
 
 test('asks before downloading an unsupported file and fetches every binary chunk', async ({ page, request }) => {
