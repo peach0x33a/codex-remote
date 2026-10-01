@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { randomId } from '../lib/random-id'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
 import { PhArchive, PhAt, PhBrain, PhChatCircle, PhCopy, PhCpu, PhCube, PhFile, PhFolder, PhGearSix, PhGitDiff, PhLightning, PhMagnifyingGlass, PhPencilSimple, PhPlus, PhQuestion, PhRobot, PhShieldCheck, PhTarget, PhTerminal } from '@phosphor-icons/vue'
 import ImagePreview from './ImagePreview.vue'
@@ -248,12 +249,12 @@ function insertLineBreak() {
 function insertImage(image: ImagePart, insertion?: Range) { if (insertion && editor.value?.contains(insertion.commonAncestorContainer)) savedRange = insertion.cloneRange(); images.set(image.id, image); insertNode(makeChip(image)) }
 function insertSkill(skill: { name: string; path: string }, replaceToken = false) {
   if (props.disabled || replaceToken && !applySuggestion('')) return false
-  const part: SkillPart = { type: 'skill', id: 'skill-' + crypto.randomUUID(), name: skill.name, path: skill.path }
+  const part: SkillPart = { type: 'skill', id: 'skill-' + randomId(), name: skill.name, path: skill.path }
   skills.set(part.id, part); insertNode(makeSkillChip(part)); return true
 }
 function insertMention(mention: { name: string; path: string; kind: MentionPart['kind'] }, replaceToken = false) {
   if (props.disabled || replaceToken && !applySuggestion('')) return false
-  const part: MentionPart = { type: 'mention', id: 'mention-' + crypto.randomUUID(), ...mention }
+  const part: MentionPart = { type: 'mention', id: 'mention-' + randomId(), ...mention }
   skills.set(part.id, part); insertNode(makeSkillChip(part)); return true
 }
 function insertText(text: string) { if (!props.disabled) insertNode(document.createTextNode(text)) }

@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '../fixtures'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
 
 async function configure(page: Page) {
@@ -8,7 +8,7 @@ async function configure(page: Page) {
   await dialog.getByLabel('设备名称').fill('测试工作站')
   await dialog.getByLabel('App Server 地址').fill(MOCK_ENDPOINT)
   await dialog.getByPlaceholder('App Server 的 Bearer token').fill('e2e-transport-token')
-  await dialog.getByPlaceholder('例如：/home/me/projects/my-app').fill('/test/project')
+  await dialog.getByPlaceholder('留空使用 ~/codex-remote').fill('/test/project')
   await dialog.getByRole('button', { name: '保存并连接', exact: true }).click()
   await expect(dialog).toBeHidden()
   await expect(page.getByTestId('selected-device')).toContainText('已连接')

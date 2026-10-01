@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../fixtures'
 import { readFile } from 'node:fs/promises'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
 

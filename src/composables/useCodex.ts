@@ -1,8 +1,11 @@
+import { randomId } from '../lib/random-id'
 import { computed, getCurrentInstance, getCurrentScope, onMounted, onScopeDispose, ref, watch } from 'vue'
 import type { Approval, ConnectionProfile, Item, MessageContent, Model, RpcId, RpcMessage, Thread, ThreadItemsPage, ThreadResult, ThreadTokenUsage, Turn } from '../../shared/protocol'
 import { normalizeEndpoint } from '../../shared/endpoint'
-import { loadProfiles, saveProfiles } from '../lib/profiles'
-import { deleteCredential, storeCredential } from '../lib/credentials'
+import { loadProfiles, STORAGE_KEY } from '../lib/profiles'
+import { ProfileApiError, fetchProfiles, importServerProfile, removeServerProfile, saveServerProfile, selectServerProfile } from '../lib/profile-api'
+import type { ProfileInput, ProfileSnapshot } from '../../shared/profiles'
+import { deviceDirectory, resolveDeviceDirectory } from '../lib/working-directory'
 import { readUiPreferences } from '../lib/ui-preferences'
 import { RpcClient, RpcError } from '../lib/rpc'
 import { retryStatusMessage } from '../lib/turn-failure'
@@ -37,14 +40,19 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   function noticeThreadName(id: string) { const thread = active.value?.id === id ? active.value : threads.value.find(thread => thread.id === id) || projectThreads.value.find(thread => thread.id === id); return (thread?.name || thread?.preview || 'Codex 对话').slice(0, 80) }
   let storage: Storage | undefined
   try { storage = localStorage } catch { /* Browser privacy mode may disallow storage. */ }
-  const stored = storage ? loadProfiles(storage) : { profiles: [], selectedId: '', error: '此浏览器禁止本地存储，连接仅在当前页面保留。' }
-  const profiles = ref<ConnectionProfile[]>(stored.profiles)
-  const selectedId = ref(stored.selectedId)
+  const profiles = ref<ConnectionProfile[]>([])
+  const selectedId = ref('')
+  const profilesLoaded = ref(false)
   const selected = computed(() => profiles.value.find(p => p.id === selectedId.value))
-  const workingDirectory = ref(selected.value?.cwd || '')
-  watch([() => selected.value?.id, () => selected.value?.cwd], () => { workingDirectory.value = selected.value?.cwd || '' }, { flush: 'sync' })
+  const defaultWorkingDirectory = ref(deviceDirectory())
+  const workingDirectory = ref(defaultWorkingDirectory.value)
+  watch([() => selected.value?.id, () => selected.value?.cwd], () => {
+    const wasDefault = workingDirectory.value === defaultWorkingDirectory.value
+    defaultWorkingDirectory.value = deviceDirectory(selected.value?.cwd)
+    if (wasDefault || !active.value) workingDirectory.value = defaultWorkingDirectory.value
+  }, { flush: 'sync' })
   const status = ref<'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'>('disconnected')
-  const error = ref(stored.error)
+  const error = ref('')
   const notice = ref('')
   const online = ref(navigator.onLine)
   const bridgeReachable = ref(true)
@@ -86,7 +94,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (turn) turn.error = value
   }
   function notifyRequestFailure(threadId: string) {
-    emitTaskNotice({ id: crypto.randomUUID(), kind: 'failed', deviceId: selectedId.value, deviceName: selected.value?.name || '当前设备', threadId, threadName: noticeThreadName(threadId) })
+    emitTaskNotice({ id: randomId(), kind: 'failed', deviceId: selectedId.value, deviceName: selected.value?.name || '当前设备', threadId, threadName: noticeThreadName(threadId) })
   }
   function submissionFailed(threadId: string, message: string) {
     notifyRequestFailure(threadId)
@@ -200,7 +208,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   }
   function addPendingUserMessage(threadId: string, input: MessageContent[], placement: PendingUserMessage['placement'] = 'conversation') {
     const priorUserIds = active.value?.id === threadId ? active.value.turns.flatMap(turn => turn.items.filter(item => item.type === 'userMessage').map(item => item.id)) : []
-    const clientId = crypto.randomUUID()
+    const clientId = randomId()
     const pending = { id: 'pending-' + clientId, clientId, threadId, input, priorUserIds, placement, accepted: false, cancelable: false }
     pendingUserMessages.value.push(pending)
     return pending
@@ -331,63 +339,105 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (thread && !thread.preview) updateThreadMetadata(id, { preview: promptText(messageParts(item.content)).trim().slice(0, 200) })
   }
   function toast(text: string) { notice.value = text; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.value = '' }, 4500) }
-  function persist() {
-    if (options.persistConnection === false) return
-    try { if (!storage) throw new Error(); saveProfiles(storage, profiles.value, selectedId.value) }
-    catch { error.value = '保存失败：浏览器存储不可用或已满。连接仍可用于当前页面。' }
+  let profileWriting = false, profileGeneration = 0, profileSyncError = ''
+  let profileRefreshing: Promise<void> | undefined
+  let selectionWrite = Promise.resolve()
+  function applyProfiles(snapshot: ProfileSnapshot) {
+    const currentId = selectedId.value
+    for (const old of profiles.value) {
+      const next = snapshot.profiles.find(profile => profile.id === old.id)
+      if (!next || next.endpoint !== old.endpoint || next.credentialId !== old.credentialId) {
+        tokens.delete(old.id)
+        if (old.id === currentId && connected.value) disconnect()
+      }
+    }
+    profiles.value = snapshot.profiles
+    selectedId.value = snapshot.profiles.some(profile => profile.id === currentId) ? currentId : snapshot.selectedId
+    profilesLoaded.value = true
   }
-  let profileWriting = false
-  async function saveProfile(input: { id?: string; name: string; endpoint: string; cwd: string; token: string; rememberToken?: boolean; clearToken?: boolean }) {
+  function persistSelection() {
+    if (options.persistConnection === false || disposed || !profilesLoaded.value || !authenticated.value) return
+    const id = selectedId.value
+    selectionWrite = selectionWrite.then(async () => {
+      if (disposed || !authenticated.value || id !== selectedId.value) return
+      try { await selectServerProfile(id) } catch (cause) { if (!disposed) error.value = messageOf(cause) }
+    })
+  }
+  async function refreshProfiles() {
+    if (options.persistConnection === false || disposed || !authenticated.value || !online.value || profileWriting) return
+    if (profileRefreshing) return profileRefreshing
+    const version = profileGeneration
+    const current = () => !disposed && authenticated.value && version === profileGeneration
+    const operation = (async () => {
+      try {
+        let snapshot = await fetchProfiles()
+        if (!current()) return
+        // One-time import only. Remove the browser record after every import succeeds.
+        let raw: string | null = null
+        try { raw = storage?.getItem(STORAGE_KEY) ?? null } catch { /* Server storage works without localStorage. */ }
+        if (raw && storage) {
+          const initiallyEmpty = snapshot.profiles.length === 0
+          if (!initiallyEmpty) applyProfiles(snapshot)
+          const legacy = loadProfiles(storage)
+          if (legacy.error) { applyProfiles(snapshot); throw new Error(legacy.error) }
+          for (const profile of legacy.profiles) {
+            if (!current()) return
+            snapshot = await importServerProfile(profile)
+          }
+          if (!current()) return
+          const selectedLegacy = legacy.profiles.find(profile => profile.id === legacy.selectedId)
+          const migratedSelection = snapshot.profiles.find(profile => profile.endpoint === selectedLegacy?.endpoint)
+          if (initiallyEmpty && migratedSelection) {
+            await selectServerProfile(migratedSelection.id)
+            snapshot.selectedId = migratedSelection.id
+          }
+          if (!current()) return
+          try { if (storage.getItem(STORAGE_KEY) === raw) storage.removeItem(STORAGE_KEY) } catch { /* Retrying import is idempotent. */ }
+        }
+        if (current()) {
+          applyProfiles(snapshot)
+          if (profileSyncError && error.value === profileSyncError) error.value = ''
+          profileSyncError = ''
+        }
+      } catch (cause) {
+        if (!current()) return
+        profileSyncError = messageOf(cause); error.value = profileSyncError
+        if (cause instanceof ProfileApiError && cause.status === 401) {
+          disconnect(); authenticated.value = false; profileGeneration++; tokens.clear()
+          profiles.value = []; selectedId.value = ''; profilesLoaded.value = false
+        }
+      }
+    })()
+    profileRefreshing = operation
+    try { await operation } finally { if (profileRefreshing === operation) profileRefreshing = undefined }
+  }
+  async function saveProfile(input: ProfileInput) {
     if (profileWriting) throw new Error('正在保存连接，请稍候。')
     const endpoint = normalizeEndpoint(input.endpoint)
     if (!input.name.trim()) throw new Error('请为这台设备填写名称。')
     if (input.token.length > 8192 || /[\r\n]/.test(input.token)) throw new Error('访问令牌格式无效。')
-    if (profiles.value.some(p => p.id !== input.id && p.endpoint === endpoint)) throw new Error('这个地址已保存，请直接连接已有设备。')
-    const old = profiles.value.find(p => p.id === input.id)
-    const token = input.token.trim(), remember = input.rememberToken ?? !!old?.credentialId
-    if (old?.credentialId && old.endpoint !== endpoint && !token && remember && !input.clearToken) throw new Error('地址已更改，请填写新令牌，或清除已保存的令牌。')
-    const profile: ConnectionProfile = { id: old?.id || crypto.randomUUID(), name: input.name.trim(), endpoint, cwd: input.cwd.trim(), createdAt: old?.createdAt || Date.now() }
-    if (remember && !input.clearToken && old?.endpoint === endpoint && old.credentialId) profile.credentialId = old.credentialId
-    const previousProfiles = [...profiles.value], previousSelected = selectedId.value
-    let createdCredential: string | undefined, savedLocally = false
-    profileWriting = true
+    const old = profiles.value.find(profile => profile.id === input.id)
+    profileWriting = true; profileGeneration++
     try {
-      if (!storage) throw new Error('连接未保存：浏览器存储不可用。')
-      // Check storage before sending any credential, and keep the old reference
-      // until both the new record and removal of the old secret succeed.
-      saveProfiles(storage, previousProfiles, previousSelected)
-      if (remember && token) { createdCredential = await storeCredential(endpoint, token); profile.credentialId = createdCredential }
-      const nextProfiles = old ? profiles.value.map(p => p.id === old.id ? profile : p) : [...profiles.value, profile]
-      saveProfiles(storage, nextProfiles, selectedId.value || profile.id)
-      savedLocally = true
-      if (old?.credentialId && old.credentialId !== profile.credentialId) await deleteCredential(old.credentialId)
-      if (old?.id === selectedId.value && (old.endpoint !== endpoint || old.credentialId !== profile.credentialId || (!profile.credentialId && tokenFor(old.id) !== token))) disconnect()
-      profiles.value = nextProfiles
+      const result = await saveServerProfile({ ...input, endpoint, cwd: deviceDirectory(input.cwd) })
+      const profile = result.profile, token = input.token.trim()
+      if (disposed) return profile
+      if (old?.id === selectedId.value && (old.endpoint !== profile.endpoint || old.credentialId !== profile.credentialId || (!profile.credentialId && tokenFor(old.id) !== token))) disconnect()
+      applyProfiles(result)
       if (profile.credentialId) tokens.delete(profile.id); else tokens.set(profile.id, token)
-      if (!selectedId.value) selectedId.value = profile.id
       return profile
-    } catch (cause) {
-      if (savedLocally && storage) { try { saveProfiles(storage, previousProfiles, previousSelected) } catch { /* Report failure without claiming success. */ } }
-      if (createdCredential) { try { await deleteCredential(createdCredential) } catch { toast('保存未完成，服务器可能保留了未使用的令牌记录。') } }
-      throw cause instanceof Error ? cause : new Error('连接未保存，请重试。')
     } finally { profileWriting = false }
   }
   async function removeProfile(id: string) {
     if (profileWriting) throw new Error('正在保存连接，请稍候。')
     if (queuedMessages.value.some(job => job.deviceId === id)) throw new Error('该设备还有待发送消息，请先发送或移除队列。')
-    const profile = profiles.value.find(p => p.id === id)
-    if (!profile) return true
-    const previous = [...profiles.value], previousSelected = selectedId.value
-    const next = previous.filter(p => p.id !== id), nextSelected = selectedId.value === id ? next[0]?.id || '' : selectedId.value
-    profileWriting = true
+    profileWriting = true; profileGeneration++
     try {
-      if (!storage) throw new Error('无法更新浏览器中的连接记录。')
-      saveProfiles(storage, next, nextSelected)
-      try { if (profile.credentialId) await deleteCredential(profile.credentialId) }
-      catch (cause) { saveProfiles(storage, previous, previousSelected); throw cause }
+      const snapshot = await removeServerProfile(id)
+      if (disposed) return true
       if (id === selectedId.value) disconnect()
-      profiles.value = next; selectedId.value = nextSelected; tokens.delete(id)
-      toast('已移除连接及保存的令牌，服务器上的会话不受影响。'); return true
+      tokens.delete(id); applyProfiles(snapshot)
+      toast('已从服务器移除设备及保存的令牌，其他客户端将同步更新。'); return true
     } finally { profileWriting = false }
   }
   function tokenFor(id: string) { return tokens.get(id) || '' }
@@ -406,6 +456,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (disposed) return
       bridgeReachable.value = true
       authenticated.value = result.authenticated; requiresKey.value = result.requiresKey
+      if (authenticated.value) await refreshProfiles()
+      else { profileGeneration++; profiles.value = []; selectedId.value = ''; profilesLoaded.value = false }
       connectOnStartup()
     } catch { if (!disposed) bridgeReachable.value = false }
   }
@@ -414,13 +466,14 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     const result = await response.json()
     if (!response.ok) throw new Error(result.error || '登录失败。')
     authenticated.value = true; error.value = ''
+    await refreshProfiles()
     connectOnStartup()
   }
   async function logout() {
     disconnect()
     const response = await fetch('/api/session', { method: 'DELETE' })
     if (!response.ok) throw new Error('退出失败，请重试。')
-    tokens.clear(); authenticated.value = false
+    tokens.clear(); authenticated.value = false; profileGeneration++; profiles.value = []; selectedId.value = ''; profilesLoaded.value = false
   }
   function disconnect(keepThread = false) {
     startupConnectionPending = false
@@ -442,7 +495,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     approvals.value = []; openingThread = ''; bufferedEvents = []
     pendingUserMessages.value = []
     pendingThreadId.value = ''; threadLoadError.value = ''; loadingEarlier.value = false; historyCursor.value = null
-    if (!keepThread) { listWindow = null; listSort = 'recency_at'; active.value = null; threads.value = []; projectThreads.value = []; projectUpdates.clear(); archivedThreads.clear(); reasoningTimings.clear(); workingDirectory.value = selected.value?.cwd || ''; threadCursor.value = null; models.value = []; model.value = ''; effort.value = ''; permission.value = 'ask'; projectFilter.value = ''; projectPaths.value = []; projectsLoading.value = false; currentSearch = ''; supportsAutoReview.value = false; permissionRequirements.value = null }
+    if (!keepThread) { listWindow = null; listSort = 'recency_at'; active.value = null; threads.value = []; projectThreads.value = []; projectUpdates.clear(); archivedThreads.clear(); reasoningTimings.clear(); workingDirectory.value = defaultWorkingDirectory.value; threadCursor.value = null; models.value = []; model.value = ''; effort.value = ''; permission.value = 'ask'; projectFilter.value = ''; projectPaths.value = []; projectsLoading.value = false; currentSearch = ''; supportsAutoReview.value = false; permissionRequirements.value = null }
   }
   function scheduleReconnect() {
     if (disposed || reconnectTimer || !online.value || !selected.value) return
@@ -460,8 +513,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     // snapshot as the current net patch until this connection observes it.
     turnDiffs.value.clear(); pendingTurnStarts.clear(); steering.value = false
     const epoch = ++generation
-    selectedId.value = profile.id; persist()
-    if (!reconnecting) workingDirectory.value = profile.cwd
+    selectedId.value = profile.id; persistSelection()
+    if (!reconnecting) workingDirectory.value = defaultWorkingDirectory.value = deviceDirectory(profile.cwd)
     status.value = reconnecting ? 'reconnecting' : 'connecting'; error.value = ''
     let initialized = false
     const rpc = new RpcClient({
@@ -490,9 +543,13 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (!online.value) throw new Error('当前处于离线状态，联网后可连接 App Server。')
       await rpc.connect(profile.endpoint, tokens.get(profile.id) || '', profile.credentialId)
       if (epoch !== generation) return
+      const directory = await resolveDeviceDirectory(profile.cwd, params => rpc.request('command/exec', params))
+      if (epoch !== generation) return
+      defaultWorkingDirectory.value = directory
+      if (!reconnecting) workingDirectory.value = directory
       initialized = true; status.value = 'connected'; reconnectCount = 0; authenticated.value = true; bridgeReachable.value = true
       // A slow model listing must not hold the conversation behind a loading screen.
-      void refreshThreads(); void loadModels(rpc, epoch); void loadPermissionCapabilities(rpc, epoch, profile.cwd)
+      void refreshThreads(); void loadModels(rpc, epoch); void loadPermissionCapabilities(rpc, epoch, defaultWorkingDirectory.value)
       if (epoch !== generation) return
       if (resumeId) await openThread(resumeId)
       if (epoch === generation) queueRefreshTimer = setInterval(() => { if (connected.value && active.value) void refreshServerQueue(active.value.id).catch(() => {}) }, 15_000)
@@ -657,7 +714,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     finally { if (epoch === generation && view === threadGeneration) loadingEarlier.value = false }
   }
   function cancelThreadLoad() { threadGeneration++; threadLoadController?.abort(); openingThread = ''; bufferedEvents = []; loadingThread.value = false; pendingThreadId.value = ''; threadLoadError.value = ''; loadingEarlier.value = false }
-  function newThread() { cancelThreadLoad(); submissionFailures.value.delete(turnDiffKey('', '')); pendingUserMessages.value = []; active.value = null; workingDirectory.value = selected.value?.cwd || ''; historyCursor.value = null; error.value = '' }
+  function newThread() { cancelThreadLoad(); submissionFailures.value.delete(turnDiffKey('', '')); pendingUserMessages.value = []; active.value = null; workingDirectory.value = defaultWorkingDirectory.value; historyCursor.value = null; error.value = '' }
   function ensureTurn(id: string): Turn | undefined {
     if (!active.value) return
     let turn = active.value.turns.find(t => t.id === id)
@@ -784,7 +841,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     const rpc = client, epoch = generation, deviceId = selectedId.value, viewEpoch = threadGeneration
     const current = () => rpc === client && epoch === generation && deviceId === selectedId.value && viewEpoch === threadGeneration && root === (active.value?.cwd || workingDirectory.value)
     let response: unknown
-    try { response = await rpc.request('fuzzyFileSearch', { query, roots: [root], cancellationToken: crypto.randomUUID() }, { signal: options.signal, timeoutMs: 8000 }) }
+    try { response = await rpc.request('fuzzyFileSearch', { query, roots: [root], cancellationToken: randomId() }, { signal: options.signal, timeoutMs: 8000 }) }
     catch (cause) { if (!current() || options.signal?.aborted) throw cancelled(); throw cause }
     if (!current() || options.signal?.aborted) throw cancelled()
     if (!isRecord(response) || !Array.isArray(response.files)) throw new RpcError('文件搜索响应无效。')
@@ -812,7 +869,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     try {
       if (!threadId) {
         if (foreground) {
-          optimisticThreadId = 'pending-thread-' + crypto.randomUUID()
+          optimisticThreadId = 'pending-thread-' + randomId()
           active.value = { id: optimisticThreadId, name: null, preview: promptText(parts).trim().slice(0, 200), cwd: workingDirectory.value, createdAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000), status: { type: 'active' }, turns: [] }
           threadId = optimisticThreadId
           pending = addPendingUserMessage(threadId, input)
@@ -904,12 +961,12 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
           await persistServerSettings(rpc, threadId, settings)
           if (rpc !== client) throw new Error('连接已变化，消息未排队。')
           submitted = true
-          await queue.add(threadId, toInputs(parts), crypto.randomUUID())
+          await queue.add(threadId, toInputs(parts), randomId())
           return true
         }
         if (epoch !== generation) return false
         if (queuedMessages.value.some(job => job.deviceId === selectedId.value && job.threadId === threadId && job.source === 'server')) throw new Error('服务端队列暂不可用，请重新连接后确认待发消息。')
-        queuedMessages.value.push({ id: crypto.randomUUID(), deviceId: selectedId.value, threadId, parts: parts.map(part => ({ ...part })), settings: settingsByThread.get(queueKey(threadId)) || settings, state: 'queued' })
+        queuedMessages.value.push({ id: randomId(), deviceId: selectedId.value, threadId, parts: parts.map(part => ({ ...part })), settings: settingsByThread.get(queueKey(threadId)) || settings, state: 'queued' })
         void drainQueue(threadId); return true
       } catch (cause) {
         if (epoch === generation) error.value = submitted && (!(cause instanceof RpcError) || cause.code === undefined) ? '排队结果尚未确认，请先检查共享队列和会话，未自动重发。' : '无法加入队列：' + messageOf(cause)
@@ -1000,7 +1057,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
         const queue = serverQueue, rpc = client
         await persistServerSettings(rpc, threadId, job.settings)
         if (epoch !== generation || rpc !== client || queue !== serverQueue) throw new Error('连接已变化，消息未排队。')
-        await queue.add(threadId, toInputs(job.parts), crypto.randomUUID())
+        await queue.add(threadId, toInputs(job.parts), randomId())
       } else await dispatchInput(job.parts, job.settings, job.threadId)
       queuedMessages.value = queuedMessages.value.filter(message => message.id !== job.id)
     }
@@ -1429,6 +1486,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (key && !turnStartedAt.value.has(key)) turnStartedAt.value.set(key, clockNow.value)
     if (online && key) clockTimer = setInterval(() => { clockNow.value = Date.now() }, 1000)
   }, { flush: 'sync' })
+  let profileRefreshTimer: ReturnType<typeof setInterval> | undefined
+  const refreshVisibleProfiles = () => { if (typeof document === 'undefined' || document.visibilityState !== 'hidden') void refreshProfiles() }
   let starting: Promise<void> | undefined
   function start(lifecycle: { checkSession?: boolean } = {}) {
     if (disposed) return Promise.resolve()
@@ -1436,12 +1495,20 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       checksSession = lifecycle.checkSession !== false
       window.addEventListener('offline', wentOffline); window.addEventListener('online', wentOnline)
       starting = checksSession ? checkSession() : Promise.resolve()
+      if (options.persistConnection !== false) {
+        profileRefreshTimer = setInterval(refreshVisibleProfiles, 10_000)
+        window.addEventListener('focus', refreshVisibleProfiles)
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', refreshVisibleProfiles)
+      }
     }
     return starting
   }
   function dispose() {
     if (disposed) return
-    disposed = true; disconnect(); clearInterval(clockTimer); clearTimeout(noticeTimer); noticeListeners.clear()
+    disposed = true; profileGeneration++; clearInterval(profileRefreshTimer)
+    window.removeEventListener('focus', refreshVisibleProfiles)
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', refreshVisibleProfiles)
+    disconnect(); clearInterval(clockTimer); clearTimeout(noticeTimer); noticeListeners.clear()
     window.removeEventListener('offline', wentOffline); window.removeEventListener('online', wentOnline)
   }
   if (getCurrentScope()) onScopeDispose(dispose)
@@ -1449,5 +1516,5 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (getCurrentInstance()) onMounted(() => { void start() })
     else void start()
   }
-  return { start, dispose, connectWithToken, forkThread, withdrawPendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
+  return { profilesLoaded, refreshProfiles, persistSelection, defaultWorkingDirectory, start, dispose, connectWithToken, forkThread, withdrawPendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
 }

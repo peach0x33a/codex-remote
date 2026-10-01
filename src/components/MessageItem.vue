@@ -61,7 +61,7 @@ const activityError = computed(() => toolActivityError(props.item))
         <template v-if="collab.effort"><dt>思考强度</dt><dd>{{ collab.effort }}</dd></template>
       </dl>
       <div v-if="collab.prompt" class="collab-section"><strong>{{ collab.promptLabel }}</strong><p class="collab-text">{{ collab.prompt }}</p></div>
-      <div v-if="collab.agents.length" class="collab-section"><strong>代理（{{ collab.agents.length }}）</strong><ul class="collab-agents"><li v-for="agent in collab.agents" :key="agent.id"><div class="collab-agent-heading"><span class="activity-path">{{ agent.id }}</span><span class="collab-agent-state" :class="{ failed: agent.failed }">{{ agent.status }}</span></div><p v-if="agent.message" class="collab-text"><span class="collab-message-label">{{ agent.messageLabel }}：</span>{{ agent.message }}</p></li></ul></div>
+      <div v-if="collab.agents.length" class="collab-section"><strong>代理（{{ collab.agents.length }}）</strong><ul class="collab-agents"><li v-for="agent in collab.agents" :key="agent.id || agent.path"><div class="collab-agent-heading"><span v-if="agent.path" class="activity-path">{{ agent.path }}</span><span v-if="agent.id" class="activity-path">{{ agent.id }}</span><span class="collab-agent-state" :class="{ failed: agent.failed }">{{ agent.status }}</span></div><p v-if="agent.message" class="collab-text"><span class="collab-message-label">{{ agent.messageLabel }}：</span>{{ agent.message }}</p></li></ul></div>
     </div>
     <pre v-else><code>{{ JSON.stringify(item.result || item.error || item, null, 2) }}</code></pre>
     <p v-if="activityError" class="activity-error" role="status">{{ activityError }}</p>

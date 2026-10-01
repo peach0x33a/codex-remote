@@ -1,3 +1,4 @@
+import { randomId } from '../lib/random-id'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { migrateUiPreferences, normalizeImageBackground, readUiPreferences, resolveTheme, UI_PREFERENCES_KEY, writeUiPreferences, type ThemePreference, type BackgroundMode, type ImageBackgroundSettings } from '../lib/ui-preferences'
 import { BACKGROUND_CHANGED_KEY, deleteBackground, loadBackground, prepareBackground, saveBackground, type BackgroundImage } from '../lib/backgrounds'
@@ -28,7 +29,7 @@ export function useAppearance(report?: (message: string) => void) {
     try { const saved = await loadBackground(); if (!disposed && request === imageGeneration) replaceImage(saved) }
     catch { /* A missing/unavailable saved image falls back to the plain surface. */ }
   }
-  function notifyImageChange() { try { storage?.setItem(BACKGROUND_CHANGED_KEY, crypto.randomUUID()) } catch { /* Local image remains usable. */ } }
+  function notifyImageChange() { try { storage?.setItem(BACKGROUND_CHANGED_KEY, randomId()) } catch { /* Local image remains usable. */ } }
   async function uploadBackground(file: File) {
     if (backgroundBusy.value) return
     const request = ++imageGeneration

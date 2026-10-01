@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from '../fixtures'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
 type ImageEffects = { opacity: number; blur: number; color: string; colorOpacity: number }
 const appearances = [

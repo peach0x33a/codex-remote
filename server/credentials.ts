@@ -1,9 +1,13 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
 import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, join, parse, resolve, sep } from 'node:path'
 import { normalizeEndpoint } from '../shared/endpoint'
 
+import type { ConnectionProfile } from '../shared/protocol'
+import { parseProfile, parseProfileSnapshot, profileFields, profileId, record, type ProfileSnapshot } from '../shared/profiles'
+
+type StoreData = { version: 1 | 2; credentials: Credentials; profiles?: ConnectionProfile[]; selectedId?: string }
 type Credential = { endpoint: string; token: string }
 type Credentials = Record<string, Credential>
 const pending = new Map<string, Promise<void>>()
@@ -78,12 +82,12 @@ export class CredentialStore {
     try { return await result } finally { if (pending.get(this.file) === tail) pending.delete(this.file) }
   }
 
-  private async read(): Promise<Credentials> {
+  private async read(): Promise<StoreData> {
     try {
-      if (!await privateDirectory(dirname(this.file), false)) return {}
+      if (!await privateDirectory(dirname(this.file), false)) return { version: 1, credentials: {} }
       let handle
       try { handle = await open(this.file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) } catch (error) {
-        if (missing(error)) return {}
+        if (missing(error)) return { version: 1, credentials: {} }
         throw error
       }
       let raw: string
@@ -92,17 +96,20 @@ export class CredentialStore {
         raw = await handle.readFile('utf8')
       } finally { await handle.close() }
       const data: unknown = JSON.parse(raw)
-      if (!isRecord(data) || data.version !== 1 || !isRecord(data.credentials)) throw unavailable()
+      if (!isRecord(data) || (data.version !== 1 && data.version !== 2) || !isRecord(data.credentials)) throw unavailable()
       for (const [id, value] of Object.entries(data.credentials)) {
         credentialId(id)
         if (!isRecord(value) || typeof value.endpoint !== 'string' || normalizeEndpoint(value.endpoint) !== value.endpoint) throw unavailable()
         if (credentialToken(value.token, true) !== value.token) throw unavailable()
       }
-      return data.credentials as Credentials
+      if (data.version === 2 || data.profiles !== undefined) parseProfileSnapshot(data)
+      return data as StoreData
     } catch { throw unavailable() }
   }
 
-  private async write(credentials: Credentials): Promise<void> {
+  private async write(data: StoreData): Promise<void> {
+    // A pre-profile bridge must reject this format instead of overwriting metadata.
+    if (data.profiles !== undefined) data.version = 2
     const directory = dirname(this.file)
     const temporary = join(directory, '.' + basename(this.file) + '.' + randomBytes(16).toString('hex') + '.tmp')
     let handle: Awaited<ReturnType<typeof open>> | undefined
@@ -112,7 +119,7 @@ export class CredentialStore {
       handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
       created = true
       await handle.chmod(0o600)
-      await handle.writeFile(JSON.stringify({ version: 1, credentials }) + '\n', 'utf8')
+      await handle.writeFile(JSON.stringify(data) + '\n', 'utf8')
       await handle.sync()
       await handle.close()
       handle = undefined
@@ -132,12 +139,13 @@ export class CredentialStore {
     const validatedToken = credentialToken(token, true)
     if (id !== undefined) credentialId(id)
     return this.serialized(async () => {
-      const credentials = await this.read()
+      const data = await this.read(), credentials = data.credentials
       if (id !== undefined && !Object.hasOwn(credentials, id)) throw new CredentialError('保存的连接凭证不存在。', 404)
       let key = id
       if (key === undefined) do { key = randomBytes(32).toString('hex') } while (Object.hasOwn(credentials, key))
+      if (data.profiles?.some(profile => profile.credentialId === key && profile.endpoint !== normalized)) throw new CredentialError('请通过设备配置修改已绑定的凭证。', 409)
       credentials[key] = { endpoint: normalized, token: validatedToken }
-      await this.write(credentials)
+      await this.write(data)
       return key
     })
   }
@@ -145,7 +153,7 @@ export class CredentialStore {
   async token(id: string, endpoint: string): Promise<string> {
     credentialId(id)
     return this.serialized(async () => {
-      const credentials = await this.read()
+      const data = await this.read(), credentials = data.credentials
       const credential = credentials[id]
       if (!credential) throw new CredentialError('保存的连接凭证不存在。', 404)
       if (credential.endpoint !== normalizedEndpoint(endpoint)) throw new CredentialError('保存的连接凭证与此地址不匹配。')
@@ -156,10 +164,88 @@ export class CredentialStore {
   async remove(id: string): Promise<void> {
     credentialId(id)
     return this.serialized(async () => {
-      const credentials = await this.read()
+      const data = await this.read(), credentials = data.credentials
       if (!Object.hasOwn(credentials, id)) return
+      if (data.profiles?.some(profile => profile.credentialId === id)) throw new CredentialError('请在设备配置中清除已保存的令牌。', 409)
       delete credentials[id]
-      await this.write(credentials)
+      await this.write(data)
+    })
+  }
+
+  private snapshot(data: StoreData): ProfileSnapshot {
+    return parseProfileSnapshot({ profiles: data.profiles ?? [], selectedId: data.selectedId ?? '' })
+  }
+
+  async profiles(): Promise<ProfileSnapshot> {
+    return this.serialized(async () => this.snapshot(await this.read()))
+  }
+
+  async saveProfile(input: unknown, importing = false): Promise<ProfileSnapshot & { profile: ConnectionProfile }> {
+    if (!record(input)) throw new CredentialError('无效的设备配置。')
+    let fields: ReturnType<typeof profileFields>, id: string | undefined
+    try { fields = profileFields(input); id = input.id === undefined ? undefined : profileId(input.id) }
+    catch (error) { throw new CredentialError((error as Error).message) }
+    const token = credentialToken(input.token)
+    for (const key of ['rememberToken', 'clearToken']) if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new CredentialError('无效的令牌保存设置。')
+    return this.serialized(async () => {
+      const data = await this.read(), profiles = data.profiles ?? []
+      const duplicate = profiles.find(profile => profile.endpoint === fields.endpoint)
+      if (importing && duplicate) return { ...this.snapshot(data), profile: duplicate }
+      if (!importing && duplicate && duplicate.id !== id) throw new CredentialError('这个地址已保存，请直接连接已有设备。', 409)
+      const old = importing ? undefined : profiles.find(profile => profile.id === id)
+      if (!importing && id && !old) throw new CredentialError('设备已被移除，请刷新设备列表。', 404)
+      if (!old && profiles.length >= 512) throw new CredentialError('保存的设备数量已达上限。')
+      const remember = input.rememberToken ?? !!old?.credentialId
+      if (old?.credentialId && old.endpoint !== fields.endpoint && !token && remember && !input.clearToken) throw new CredentialError('地址已更改，请填写新令牌，或清除已保存的令牌。')
+      const profile: ConnectionProfile = { id: old?.id ?? (importing && id && !profiles.some(p => p.id === id) ? id : randomUUID()), ...fields, createdAt: old?.createdAt ?? Date.now() }
+      if (importing) {
+        let legacy: ConnectionProfile
+        try { legacy = parseProfile(input) } catch (error) { throw new CredentialError((error as Error).message) }
+        profile.createdAt = legacy.createdAt
+        if (legacy.credentialId) {
+          const credential = data.credentials[legacy.credentialId]
+          if (!credential || credential.endpoint !== profile.endpoint) throw new CredentialError('旧设备的令牌不存在或地址不匹配，请编辑设备后重新保存。')
+          profile.credentialId = legacy.credentialId
+        }
+      } else {
+        if (remember && !input.clearToken && old?.endpoint === fields.endpoint && old.credentialId) profile.credentialId = old.credentialId
+        if (remember && token) {
+          do { profile.credentialId = randomBytes(32).toString('hex') } while (Object.hasOwn(data.credentials, profile.credentialId))
+          data.credentials[profile.credentialId] = { endpoint: fields.endpoint, token }
+        }
+      }
+      data.profiles = old ? profiles.map(p => p.id === old.id ? profile : p) : [...profiles, profile]
+      data.selectedId = data.selectedId || profile.id
+      if (old?.credentialId && old.credentialId !== profile.credentialId && !data.profiles.some(p => p.credentialId === old.credentialId)) delete data.credentials[old.credentialId]
+      await this.write(data)
+      return { ...this.snapshot(data), profile }
+    })
+  }
+
+  async removeProfile(value: unknown): Promise<ProfileSnapshot> {
+    let id: string
+    try { id = profileId(value) } catch (error) { throw new CredentialError((error as Error).message) }
+    return this.serialized(async () => {
+      const data = await this.read(), profile = data.profiles?.find(p => p.id === id)
+      if (!profile) return this.snapshot(data)
+      data.profiles = data.profiles!.filter(p => p.id !== id)
+      if (profile.credentialId && !data.profiles.some(p => p.credentialId === profile.credentialId)) delete data.credentials[profile.credentialId]
+      if (data.selectedId === id) data.selectedId = data.profiles[0]?.id || ''
+      await this.write(data)
+      return this.snapshot(data)
+    })
+  }
+
+  async selectProfile(value: unknown): Promise<ProfileSnapshot> {
+    let id: string
+    try { id = value === '' ? '' : profileId(value) } catch (error) { throw new CredentialError((error as Error).message) }
+    return this.serialized(async () => {
+      const data = await this.read()
+      if (id && !data.profiles?.some(profile => profile.id === id)) throw new CredentialError('设备已被移除，请刷新设备列表。', 404)
+      data.profiles ??= []
+      data.selectedId = id || data.profiles[0]?.id || ''
+      await this.write(data)
+      return this.snapshot(data)
     })
   }
 }

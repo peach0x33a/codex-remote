@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '../fixtures'
 
 test('hover previews width without persisting, confirms on click, and reveals its field without layout shifts', async ({ page }) => {
   const dialog = await openSettings(page)

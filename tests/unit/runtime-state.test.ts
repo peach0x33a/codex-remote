@@ -1,3 +1,4 @@
+import { createProfileApi } from '../profile-api-fixture'
 // Exercises the real RpcClient/useCodex pipeline in memory, without HTTP listeners.
 import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test'
 import { createRenderer, nextTick, type App } from 'vue'
@@ -147,10 +148,11 @@ class MemorySocket {
     queueMicrotask(() => this.deliver({ id: message.id, result }))
   }
 }
+let profileApi: Awaited<ReturnType<typeof createProfileApi>>
 let app: App<HostNode>, state: ReturnType<typeof useCodex>
 const originals = new Map<string, PropertyDescriptor | undefined>()
 function installGlobal(name: string, value: unknown) { originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { configurable: true, writable: true, value }) }
-async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); await nextTick() }
+async function settle() { await profileApi?.idle(); for (let i = 0; i < 8; i++) await Promise.resolve(); await nextTick() }
 async function eventually(check: () => boolean, message: string) {
   for (let i = 0; i < 50 && !check(); i++) await settle()
   expect(check(), message).toBe(true)
@@ -165,36 +167,27 @@ beforeEach(async () => {
   holdQueueList = false; releaseQueueList = undefined
   installGlobal('window', new EventTarget()); installGlobal('navigator', { onLine: true }); installGlobal('location', { protocol: 'http:', host: 'memory.test' })
   installGlobal('localStorage', new MemoryStorage()); installGlobal('WebSocket', MemorySocket)
-  installGlobal('fetch', async (url: string, init?: RequestInit) => Response.json(url.includes('/api/connect') ? { ticket: JSON.parse(String(init?.body)).endpoint } : { authenticated: true, requiresKey: false }))
-  mountRuntime()
+  profileApi = await createProfileApi([primaryDevice])
+  installGlobal('fetch', async (url: string, init?: RequestInit) => url === '/api/profiles' ? profileApi.handle(init) : Response.json(url.includes('/api/connect') ? { ticket: JSON.parse(String(init?.body)).endpoint } : { authenticated: true, requiresKey: false }))
+  mountRuntime(); await state.start()
   await state.connect(primaryDevice); await settle()
   await state.openThread('a'); await settle()
 })
-afterEach(() => {
-  app?.unmount(); setSystemTime()
+afterEach(async () => {
+  app?.unmount(); await profileApi.dispose(); setSystemTime()
   for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name) }
   originals.clear()
 })
 describe('persisted connection credentials', () => {
   function credentialBridge() {
     const original = globalThis.fetch
-    const calls: { method: string; body: Record<string, string> }[] = [], saved = new Map<string, { endpoint: string; token: string }>()
-    let sequence = 0, failSave = false, failDelete = false
+    const calls: { method: string; body: Record<string, string> }[] = []
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (url === '/api/credentials') {
-        const body = JSON.parse(String(init?.body)); calls.push({ method: init?.method || '', body })
-        if (init?.method === 'DELETE') {
-          if (failDelete) return Response.json({ error: '删除失败' }, { status: 503 })
-          saved.delete(body.credentialId); return Response.json({ ok: true })
-        }
-        if (failSave) return Response.json({ error: '保存失败' }, { status: 503 })
-        const credentialId = (++sequence).toString(16).padStart(64, '0')
-        saved.set(credentialId, body); return Response.json({ credentialId })
-      }
+      if (url === '/api/profiles' && init?.method === 'POST') calls.push({ method: 'POST', body: JSON.parse(String(init.body)) })
       if (url === '/api/connect') calls.push({ method: 'CONNECT', body: JSON.parse(String(init?.body)) })
       return original(url, init)
     }) as typeof fetch
-    return { calls, saved, failSave: () => { failSave = true }, failDelete: () => { failDelete = true } }
+    return { calls, saved: profileApi.credentials, failSave: () => { profileApi.failSave = true }, failDelete: () => { profileApi.failDelete = true } }
   }
   const details = { name: 'Authenticated device', endpoint: 'wss://private.example/codex', cwd: '/work', token: 'test-private-token', rememberToken: true }
   test('stores only a credential reference and reuses it after a fresh runtime', async () => {
@@ -202,10 +195,10 @@ describe('persisted connection credentials', () => {
     expect(profile.credentialId).toMatch(/^[a-f0-9]{64}$/)
     expect(bridge.saved.get(profile.credentialId!)?.token).toBe(details.token)
     expect(state.tokenFor(profile.id)).toBe('')
-    expect(localStorage.getItem(STORAGE_KEY)).not.toContain(details.token)
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
     await state.connect(profile)
     expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: profile.endpoint, credentialId: profile.credentialId! })
-    app.unmount(); mountRuntime(); await settle()
+    app.unmount(); mountRuntime(); await state.start(); await settle()
     const restored = state.profiles.value.find(item => item.id === profile.id)!
     expect(restored.credentialId).toBe(profile.credentialId)
     await state.connect(restored)
@@ -215,7 +208,7 @@ describe('persisted connection credentials', () => {
     const bridge = credentialBridge(), profile = await state.saveProfile(details), mark = bridge.calls.length
     const renamed = await state.saveProfile({ ...details, id: profile.id, name: 'Renamed', token: '' })
     expect(renamed.credentialId).toBe(profile.credentialId)
-    expect(bridge.calls.slice(mark)).toHaveLength(0)
+    expect(bridge.calls.slice(mark).filter(call => call.method === 'POST')).toHaveLength(1)
     expect(bridge.saved.size).toBe(1)
   })
   test('rotation removes the old credential and explicit clearing removes the saved reference', async () => {
@@ -226,17 +219,17 @@ describe('persisted connection credentials', () => {
     const cleared = await state.saveProfile({ ...details, id: profile.id, token: '', clearToken: true })
     expect(cleared.credentialId).toBeUndefined()
     expect(bridge.saved.size).toBe(0)
-    expect(localStorage.getItem(STORAGE_KEY)).not.toContain('credentialId')
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
   })
   test('opting out keeps the token in memory only and clears an old saved secret', async () => {
     const bridge = credentialBridge(), profile = await state.saveProfile(details)
     const temporary = await state.saveProfile({ ...details, id: profile.id, rememberToken: false })
     expect(temporary.credentialId).toBeUndefined(); expect(bridge.saved.size).toBe(0)
     expect(state.tokenFor(profile.id)).toBe(details.token)
-    expect(localStorage.getItem(STORAGE_KEY)).not.toContain(details.token)
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
     await state.connect(temporary)
     expect(bridge.calls.findLast(call => call.method === 'CONNECT')?.body).toEqual({ endpoint: temporary.endpoint, token: details.token })
-    app.unmount(); mountRuntime(); await settle()
+    app.unmount(); mountRuntime(); await state.start(); await settle()
     expect(state.tokenFor(profile.id)).toBe('')
   })
   test('removing a device deletes its server credential before reporting completion', async () => {
@@ -250,19 +243,19 @@ describe('persisted connection credentials', () => {
     bridge.failSave()
     await expect(state.saveProfile({ ...details, id: profile.id, token: 'new-secret' })).rejects.toThrow('保存失败')
     expect(state.profiles.value.find(item => item.id === profile.id)?.credentialId).toBe(profile.credentialId)
-    expect(localStorage.getItem(STORAGE_KEY)).toContain(profile.credentialId!)
+    expect(profileApi.snapshot.profiles.find(item => item.id === profile.id)?.credentialId).toBe(profile.credentialId)
   })
   test('failed deletion preserves the device record and lets the user retry', async () => {
     const bridge = credentialBridge(), profile = await state.saveProfile(details)
     bridge.failDelete()
     await expect(state.removeProfile(profile.id)).rejects.toThrow('删除失败')
     expect(state.profiles.value.some(item => item.id === profile.id)).toBe(true)
-    expect(localStorage.getItem(STORAGE_KEY)).toContain(profile.credentialId!)
+    expect(profileApi.snapshot.profiles.find(item => item.id === profile.id)?.credentialId).toBe(profile.credentialId)
   })
   test('a saved secret cannot silently move to a changed endpoint', async () => {
     const bridge = credentialBridge(), profile = await state.saveProfile(details), mark = bridge.calls.length
     await expect(state.saveProfile({ ...details, id: profile.id, endpoint: 'wss://different.example', token: '' })).rejects.toThrow('地址已更改')
-    expect(bridge.calls.slice(mark)).toHaveLength(0)
+    expect(bridge.calls.slice(mark).filter(call => call.method === 'POST')).toHaveLength(1)
     expect(bridge.saved.get(profile.credentialId!)?.endpoint).toBe(profile.endpoint)
   })
 })
@@ -319,7 +312,7 @@ describe('saved-device auto-connect', () => {
     expect(requests.some(request => request.method === 'turn/start')).toBe(false)
   })
   test('disabled auto-connect preserves saved devices and permits manual connection', async () => {
-    remountSaved(false); await settle()
+    remountSaved(false); await state.start(); await settle()
     expect(state.status.value).toBe('disconnected')
     expect(state.profiles.value).toHaveLength(1)
     expect(requests).toHaveLength(0)

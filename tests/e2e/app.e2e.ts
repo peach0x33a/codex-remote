@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from '../fixtures'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
 const transportToken = 'e2e-transport-token'
 
@@ -10,7 +10,7 @@ async function configure(page: Page, connect = true, endpoint = MOCK_ENDPOINT) {
   await dialog.getByLabel('App Server 地址').fill(endpoint)
   await expect(dialog.getByRole('switch', { name: '记住令牌', exact: true })).toHaveAttribute('aria-checked', 'true')
   await dialog.getByPlaceholder('App Server 的 Bearer token').fill(transportToken)
-  await dialog.getByPlaceholder('例如：/home/me/projects/my-app').fill('/test/project')
+  await dialog.getByPlaceholder('留空使用 ~/codex-remote').fill('/test/project')
   await dialog.getByRole('button', { name: connect ? '保存并连接' : '仅保存', exact: true }).click()
   await expect(dialog).toBeHidden()
   if (connect) await expect(page.getByTestId('selected-device')).toContainText('测试工作站')
@@ -20,12 +20,12 @@ async function showSidebar(page: Page) { if (await page.getByRole('button', { na
 
 test.beforeEach(async ({ page, request }) => { await request.get(MOCK_URL + '/test/reset'); await page.goto('/') })
 
-test('saves server credential references across reload without storing raw tokens in the browser', async ({ page }) => {
+test('saves device metadata and credentials on the server across reload', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '有什么需要帮忙？' })).toBeVisible()
   await configure(page, false)
   const storage = await page.evaluate(() => localStorage.getItem('codex-remote.connections.v1'))
-  expect(storage).toContain('测试工作站'); expect(storage).not.toContain(transportToken)
-  const profile = JSON.parse(storage!).profiles[0]
+  expect(storage).toBeNull()
+  const profile = await page.evaluate(async () => (await (await fetch('/api/profiles')).json()).profiles[0])
   expect(profile.credentialId).toMatch(/^[a-f0-9]{64}$/)
   await page.reload()
   await page.getByRole('button', { name: '选择设备', exact: true }).click()
@@ -37,7 +37,7 @@ test('saves server credential references across reload without storing raw token
   await page.getByRole('button', { name: '保存并连接' }).click()
   await expect(page.getByRole('dialog', { name: '连接你的设备', exact: true })).toBeHidden()
   await expect(page.getByTestId('selected-device')).toContainText('已连接')
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('codex-remote.connections.v1')!).profiles[0].credentialId)).toBe(profile.credentialId)
+  expect(await page.evaluate(async () => (await (await fetch('/api/profiles')).json()).profiles[0].credentialId)).toBe(profile.credentialId)
 })
 
 test('initializes the protocol, streams a turn, restores history, and reconnects', async ({ page, request }) => {
@@ -112,11 +112,11 @@ test('ships an installable manifest and opens the cached shell offline', async (
   await page.reload()
   await expect(page.getByRole('heading', { name: '有什么需要帮忙？' })).toBeVisible()
   expect(await page.evaluate(() => fetch('/api/health').then(() => true).catch(() => false))).toBe(false)
-  await expect(page.locator('.top-notice.offline')).toContainText('你仍可查看保存的地址')
-  await page.getByRole('button', { name: '选择设备', exact: true }).click()
-  await page.getByRole('menuitem', { name: '编辑设备 测试工作站' }).click()
-  await expect(page.getByLabel('设备名称')).toHaveValue('测试工作站')
+  await expect(page.locator('.top-notice.offline')).toContainText('联网后将同步服务端设备配置')
+  await expect(page.getByTestId('selected-device')).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('codex-remote.connections.v1'))).toBeNull()
   await context.setOffline(false)
+  await expect(page.getByTestId('selected-device')).toContainText('测试工作站')
 })
 
 test('has no horizontal overflow and captures the desktop and mobile layouts', async ({ page }, testInfo) => {

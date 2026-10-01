@@ -56,12 +56,12 @@ function clearSavedToken() { clearToken.value = true; token.value = ''; visibleT
       <label class="field">设备名称<input v-model="name" autofocus required maxlength="48" autocomplete="off" placeholder="例如：我的工作站" /></label>
       <label class="field">App Server 地址<input v-model="endpoint" required maxlength="2048" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ws://127.0.0.1:4500" class="mono-input" /><span class="field-hint">支持 ws://、wss:// 和 unix:///绝对路径。地址由 Bun 服务所在的机器访问。</span></label>
       <label class="field">访问令牌 <span class="optional">可选</span><span class="password-field"><input v-model="token" :type="visibleToken ? 'text' : 'password'" maxlength="8192" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" :placeholder="storedToken ? '已保存在服务器，留空保留' : 'App Server 的 Bearer token'" /><button type="button" class="icon-button" :aria-label="visibleToken ? '隐藏令牌' : '显示令牌'" @click="visibleToken = !visibleToken"><PhEyeSlash v-if="visibleToken" :size="18" /><PhEye v-else :size="18" /></button></span><span class="field-hint">{{ clearToken ? '保存后清除服务器中的令牌；填写新值可替换。' : storedToken ? '已保存的令牌不会回传浏览器。填写新值可替换。' : '令牌用于连接 App Server，不写入浏览器存储。' }}</span></label>
-      <div class="remember-row"><div><span>记住令牌</span><p>{{ rememberToken ? '保存在 Bun 服务端，刷新后自动连接。' : '仅在当前页面内存中保留。' }}</p></div><ToggleSwitch class="remember-switch" label="记住令牌" :model-value="rememberToken" @update:model-value="rememberToken = $event" /></div>
+      <div class="remember-row"><div><span>记住令牌</span><p>{{ rememberToken ? '保存在 Bun 服务端，其他客户端可直接连接。' : '仅在当前页面内存中保留。' }}</p></div><ToggleSwitch class="remember-switch" label="记住令牌" :model-value="rememberToken" @update:model-value="rememberToken = $event" /></div>
       <button v-if="storedToken" type="button" class="text-button danger clear-token" @click="clearSavedToken">清除已保存令牌</button>
-      <label class="field">默认工作目录 <span class="optional">可选</span><input v-model="cwd" maxlength="2048" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例如：/home/me/projects/my-app" class="mono-input" /><span class="field-hint">填写 Codex 所在机器的目录；留空使用服务器默认值。</span></label>
+      <label class="field">默认工作目录 <span class="optional">可选</span><input v-model="cwd" maxlength="2048" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="留空使用 ~/codex-remote" class="mono-input" /><span class="field-hint">填写 Codex 所在机器的目录；留空使用 ~/codex-remote。“不在项目中工作”也使用此目录。</span></label>
       </fieldset>
       <div v-if="error" class="inline-error" role="alert"><PhWarningCircle :size="18" />{{ error }}</div>
-      <div class="connection-note"><PhLink :size="18" /><span>设备地址保存在此浏览器。会话与代码由你的 Codex 环境管理。</span></div>
+      <div class="connection-note"><PhLink :size="18" /><span>设备配置保存在 Bun 服务端，登录同一服务的客户端自动同步。会话与代码由你的 Codex 环境管理。</span></div>
       <div class="dialog-actions">
         <button v-if="id" :disabled="saving" type="button" class="text-button danger" @click="remove"><PhTrash :size="17" />{{ confirmDelete ? '确认移除？' : '移除' }}</button>
         <span class="spacer" />

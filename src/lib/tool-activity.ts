@@ -41,6 +41,7 @@ function activityIdentity(item: Item): string | undefined {
     case 'commandExecution': return JSON.stringify([item.type, commandActivityKind(item)])
     case 'mcpToolCall': return hasText(item.server) && hasText(item.tool) ? JSON.stringify([item.type, item.server, item.tool]) : undefined
     case 'dynamicToolCall': return hasText(item.tool) ? JSON.stringify([item.type, (item as Item & ActivityFields).namespace ?? null, item.tool]) : undefined
+    case 'subAgentActivity': return JSON.stringify([item.type, item.kind])
     case 'collabAgentToolCall': return hasText(item.tool) ? JSON.stringify([item.type, item.tool]) : undefined
     case 'fileChange': case 'webSearch': case 'imageView': return item.type
     // Messages, reasoning (even empty), compaction and unknown item types are
@@ -102,10 +103,10 @@ export function toolActivityState(item: Item) {
   const fields = item as Item & ActivityFields
   const failed = item.status === 'failed' || !!item.error || fields.success === false ||
     item.type === 'commandExecution' && typeof fields.exitCode === 'number' && fields.exitCode !== 0
-  const completed = !failed && item.status === 'completed'
-  const running = !failed && item.status === 'inProgress'
+  const completed = !failed && (item.status === 'completed' || item.type === 'subAgentActivity' && !!parseCollabTool(item)?.completed)
+  const running = !failed && !completed && item.status === 'inProgress'
   const labels: Record<string, string> = { inProgress: '进行中', completed: '已完成', failed: '失败', declined: '已拒绝', interrupted: '已中断', cancelled: '已取消', canceled: '已取消' }
-  const label = failed ? '失败' : Object.hasOwn(labels, item.status || '') ? labels[item.status!]! : item.status ? '状态未知' : ''
+  const label = failed ? '失败' : item.type === 'subAgentActivity' && completed ? '已记录' : Object.hasOwn(labels, item.status || '') ? labels[item.status!]! : item.status ? '状态未知' : ''
   return { failed, completed, running, label }
 }
 

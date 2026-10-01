@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '../fixtures'
 import type { Thread } from '../../shared/protocol'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
 
@@ -43,7 +43,7 @@ test.beforeEach(async ({ page, request }) => {
   await page.getByRole('menuitem', { name: '添加设备', exact: true }).click()
   await page.getByLabel('设备名称').fill('会话操作测试设备')
   await page.getByLabel('App Server 地址').fill(MOCK_ENDPOINT)
-  await page.getByPlaceholder('例如：/home/me/projects/my-app').fill('/test/project')
+  await page.getByPlaceholder('留空使用 ~/codex-remote').fill('/test/project')
   await page.getByRole('button', { name: '保存并连接', exact: true }).click()
   await expect(page.getByTestId('selected-device')).toContainText('已连接')
   await openThread(page)
