@@ -1,9 +1,10 @@
+import { createProfileApi } from '../profile-api-fixture'
 // Real useCodex/RpcClient instances; every bridge and socket stays in memory.
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { createRenderer, effectScope, nextTick, type App, type EffectScope } from 'vue'
 import { useCodexWorkspace } from '../../src/composables/useCodexWorkspace'
 import { useCodex } from '../../src/composables/useCodex'
-import { saveProfiles, STORAGE_KEY } from '../../src/lib/profiles'
+import { STORAGE_KEY } from '../../src/lib/profiles'
 import { UI_PREFERENCES_KEY } from '../../src/lib/ui-preferences'
 import type { ConnectionProfile, MessageContent, Thread, Turn } from '../../shared/protocol'
 import type { ThreadGoal } from '../../src/lib/thread-goal'
@@ -92,10 +93,11 @@ class MemorySocket {
     else reply({})
   }
 }
+let profileApi: Awaited<ReturnType<typeof createProfileApi>>
 let app: App<Host> | undefined, state: ReturnType<typeof useCodexWorkspace>, storage: MemoryStorage
 const scopes: EffectScope[] = [], originals = new Map<string, PropertyDescriptor | undefined>()
 function global(name: string, value: unknown) { originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { configurable: true, writable: true, value }) }
-async function settle() { for (let i = 0; i < 24; i++) await Promise.resolve(); await nextTick() }
+async function settle() { await profileApi?.idle(); for (let i = 0; i < 24; i++) await Promise.resolve(); await nextTick() }
 async function eventually(check: () => boolean) { for (let i = 0; i < 30 && !check(); i++) await settle(); expect(check()).toBe(true) }
 function mount(options: Parameters<typeof useCodexWorkspace>[0] = { autoConnect: false }) {
   app?.unmount()
@@ -103,13 +105,13 @@ function mount(options: Parameters<typeof useCodexWorkspace>[0] = { autoConnect:
 }
 async function open(profile: ConnectionProfile) { await state.connect(profile); await state.openThread('same'); await settle() }
 const socketFor = (profile: ConnectionProfile) => sockets.findLast(socket => socket.endpoint === profile.endpoint)!
-const saved = () => JSON.parse(storage.getItem(STORAGE_KEY)!)
+const saved = () => profileApi.snapshot
 const connectCalls = () => apiCalls.filter(call => call.url === '/api/connect')
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { resolve, promise } }
 beforeEach(async () => {
   servers = new Map(); sockets = []; requests = []; apiCalls = []; credentials = new Map(); credentialSequence = 0
   sessionAuthenticated = true; failCredentialSave = false; failCredentialDelete = ''; failLogout = false; nativeQueue = true; heldRpc = undefined; heldConnect = undefined
-  storage = new MemoryStorage(); saveProfiles(storage, [alpha, beta], alpha.id)
+  storage = new MemoryStorage(); profileApi = await createProfileApi([alpha, beta]); credentials = profileApi.credentials
   global('localStorage', storage); global('window', new EventTarget()); global('navigator', { onLine: true }); global('location', { protocol: 'http:', host: 'memory.test' }); global('WebSocket', MemorySocket)
   global('fetch', async (url: string, init?: RequestInit) => {
     const method = init?.method || 'GET', body = init?.body ? JSON.parse(String(init.body)) : {}
@@ -119,6 +121,7 @@ beforeEach(async () => {
       if (method === 'DELETE') { if (failLogout) return Response.json({ error: 'Failed logout' }, { status: 503 }); sessionAuthenticated = false }
       return Response.json({ authenticated: sessionAuthenticated, requiresKey: true })
     }
+    if (url === '/api/profiles') { profileApi.failSave = failCredentialSave; profileApi.failDelete = failCredentialDelete; return profileApi.handle(init) }
     if (url === '/api/credentials') {
       if (method === 'DELETE') {
         if (body.credentialId === failCredentialDelete) return Response.json({ error: '删除失败' }, { status: 503 })
@@ -130,10 +133,10 @@ beforeEach(async () => {
     if (url === '/api/connect') return heldConnect?.(body) || Response.json({ ticket: body.endpoint })
     throw new Error('Unexpected mock URL: ' + url)
   })
-  mount(); await settle()
+  mount(); await state.start(); await settle()
 })
-afterEach(() => {
-  app?.unmount(); app = undefined
+afterEach(async () => {
+  app?.unmount(); app = undefined; await profileApi.dispose()
   for (const scope of scopes.splice(0)) scope.stop()
   for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name) }
   originals.clear()
@@ -154,7 +157,7 @@ describe('multi-device workspace', () => {
     expect(connectCalls()).toHaveLength(count)
     expect(state.connectionStates.value).toEqual({ alpha: { status: 'connected', busy: false, approvals: 0 }, beta: { status: 'connected', busy: false, approvals: 0 } })
     expect(sockets.every(socket => socket.readyState === 1)).toBe(true)
-    expect(saved().selectedId).toBe('alpha')
+    await eventually(() => saved().selectedId === 'alpha')
     expect(apiCalls.filter(call => call.url === '/api/session')).toHaveLength(1)
   })
 
@@ -202,7 +205,7 @@ describe('multi-device workspace', () => {
     await open(beta); state.projectFilter.value = '/beta-project'
     state.selectedId.value = alpha.id
     expect(state.projectFilter.value).toBe('/alpha-project')
-    expect(saved().selectedId).toBe('alpha')
+    await eventually(() => saved().selectedId === 'alpha')
     state.selectedId.value = beta.id; expect(state.projectFilter.value).toBe('/beta-project')
     expect(sockets).toHaveLength(2)
   })
@@ -299,7 +302,7 @@ describe('multi-device workspace', () => {
     await state.connect(remembered)
     expect(connectCalls().at(-1)?.body).toEqual({ endpoint: alpha.endpoint, credentialId: remembered.credentialId })
     expect(state.tokenFor(alpha.id)).toBe('')
-    expect(storage.getItem(STORAGE_KEY)).not.toContain('secret')
+    expect(storage.getItem(STORAGE_KEY)).toBeNull()
     await state.logout(); expect(state.tokenFor(beta.id)).toBe('')
     await state.login('key'); await state.connect(beta, true)
     expect(connectCalls().at(-1)?.body).toEqual({ endpoint: beta.endpoint, token: '' })
@@ -321,7 +324,7 @@ describe('multi-device workspace', () => {
     const mark = apiCalls.length
     expect(await state.removeProfile(alpha.id)).toBe(true)
     expect(credentials.has(profile.credentialId!)).toBe(false)
-    expect(apiCalls.slice(mark).filter(call => call.url === '/api/credentials' && call.method === 'DELETE')).toHaveLength(1)
+    expect(apiCalls.slice(mark).filter(call => call.url === '/api/profiles' && call.method === 'DELETE')).toHaveLength(1)
     expect(socketFor(alpha).readyState).toBe(3); expect(socketFor(beta).readyState).toBe(1)
     expect(state.connectionStates.value.alpha).toBeUndefined(); expect(saved().selectedId).toBe('beta')
   })
@@ -338,13 +341,13 @@ describe('multi-device workspace', () => {
     expect(state.selectedId.value).toBe('beta'); expect(state.anyBusy.value).toBe(false)
   })
 
-  test('keeps metadata and credentials untouched when storage cannot save', async () => {
+  test('saves devices successfully even when browser storage cannot write', async () => {
     await open(alpha); await open(beta); storage.rejectWrites = true
-    const mark = apiCalls.length
-    await expect(state.saveProfile({ ...alpha, token: 'new-secret', rememberToken: true })).rejects.toThrow('Storage full')
-    expect(apiCalls.slice(mark).some(call => call.url === '/api/credentials')).toBe(false)
-    expect(state.profiles.value[0]?.credentialId).toBeUndefined()
-    expect(sockets.every(socket => socket.readyState === 1)).toBe(true)
+    const updated = await state.saveProfile({ ...alpha, token: 'new-secret', rememberToken: true })
+    expect(updated.credentialId).toMatch(/^[a-f0-9]{64}$/)
+    expect(credentials.get(updated.credentialId!)?.token).toBe('new-secret')
+    expect(storage.getItem(STORAGE_KEY)).toBeNull()
+    expect(socketFor(beta).readyState).toBe(1)
   })
 
   test('prevents removing a background device with queued work', async () => {
@@ -368,12 +371,12 @@ describe('multi-device workspace', () => {
     const bridge = globalThis.fetch, deletion = deferred<void>()
     let deleting = false
     globalThis.fetch = (async (url, init) => {
-      if (url === '/api/credentials' && init?.method === 'DELETE') { deleting = true; await deletion.promise }
+      if (url === '/api/profiles' && init?.method === 'DELETE') { deleting = true; await deletion.promise }
       return bridge(url, init)
     }) as typeof fetch
     const removal = state.removeProfile(alpha.id); await eventually(() => deleting)
     await open(gamma); deletion.resolve(); await removal
-    expect(state.selectedId.value).toBe(gamma.id); expect(saved().selectedId).toBe(gamma.id)
+    expect(state.selectedId.value).toBe(gamma.id); await eventually(() => saved().selectedId === gamma.id)
     expect(state.active.value?.name).toBe(gamma.endpoint)
     expect(socketFor(beta).readyState).toBe(1)
   })
@@ -389,23 +392,23 @@ describe('multi-device workspace', () => {
   })
 
   test('auto-connects only the last device after authenticated startup', async () => {
-    app!.unmount(); app = undefined; saveProfiles(storage, [alpha, beta], beta.id); mount({})
+    app!.unmount(); app = undefined; await profileApi.store.selectProfile(beta.id); mount({})
     await eventually(() => state.connected.value)
     expect(connectCalls()).toHaveLength(1); expect(connectCalls()[0]?.body.endpoint).toBe(beta.endpoint)
     expect(state.connectionStates.value.alpha?.status).toBe('disconnected')
   })
 
   test('waits for login and respects the disabled auto-connect preference', async () => {
-    sessionAuthenticated = false; mount({}); await settle()
+    sessionAuthenticated = false; mount({}); await state.start(); await settle()
     expect(connectCalls()).toHaveLength(0); expect(state.authenticated.value).toBe(false)
     await state.login('key'); await eventually(() => state.connected.value)
     expect(connectCalls()).toHaveLength(1)
-    app!.unmount(); app = undefined; storage.setItem(UI_PREFERENCES_KEY, JSON.stringify({ autoConnect: false })); mount({}); await settle()
+    app!.unmount(); app = undefined; storage.setItem(UI_PREFERENCES_KEY, JSON.stringify({ autoConnect: false })); mount({}); await state.start(); await settle()
     expect(state.connected.value).toBe(false); expect(connectCalls()).toHaveLength(1)
   })
 
   test('manual disconnect cancels pending startup intent before login', async () => {
-    sessionAuthenticated = false; mount({}); await settle()
+    sessionAuthenticated = false; mount({}); await state.start(); await settle()
     state.disconnect(); await state.login('key'); await settle()
     expect(connectCalls()).toHaveLength(0)
   })
@@ -435,5 +438,61 @@ describe('multi-device workspace', () => {
     expect(sockets.every(socket => socket.readyState === 3)).toBe(true)
     const count = connectCalls().length; await state.connect(alpha); await state.start()
     expect(connectCalls()).toHaveLength(count)
+  })
+})
+
+describe('server metadata synchronization', () => {
+  test('refreshes names and additions without switching the current device or dropping peers', async () => {
+    await open(alpha); await open(beta)
+    const current = state.active.value, first = socketFor(alpha), second = socketFor(beta)
+    await profileApi.store.saveProfile({ ...alpha, name: 'Edited elsewhere', token: '' })
+    await profileApi.store.saveProfile({ name: 'Remote addition', endpoint: 'wss://new-device.test', cwd: '/remote', token: '' })
+    await profileApi.store.selectProfile(alpha.id)
+    await state.refreshProfiles()
+    expect(state.selectedId.value).toBe(beta.id)
+    expect(state.active.value).toBe(current)
+    expect(state.profiles.value).toHaveLength(3)
+    expect(state.profiles.value.find(profile => profile.id === alpha.id)?.name).toBe('Edited elsewhere')
+    expect(first.readyState).toBe(1); expect(second.readyState).toBe(1)
+    expect(storage.getItem(STORAGE_KEY)).toBeNull()
+  })
+  test('closes remotely removed or reconfigured devices without closing an unchanged peer', async () => {
+    await state.connectWithToken(alpha, 'old-memory-token'); await open(beta)
+    await profileApi.store.saveProfile({ ...alpha, endpoint: 'wss://replacement.test', token: '' })
+    await state.refreshProfiles()
+    expect(socketFor(alpha).readyState).toBe(3)
+    expect(state.tokenFor(alpha.id)).toBe('')
+    expect(socketFor(beta).readyState).toBe(1)
+    await profileApi.store.removeProfile(alpha.id); await state.refreshProfiles()
+    expect(state.connectionStates.value.alpha).toBeUndefined()
+    expect(state.selectedId.value).toBe(beta.id)
+    expect(socketFor(beta).readyState).toBe(1)
+  })
+  test('ignores a stale list response that finishes after a successful save', async () => {
+    const original = globalThis.fetch, response = deferred<Response>()
+    const old = structuredClone(profileApi.snapshot)
+    let reading = false
+    globalThis.fetch = (async (url, init) => {
+      if (url === '/api/profiles' && init?.method === 'GET') { reading = true; return response.promise }
+      return original(url, init)
+    }) as typeof fetch
+    try {
+      const refresh = state.refreshProfiles(); await eventually(() => reading)
+      await state.saveProfile({ ...alpha, name: 'New value', token: '' })
+      response.resolve(Response.json(old)); await refresh
+      expect(state.profiles.value.find(profile => profile.id === alpha.id)?.name).toBe('New value')
+    } finally { globalThis.fetch = original }
+  })
+  test('clears metadata and connections when profile polling discovers an expired session', async () => {
+    await open(alpha); await open(beta)
+    const original = globalThis.fetch
+    globalThis.fetch = (async (url, init) => url === '/api/profiles'
+      ? Response.json({ error: '请重新登录' }, { status: 401 }) : original(url, init)) as typeof fetch
+    try {
+      await state.refreshProfiles()
+      expect(state.authenticated.value).toBe(false)
+      expect(state.profiles.value).toEqual([])
+      expect(sockets.every(socket => socket.readyState === 3)).toBe(true)
+    } finally { globalThis.fetch = original }
   })
 })

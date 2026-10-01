@@ -81,8 +81,13 @@ export function createBridge(options: Options) {
       if (path === '/api/health' && request.method === 'GET') return json({ ok: true })
       if (path === '/api/session' && request.method === 'GET') return json({ authenticated: authenticated(request), requiresKey: !!options.accessKey })
       if (path.startsWith('/api/')) {
-        if (!sameOrigin(request)) return json({ error: '请求来源不受信任，请从配置的应用地址打开。' }, 403)
-        if (path !== '/api/socket' && request.method !== 'DELETE' && !request.headers.get('content-type')?.includes('application/json')) return json({ error: '需要 JSON 请求。' }, 415)
+        // LAN HTTP omits Fetch Metadata. The custom header requires a preflight
+        // cross-origin; this bridge never grants CORS permission to another origin.
+        const profileRead = path === '/api/profiles' && request.method === 'GET' && !request.headers.has('origin') && (
+          request.headers.get('sec-fetch-site') === 'same-origin' || !request.headers.has('sec-fetch-site') && request.headers.get('x-codex-remote') === '1'
+        )
+        if (!sameOrigin(request) && !profileRead) return json({ error: '请求来源不受信任，请从配置的应用地址打开。' }, 403)
+        if (path !== '/api/socket' && request.method !== 'GET' && request.method !== 'DELETE' && !request.headers.get('content-type')?.includes('application/json')) return json({ error: '需要 JSON 请求。' }, 415)
         if (path === '/api/session' && request.method === 'POST') {
           const ip = server.requestIP(request)?.address || 'unknown'
           const limit = failures.get(ip)
@@ -105,6 +110,19 @@ export function createBridge(options: Options) {
           for (const [key, ticket] of tickets) if (ticket.session === id) tickets.delete(key)
           for (const peer of peers) if (peer.data.ticket.session === id) peer.close(4001, 'Signed out')
           return json({ ok: true }, 200, { 'Set-Cookie': cookie('', 0) })
+        }
+        if (path === '/api/profiles') {
+          try {
+            if (request.method === 'GET') return json(await credentials.profiles())
+            if (!['POST', 'PATCH', 'DELETE'].includes(request.method)) return json({ error: '不支持的请求方法。' }, 405)
+            if (!request.headers.get('content-type')?.includes('application/json')) return json({ error: '需要 JSON 请求。' }, 415)
+            const body = await requestJson(request)
+            if (request.method === 'DELETE') return json(await credentials.removeProfile(body?.id))
+            if (request.method === 'PATCH') return json(await credentials.selectProfile(body?.selectedId))
+            const endpoint = connectionEndpoint(body?.endpoint)
+            if (body?.action !== undefined && body.action !== 'import') throw new CredentialError('无效的设备操作。')
+            return json(await credentials.saveProfile({ ...body, endpoint }, body?.action === 'import'))
+          } catch (error) { return configurationError(error) }
         }
         if (path === '/api/credentials' && (request.method === 'POST' || request.method === 'DELETE')) {
           if (!request.headers.get('content-type')?.includes('application/json')) return json({ error: '需要 JSON 请求。' }, 415)

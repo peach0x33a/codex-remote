@@ -1,6 +1,5 @@
 import { computed, effectScope, getCurrentInstance, getCurrentScope, isReadonly, isRef, onMounted, onScopeDispose, ref, shallowReactive, watch, type EffectScope, type Ref } from 'vue'
 import type { ConnectionProfile } from '../../shared/protocol'
-import { saveProfiles } from '../lib/profiles'
 import { readUiPreferences } from '../lib/ui-preferences'
 import type { TaskNotice } from '../lib/task-notifications'
 import { useCodex } from './useCodex'
@@ -29,10 +28,7 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
   function persistSelection() {
     if (disposed) return
     if (profileWriting.value) { selectionDirty = true; return }
-    try {
-      if (!storage) throw new Error()
-      saveProfiles(storage, metadata.profiles.value, metadata.selectedId.value)
-    } catch { metadata.error.value = '保存失败：浏览器存储不可用或已满。连接仍可用于当前页面。' }
+    metadata.persistSelection()
   }
   function emitNotice(notice: TaskNotice) {
     if (disposed) return
@@ -104,7 +100,7 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
     const old = metadata.profiles.value.find(profile => profile.id === input.id), oldToken = old ? tokenFor(old.id) : ''
     profileWriting.value = true
     try {
-      // Reuse the existing credential transaction and rollback exactly once.
+      // The server commits metadata and credentials in one transaction.
       const profile = await metadata.saveProfile(input)
       sessionTokens.delete(profile.id)
       if (disposed) return profile
@@ -177,9 +173,12 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
   metadataScope.run(() => {
     watch(metadata.selectedId, () => { ensureSelected(); persistSelection() }, { flush: 'sync' })
     watch(metadata.profiles, profiles => {
-      for (const profile of profiles) {
-        const runtime = entries.get(profile.id)?.runtime
-        if (runtime) runtime.profiles.value = [profile]
+      for (const [id, entry] of entries) {
+        const profile = profiles.find(item => item.id === id)
+        if (!profile) { entry.scope.stop(); entries.delete(id); sessionTokens.delete(id); continue }
+        const old = entry.runtime.selected.value
+        if (old && (old.endpoint !== profile.endpoint || old.credentialId !== profile.credentialId || old.cwd !== profile.cwd)) { disconnectEntry(entry); sessionTokens.delete(id) }
+        if (JSON.stringify(old) !== JSON.stringify(profile)) entry.runtime.profiles.value = [profile]
       }
       ensureSelected()
     }, { deep: true, flush: 'sync' })
@@ -227,7 +226,7 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
     else void start()
   }
   return Object.assign(facade, {
-    profiles: metadata.profiles, selectedId, selected,
+    profiles: metadata.profiles, profilesLoaded: metadata.profilesLoaded, refreshProfiles: metadata.refreshProfiles, selectedId, selected,
     online: metadata.online, bridgeReachable: metadata.bridgeReachable, authenticated: metadata.authenticated, requiresKey: metadata.requiresKey,
     notice, error, queuedMessages, connectionStates, anyBusy,
     connect, connectWithToken, disconnect, disconnectDevice, saveProfile, removeProfile, tokenFor, login, logout, onTaskNotice, start, dispose,

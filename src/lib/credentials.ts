@@ -1,4 +1,4 @@
-// The browser stores only an opaque reference. Secrets never come back from the bridge.
+// Legacy credential API compatibility. Device saves now use the atomic /api/profiles API.
 async function credentialRequest(method: 'POST' | 'DELETE', body: Record<string, string>) {
   const incomplete = method === 'POST' ? '连接令牌未保存' : '连接令牌未清除'
   let response: Response

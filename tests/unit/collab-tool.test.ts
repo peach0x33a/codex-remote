@@ -1,3 +1,6 @@
+import { buildThreadInsights } from '../../src/lib/thread-insights'
+import { toolActivityState, toolActivityTitle } from '../../src/lib/tool-activity'
+import type { Thread, Item } from '../../shared/protocol'
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -218,5 +221,38 @@ describe('collab tool cards and reasoning visibility', () => {
     expect(view.text()).not.toContain('历史思考正文')
     await view.open()
     expect(descendants(view.root).some(target => String(target.props.innerHTML || '').includes('历史思考正文'))).toBe(true)
+  })
+})
+
+describe('native sub-agent activity events', () => {
+  const activity: Item = { type: 'subAgentActivity', id: 'call-1', kind: 'interacted', agentThreadId: '01a0f75e-a768-7682-ad2f-2716871ce8f1', agentPath: '/root/crossflow_sol', completedAtMs: 1790862448504 }
+  test('parses the screenshot payload without claiming the agent finished', async () => {
+    const parsed = parseCollabTool(activity)!
+    expect(parsed.title).toBe('与子代理交互')
+    expect(parsed.agents).toMatchObject([{ id: activity.agentThreadId, path: activity.agentPath, status: '' }])
+    expect(toolActivityState(activity)).toMatchObject({ completed: true, running: false, failed: false })
+    const view = mount(activity); await view.open()
+    expect(view.text()).toContain('/root/crossflow_sol')
+    expect(view.text()).toContain(activity.agentThreadId!)
+    expect(view.text()).not.toContain('subAgentActivity')
+    expect(view.text()).not.toContain('任务完成')
+    expect(descendants(view.root).some(target => target.type === 'pre')).toBe(false)
+  })
+  test.each([['started', '启动子代理'], ['interacted', '与子代理交互'], ['interrupted', '中断子代理'], ['completed', '子代理任务完成']])('labels native activity kind %s', (kind, title) => {
+    expect(toolActivityTitle({ ...activity, kind })).toBe(title)
+  })
+  test('keeps malformed and future fields readable without dumping JSON', async () => {
+    const parsed = parseCollabTool({ type: 'subAgentActivity', kind: '__proto__', agentThreadId: {}, agentPath: 4 })!
+    expect(parsed.title).toBe('子代理活动 · __proto__'); expect(parsed.agents).toEqual([])
+    const view = mount({ type: 'subAgentActivity', kind: 'future', agentThreadId: '<script>literal</script>', agentPath: '<img src=x>' })
+    await view.open()
+    expect(view.text()).toContain('<img src=x>')
+    expect(descendants(view.root).some(target => ['script', 'img', 'pre'].includes(target.type))).toBe(false)
+  })
+  test('discovers the real thread for the inspector while keeping interaction distinct from completion', () => {
+    const thread = { id: 'parent', turns: [{ id: 'turn', items: [activity] }] } as Thread
+    expect(buildThreadInsights(thread).agents).toEqual([{ id: activity.agentThreadId!, name: 'crossflow_sol' }])
+    thread.turns[0]!.items.push({ ...activity, id: 'completed', kind: 'completed' })
+    expect(buildThreadInsights(thread).agents[0]?.status).toBe('completed')
   })
 })

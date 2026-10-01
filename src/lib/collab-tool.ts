@@ -19,7 +19,7 @@ const efforts: Record<string, string> = { none: '不启用', minimal: '最低', 
 export type CollabToolPresentation = {
   title: string; status: string; failed: boolean; completed: boolean
   promptLabel: string; prompt?: string; sender?: string; model?: string; effort?: string
-  agents: { id: string; status: string; failed: boolean; message?: string; messageLabel: string }[]
+  agents: { id: string; path?: string; status: string; failed: boolean; message?: string; messageLabel: string }[]
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -32,7 +32,21 @@ function label(labels: Record<string, string>, key: unknown, fallback: string): 
 
 /** A safe, human-readable projection; unknown tools never fall back to a JSON dump. */
 export function parseCollabTool(item: unknown): CollabToolPresentation | undefined {
-  if (!record(item) || item.type !== 'collabAgentToolCall') return undefined
+  if (!record(item)) return undefined
+  if (item.type === 'subAgentActivity') {
+    const kinds: Record<string, string> = { started: '启动子代理', interacted: '与子代理交互', interrupted: '中断子代理', completed: '子代理任务完成' }
+    const states: Record<string, string> = { started: '执行中', interrupted: '已中断', completed: '任务完成' }
+    const kind = text(item.kind), id = text(item.agentThreadId), path = text(item.agentPath)
+    return {
+      title: label(kinds, kind, kind ? '子代理活动 · ' + kind : '子代理活动'),
+      status: item.status === 'failed' ? '失败' : '已记录', failed: item.status === 'failed',
+      completed: item.status !== 'failed' && (item.kind === 'completed' || typeof item.completedAtMs === 'number' && Number.isFinite(item.completedAtMs)),
+      promptLabel: '补充说明',
+      // An interaction/completedAtMs records this activity, not the agent's completion.
+      agents: id || path ? [{ id: id || '', ...(path ? { path } : {}), status: label(states, kind, ''), failed: false, messageLabel: '消息' }] : [],
+    }
+  }
+  if (item.type !== 'collabAgentToolCall') return undefined
   const tool = typeof item.tool === 'string' && Object.hasOwn(tools, item.tool) ? tools[item.tool] : {
     title: text(item.tool) ? `子代理协作 · ${item.tool}` : '子代理协作', promptLabel: '请求内容',
   }

@@ -149,6 +149,7 @@ const server = Bun.serve<Peer>({
       if (method === 'initialize') { if (ws.data.initialized) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Already initialized' } })); return }; ws.data.initialized = true; respond({ userAgent: 'codex-test/0.159.0', platformFamily: 'unix', platformOs: 'linux' }); return }
       if (method === 'initialized') { ws.data.acknowledged = true; return }
       if (!ws.data.initialized || !ws.data.acknowledged) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Not initialized' } })); return }
+      if (method === 'command/exec' && Array.isArray(p.command) && p.command[3] === 'codex-remote-directory') { respond({ exitCode: 0, stdout: '/mock-home/' + String(p.command[4]).replace(/^~\/?/, ''), stderr: '' }); return }
       if (method === 'command/exec' && scenario === 'file-links') {
         const command = Array.isArray(p.command) ? p.command as string[] : []
         if (command.some(part => part.startsWith('# codex-remote workspace files'))) {
@@ -369,6 +370,12 @@ const server = Bun.serve<Peer>({
           for (const item of steps) { turn.items.push(item); emit(thread.id, 'item/completed', { turnId: turn.id, item }) }
           emit(thread.id, 'turn/diff/updated', { turnId: turn.id, diff: steps.filter(item => item.type === 'fileChange').flatMap(item => item.changes || []).map(change => 'diff --git a/' + change.path + ' b/' + change.path + '\n' + change.diff).join('') })
           finish(thread, turn, '界面检查完成。'); return
+        }
+        if (text === '子代理事件') {
+          const activity: Item = { type: 'subAgentActivity', id: 'sub-agent-event', kind: 'interacted', agentThreadId: '01a0f75e-a768-7682-ad2f-2716871ce8f1', agentPath: '/root/crossflow_sol', completedAtMs: 1790862448504 }
+          threads.set(activity.agentThreadId!, { id: activity.agentThreadId!, parentThreadId: thread.id, agentNickname: 'crossflow_sol', preview: '子代理验证', cwd: thread.cwd, createdAt: thread.createdAt, updatedAt: thread.updatedAt, status: { type: 'idle' }, turns: [] })
+          turn.items.push(activity); emit(thread.id, 'item/completed', { turnId: turn.id, item: activity })
+          finish(thread, turn, '已记录子代理交互。'); return
         }
         if (text.startsWith('队列任务')) return
         if (text.includes('思考适配') || text.includes('思考计时')) {

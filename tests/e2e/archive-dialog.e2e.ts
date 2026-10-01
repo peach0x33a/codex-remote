@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from '../fixtures'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
 
 async function configure(page: Page) {

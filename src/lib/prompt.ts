@@ -1,3 +1,4 @@
+import { randomId } from './random-id'
 import type { Item, MessageContent } from '../../shared/protocol'
 import { THREAD_REFERENCE_MARKER, threadReferenceContext, threadReferenceLink } from './mentions'
 export type PromptPart = { type: 'text'; text: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
@@ -87,7 +88,7 @@ export async function readImages(files: File[], existing: PromptPart[]): Promise
   if (current.length + files.length > 4 || files.some(file => file.size > 5 * 1024 * 1024) || [...current, ...files].reduce((sum, image) => sum + image.size, 0) > 10 * 1024 * 1024) throw new Error('最多添加 4 张图片，每张不超过 5 MB，总计不超过 10 MB。')
   return Promise.all(files.map(async file => {
     const url = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('无法读取图片，请重试。')); reader.readAsDataURL(file) })
-    return { type: 'image' as const, id: crypto.randomUUID(), name: file.name || '粘贴的图片', url, size: file.size }
+    return { type: 'image' as const, id: randomId(), name: file.name || '粘贴的图片', url, size: file.size }
   }))
 }
 

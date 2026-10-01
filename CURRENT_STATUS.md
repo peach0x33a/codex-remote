@@ -1,25 +1,21 @@
 # Current Status
 
-Workspace: /home/peach0x33a/source/repos/apps/codex-remote
-HEAD: 5facbd4 feat: build codex remote workspace. Changes remain uncommitted.
+Workspace: /home/peach0x33a/source/repos/apps/codex-remote-device-sync
+Branch: fix/server-device-sync
+Baseline snapshot: bc51b81b7cfc6bc5c30d1df8d4b9895812f078f8 (parent 5facbd4).
+This task's changes remain uncommitted. Main workspace and running service were not modified by this task; other concurrent edits remain in the original workspace.
 
-## Current delivery
-Latest work adds the island's Git branch/worktree badge and fixes the goal resume button. Details: task-history/2026-10-01-workspace-badge.md. Before that: Up/Down input recall, completed work time and credential-API compatibility errors (task-history/2026-09-30-input-recall-work-duration.md). Previous larger delivery: task-history/2026-09-30-island-credentials-multi-device.md.
+## Latest delivery
+LAN HTTP UUID compatibility, server-owned shared device profiles with atomic credential updates and browser migration, native subAgentActivity parsing, and ~/codex-remote/no-project defaults are implemented. Details and exact verification boundaries: task-history/2026-10-01-server-device-sync.md.
 
-- Project and goal share one compact island row. Slash/mention/skill lists replace the island, use source tabs and only real pending pages. Paused goal can resume directly; /goal, /goal objective, /goal edit and /goal status have distinct behaviors.
-- Native conversation actions and side chat are wired. Sidebar logo starts a new chat; its duplicate expanded-sidebar entry is removed. Choices and device-specific drafts are retained.
-- Multiple devices remain connected independently; state and notifications are isolated/aggregated deliberately. The device picker reports each connection and can disconnect it separately.
-- Connection tokens live in an endpoint-bound Bun private file, default .local/credentials.json (0600), overridable with APP_CREDENTIALS_FILE. Browser stores only the credential reference. Remember/replace/clear/remove workflows are available. No real tokens were read or saved by tests.
-- The island shows the current directory's Git branch beside the project picker, independent of any goal: a fork icon in the accent colour for a linked worktree, a branch icon for an ordinary repository, a short commit for a detached HEAD. It is read-only (rev-parse/symbolic-ref over command/exec, bounded and abortable), clears on device or directory change, refreshes when a turn ends, and is absent outside Git (src/lib/git-context.ts, src/composables/useGitContext.ts, src/components/WorkspaceBadge.vue).
-- Shared switches correct dark thumb contrast and positioning. Existing notification, font, background, slider and image-preview work remains included.
+Device metadata and secrets use APP_CREDENTIALS_FILE (default .local/credentials.json, private 0600); the profile-bearing schema is v2 and accepts legacy credential-only v1 on read. Browser profiles refresh after login, on returning to the page and every ten seconds while visible. New writes do not persist device metadata in browser storage. Existing UI preferences and drafts remain separately scoped as before.
 
 ## Verification
-959 unit/credential-handler integration tests passed with 5045 assertions across 43 files. Fixed the goal island's resume button, whose click handler referenced `resume` without calling it, so resuming a paused goal did nothing (src/components/GoalPanel.vue). Typecheck and production build passed. 210 Playwright cases discovered (not browser-executed; the three new workspace-badge.e2e.ts cases are unrun). Main JS bundle retains a non-fatal size warning (~842 kB).
+1,017 unit/integration tests pass; typecheck and production build pass. All 12 new desktop/mobile cases pass. Real insecure LAN HTTP and a second fresh authenticated browser pass against an isolated synthetic daemon. Wider selected browser regression: 111/114 pass; two baseline mobile failures and one badge fixture timing failure remain documented. Five additional pre-existing full-suite failures were reproduced in the baseline. No claim of a green full browser suite. Main bundle retains its size warning.
 
-## Runtime boundaries
-Browser execution was denied earlier and real listeners are restricted; no workaround was attempted. The earlier /api/credentials 404 in the live backend is resolved (user confirmed after the Bun bridge was restarted). Per the Codex session record, the bridge runs in tmux session `codex-remote` on 127.0.0.1:3000; source changes only reach it after `bun run build` and restarting that session, since a non-watch Bun process does not reload. No live upstream task, credentials, archive mutation or workspace undo was used for tests.
+## Deployment / continuity
+No production restart, merge, feature commit or push occurred. Production credentials were not read or copied. Stop the old bridge and preserve its credential-file path when deploying this branch; open an existing browser once to import its old devices.
 
-Accepted turn/steer cancellation and scheduled-task creation are not exposed by the installed App Server. Pending pre-dispatch steers and native queued messages can be removed. Native TUI queue display remains separate from the shared Web queue. The slash menu intentionally lists implemented web actions, not unsupported TUI-only commands.
+Original workspace /home/peach0x33a/source/repos/apps/codex-remote has independent concurrent changes to App.vue, ThreadActionsMenu.vue, their tests and task records. Reconcile during a later merge; do not replace that tree wholesale.
 
-## Continuity
-Earlier feature records remain in task-history/ (including 2026-09-30-conversation-motion-changes-queue.md and 2026-09-30-composer-goals-conversation-inspector.md). Local Codex source was inspected read-only at /home/peach0x33a/workspace/codex/codex-rs; it was not modified. A localhost service existed earlier, but current live service health is not asserted.
+Earlier feature records (composer, queue, credentials, Git/worktree badge) remain in task-history/. Native model execution/deployment was not tested; tests used a synthetic App Server.

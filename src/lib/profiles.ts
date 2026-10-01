@@ -1,3 +1,4 @@
+// Legacy browser format for one-time migration; live profiles come from /api/profiles.
 import type { ConnectionProfile } from '../../shared/protocol'
 import { normalizeEndpoint } from '../../shared/endpoint'
 

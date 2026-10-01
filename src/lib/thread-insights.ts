@@ -81,6 +81,16 @@ export function buildThreadInsights(thread: Thread | null, summaries: Record<str
     for (const item of loadedItems) if (record(item) && item.type === 'fileChange' && text(item.id)) fileSnapshots.set(item.id as string, item)
     for (const item of loadedItems) {
       if (!record(item)) continue
+      if (item.type === 'subAgentActivity') {
+        const id = text(item.agentThreadId), path = text(item.agentPath)
+        if (id && id !== thread.id) {
+          const agent = agents.get(id) ?? { id, name: path?.split('/').filter(Boolean).at(-1) || id }
+          if (item.kind === 'started') agent.status = 'running'
+          else if (item.kind === 'interrupted') agent.status = 'interrupted'
+          else if (item.kind === 'completed') agent.status = 'completed'
+          agents.set(id, agent)
+        }
+      }
       if (item.type === 'collabAgentToolCall') {
         const states = record(item.agentsStates) ? item.agentsStates : {}
         const receivers = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []
@@ -132,7 +142,7 @@ export function buildThreadInsights(thread: Thread | null, summaries: Record<str
   for (const [id, agent] of agents) {
     const summary = metadata.get(id)
     if (!summary) continue
-    agent.name = summary.nickname ?? summary.name ?? id
+    agent.name = summary.nickname ?? summary.name ?? agent.name
     if (summary.role) agent.role = summary.role
     // Preserve runtime status names such as idle; never translate idle into completed.
     if (!agent.status && summary.status) agent.status = summary.status

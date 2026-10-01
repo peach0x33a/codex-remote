@@ -7,6 +7,7 @@ export type Model = { id: string; model: string; displayName: string; descriptio
 export type MessageContent = { type: string; text?: string; url?: string; path?: string; fileId?: string; name?: string; text_elements?: { byteRange: { start: number; end: number }; placeholder: string | null }[] }
 export type CommandAction = { type: 'read'; command: string; name: string; path: string } | { type: 'listFiles'; command: string; path: string | null } | { type: 'search'; command: string; query: string | null; path: string | null } | { type: 'unknown'; command: string }
 export type Item = {
+  kind?: string; agentThreadId?: string; agentPath?: string;
   id: string; type: string; clientId?: string | null; text?: string; phase?: string; status?: string;
   startedAtMs?: number | null; completedAtMs?: number | null;
   content?: (MessageContent | string)[];

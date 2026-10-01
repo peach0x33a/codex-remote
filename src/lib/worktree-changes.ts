@@ -1,3 +1,4 @@
+import { randomId } from './random-id'
 /** Remote-only Git access. The caller binds request and cwd to one device/thread. */
 export type Request = (method: string, params: unknown, options?: { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown>
 export type ChangeScope = { kind: 'unstaged' | 'staged' | 'uncommitted' } | { kind: 'commit'; oid: string } | { kind: 'branch'; ref: string } | { kind: 'lastTurn'; patch: string }
@@ -400,7 +401,7 @@ export function createWorktreeChanges(request: Request, { cwd }: { cwd: string }
   return {
     readChanges, listCommits, listBranches,
     async undo(patch: string): Promise<UndoReceipt> {
-      const paths = await apply(patch, 'undo'), id = crypto.randomUUID()
+      const paths = await apply(patch, 'undo'), id = randomId()
       receipts.set(id, { patch, paths })
       return { id, cwd, paths }
     },
