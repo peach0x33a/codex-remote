@@ -2,25 +2,26 @@
 
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
-Published application code: b7df274
+Published application code: b2266f5 (frontend and backend)
 
 ## Latest delivery
-Mobile keyboard avoidance is fixed and published. The shell/composer follows the visible viewport, handles dismissal and rotation, preserves drafts/reading position, and keeps side chats/dialogs usable. Details: task-history/2026-10-02-mobile-keyboard-viewport.md.
 
-The default-directory connection failure, missing limited-goal Resume control, Session ID placement/copy behavior, false browser-speed disconnects, and interrupted-turn work-time footer are fixed and published. Current behavior and evidence: task-history/2026-10-02-session-streaming-stop-fixes.md.
+Multiple APP_ORIGIN addresses, live Goal time and consistent menu geometry are implemented and published. Details: task-history/2026-10-02-origins-goal-menu-consistency.md.
 
-- Connecting a device does not prepare directories. Explicit new work creates its configured default directory as needed, without silent fallback or connection loss on failure.
-- Paused/blocked/usage-limited goals can resume. Exhausted budgets require user-confirmed edits; counters/objective are preserved.
-- Session ID appears in Context Capacity with a Copy button. No Session ID action remains in the three-dot menu, and copy failure never opens a window or selects the visible ID.
-- Browser-bound backpressure queues messages in order, without relying on Bun 1.3.14's unimplemented ws pause/resume methods. Combined queue/native pending data is bounded; lack of progress is distinguished from transient pressure.
-- Stopped-turn durations freeze at each turn boundary in the main conversation and side chat. Native/history timing is authoritative; unknown history is not assigned invented time.
-- All earlier multi-device, credentials, responsive layout, file preview/download, goals and queue work is retained.
+- APP_ORIGIN supports comma-separated exact HTTP/HTTPS origins with existing authentication retained. HTTPS logins retain Secure cookies when LAN HTTP is allowed. Deployment addresses remain unchanged; Tailscale was discussed but not configured.
+- Active Goal time refreshes every second using the existing clock without periodic goal polling. Native counters stay authoritative and inactive goals stop advancing.
+- Model, permission, device, project, conversation, changes, settings and task-grouping menus share 16px panel / 8px option corners, 8px panel inset and 44px minimum rows. Dialog spacing and control shapes follow shared tokens.
+- Mobile keyboard avoidance remains published: visible-viewport tracking, preserved drafts/reading position, and usable side chats/dialogs. Evidence: task-history/2026-10-02-mobile-keyboard-viewport.md.
+- Earlier connection readiness, goal resume, Session ID, stream backpressure and stopped-turn time fixes remain intact. Evidence: task-history/2026-10-02-session-streaming-stop-fixes.md.
 
 ## Verification
-648 unit/integration tests pass (619 unit + 29 integration; 5,519 assertions). All 94 desktop/mobile browser cases pass; 10 focused keyboard cases were also rerun after the final small-screen height bound. Keyboard evidence uses synthetic VisualViewport events in Chromium, not physical iPhone/Android keyboards or Safari. Typecheck, production build and diff checks pass. Existing bundle-size warning remains.
+
+654 unit/integration tests passed (5,589 assertions, 50 files). All 96 desktop/mobile browser cases passed in 4.2 minutes. Typechecks, production Vite/PWA build, startup/auth smoke checks and diff checks passed. Reviewed 32 desktop/mobile light/dark menu captures with consistent geometry and no clipping, overflow or page errors. Phone coverage uses browser emulation, not physical phones. Existing large-bundle warning remains.
 
 ## Running service
-Frontend published at 2026-10-02T02:35:15.011147+08:00, code b7df274. Backend PID remains 3888293; this frontend-only publication preserved login sessions and live transports. PID/output: .local/server.pid and .local/server.log. Health and exact served HTML/service-worker hashes were verified. Previous static release: /home/peach0x33a/source/repos/apps/codex-remote/.local/releases/20261002-023515-before-keyboard-layout. No real upstream task/goal mutations were used in tests and no remote Git push occurred.
+
+Published at 2026-10-02T05:28:59.346906+08:00. Actual old listener PID 16894 was replaced with PID 274217; the stale PID file was corrected. PID/output: .local/server.pid and .local/server.log. Health and exact served HTML/service-worker hashes were verified. Authentication remains enabled; users log in again after restart. Environment and credentials were preserved. Previous frontend: .local/releases/20261002-052859-before-b2266f5. Metadata: .local/deployment.json. No real upstream task/goal mutations or remote Git push occurred.
 
 ## Continuity
-The merge and test-pruning records remain in task-history/2026-10-01-main-merge-test-pruning.md. The old snapshot and feature worktree remain available as recovery points; current work is on master.
+
+The prior merge/test-pruning record is task-history/2026-10-01-main-merge-test-pruning.md. Old snapshot and feature worktrees remain available as recovery points. Current work is on master.
