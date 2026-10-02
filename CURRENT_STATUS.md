@@ -3,28 +3,24 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published application code: b2266f5 (frontend and backend)
+Published frontend: 3787046
+Published backend: b2266f5
 
 ## Latest delivery
 
-Published the existing master history to the private GitHub repository on 2026-10-02. Initial source tip 1d1aaf695e5bf85797765ec7f49433e0ec06f42a was verified against the remote master reference. Publication details: task-history/2026-10-02-github-publication.md.
-
-Multiple APP_ORIGIN addresses, live Goal time and consistent menu geometry are implemented and published. Details: task-history/2026-10-02-origins-goal-menu-consistency.md.
-
-- APP_ORIGIN supports comma-separated exact HTTP/HTTPS origins with existing authentication retained. HTTPS logins retain Secure cookies when LAN HTTP is allowed. Deployment addresses remain unchanged; Tailscale was discussed but not configured.
-- Active Goal time refreshes every second using the existing clock without periodic goal polling. Native counters stay authoritative and inactive goals stop advancing.
-- Model, permission, device, project, conversation, changes, settings and task-grouping menus share 16px panel / 8px option corners, 8px panel inset and 44px minimum rows. Dialog spacing and control shapes follow shared tokens.
-- Mobile keyboard avoidance remains published: visible-viewport tracking, preserved drafts/reading position, and usable side chats/dialogs. Evidence: task-history/2026-10-02-mobile-keyboard-viewport.md.
-- Earlier connection readiness, goal resume, Session ID, stream backpressure and stopped-turn time fixes remain intact. Evidence: task-history/2026-10-02-session-streaming-stop-fixes.md.
+Markdown code blocks now have an always-visible copy button. Exact code copying uses the existing HTTP-compatible clipboard path and toasts, with keyboard focus preserved. Shared rendering covers messages, reasoning/plans and Markdown previews. Styles follow current tokens, support both appearances and retain 44px touch targets. Details: task-history/2026-10-02-markdown-code-copy.md.
 
 ## Verification
 
-654 unit/integration tests passed (5,589 assertions, 50 files). All 96 desktop/mobile browser cases passed in 4.2 minutes. Typechecks, production Vite/PWA build, startup/auth smoke checks and diff checks passed. Reviewed 32 desktop/mobile light/dark menu captures with consistent geometry and no clipping, overflow or page errors. Phone coverage uses browser emulation, not physical phones. Existing large-bundle warning remains.
+655 unit/integration tests passed (5,603 assertions, 50 files). Vue/server typechecks and production Vite/PWA build passed. Final six focused desktop/mobile browser cases passed; 34 existing cases also passed during the broader initial run. Four light/dark desktop/mobile code-block captures were reviewed. The complete browser suite was not rerun for this change. Mobile coverage is emulated. Existing large-bundle warning remains.
 
 ## Running service
 
-Published at 2026-10-02T05:28:59.346906+08:00. Actual old listener PID 16894 was replaced with PID 274217; the stale PID file was corrected. PID/output: .local/server.pid and .local/server.log. Health and exact served HTML/service-worker hashes were verified. Authentication remains enabled; users log in again after restart. Environment and credentials were preserved. Previous frontend: .local/releases/20261002-052859-before-b2266f5. Metadata: .local/deployment.json. No real upstream task/goal mutations occurred during that deployment. The GitHub publication did not restart or revalidate the running service.
+Frontend published at 2026-10-02T14:08:46.919809+08:00. Bun PID 274217 continues on port 3000 without a restart; existing login sessions and connections remain intact. Saved device credentials and environment were preserved. Health, authentication requirement and exact served hashes were verified. Metadata: .local/deployment.json. Logs/PID: .local/server.log and .local/server.pid. Previous frontend: /home/peach0x33a/source/repos/apps/codex-remote/.local/releases/20261002-140846-before-3787046.
 
-## Continuity
+## Preserved behavior
 
-The prior merge/test-pruning record is task-history/2026-10-01-main-merge-test-pruning.md. Old snapshot and feature worktrees remain available as recovery points. Current work is on master.
+- Multiple exact APP_ORIGIN values, active Goal time updates and unified menu geometry remain deployed; Tailscale is not configured. See task-history/2026-10-02-origins-goal-menu-consistency.md.
+- Mobile keyboard avoidance, server-side device persistence, deferred workspace preparation, Goal resume, context-window-only Session ID copying, stream backpressure handling and stopped-turn work time remain in place.
+- Prior GitHub publication is recorded in task-history/2026-10-02-github-publication.md. This fix is committed on local master and was not pushed by this task.
+- Older feature/snapshot worktrees remain available as recovery points. The earlier merge/test-pruning record is task-history/2026-10-01-main-merge-test-pruning.md.
