@@ -2,9 +2,12 @@
 
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
+GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
 Published application code: b2266f5 (frontend and backend)
 
 ## Latest delivery
+
+Published the existing master history to the private GitHub repository on 2026-10-02. Initial source tip 1d1aaf695e5bf85797765ec7f49433e0ec06f42a was verified against the remote master reference. Publication details: task-history/2026-10-02-github-publication.md.
 
 Multiple APP_ORIGIN addresses, live Goal time and consistent menu geometry are implemented and published. Details: task-history/2026-10-02-origins-goal-menu-consistency.md.
 
@@ -20,7 +23,7 @@ Multiple APP_ORIGIN addresses, live Goal time and consistent menu geometry are i
 
 ## Running service
 
-Published at 2026-10-02T05:28:59.346906+08:00. Actual old listener PID 16894 was replaced with PID 274217; the stale PID file was corrected. PID/output: .local/server.pid and .local/server.log. Health and exact served HTML/service-worker hashes were verified. Authentication remains enabled; users log in again after restart. Environment and credentials were preserved. Previous frontend: .local/releases/20261002-052859-before-b2266f5. Metadata: .local/deployment.json. No real upstream task/goal mutations or remote Git push occurred.
+Published at 2026-10-02T05:28:59.346906+08:00. Actual old listener PID 16894 was replaced with PID 274217; the stale PID file was corrected. PID/output: .local/server.pid and .local/server.log. Health and exact served HTML/service-worker hashes were verified. Authentication remains enabled; users log in again after restart. Environment and credentials were preserved. Previous frontend: .local/releases/20261002-052859-before-b2266f5. Metadata: .local/deployment.json. No real upstream task/goal mutations occurred during that deployment. The GitHub publication did not restart or revalidate the running service.
 
 ## Continuity
 
