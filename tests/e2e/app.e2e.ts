@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '../fixtures'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
+import { sampleCode, samplePlainCode, sampleIndentedCode } from '../markdown-fixture'
 const transportToken = 'e2e-transport-token'
 
 async function configure(page: Page, connect = true, endpoint = MOCK_ENDPOINT) {
@@ -78,6 +79,63 @@ test('sanitizes assistant Markdown and never loads remote images', async ({ page
   expect(await page.evaluate(() => (window as Window & { __xss?: boolean }).__xss)).toBeUndefined()
   await expect(page.locator('.markdown script, .markdown img, .markdown a[href^="javascript:"]')).toHaveCount(0)
   expect(remote).toEqual([])
+})
+
+test('copies individual streamed code blocks exactly and supports HTTP fallback without a popup', async ({ page, request }, info) => {
+  await request.get(MOCK_URL + '/test/scenario?name=markdown-code')
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__copiedCode = text } }, configurable: true })
+  })
+  await configure(page); await send(page, '显示代码')
+  const blocks = page.locator('.message-agent .markdown-code-block'), first = blocks.first()
+  await expect(first.locator('code')).toContainText('console')
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
+  const partial = await page.evaluate(() => {
+    const block = document.querySelector('.message-agent .markdown-code-block')!
+    const code = block.querySelector('code')!.textContent
+    block.querySelector<HTMLButtonElement>('button')!.click()
+    return code
+  })
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedCode)).toBe(partial)
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
+  await expect(blocks).toHaveCount(4)
+  const expected = [sampleCode, samplePlainCode, sampleIndentedCode, '']
+  for (let index = 0; index < expected.length; index++) {
+    await expect(blocks.nth(index).locator('code')).toHaveJSProperty('textContent', expected[index])
+    await blocks.nth(index).getByRole('button', { name: '复制代码', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedCode)).toBe(expected[index])
+  }
+  await expect(page.locator('.markdown p > code')).toHaveText('inlineOnly')
+  await expect(page.locator('.markdown script')).toHaveCount(0)
+  const button = first.getByRole('button', { name: '复制代码', exact: true })
+  await button.scrollIntoViewIfNeeded()
+  const before = await button.boundingBox()
+  expect(before!.height).toBeGreaterThanOrEqual(44)
+  expect(before!.x + before!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+  await first.locator('pre').evaluate(pre => { pre.scrollLeft = pre.scrollWidth })
+  expect((await button.boundingBox())!.x).toBe(before!.x)
+  await first.locator('pre').evaluate(pre => { pre.scrollLeft = 0 })
+  await first.screenshot({ path: info.outputPath('code-copy.png') })
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark' })
+  await first.screenshot({ path: info.outputPath('code-copy-dark.png') })
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+    document.execCommand = command => {
+      if (command !== 'copy') return false
+      ;(window as any).__copiedCode = (document.activeElement as HTMLTextAreaElement).value
+      return true
+    }
+  })
+  await button.focus(); await page.keyboard.press('Enter')
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedCode)).toBe(sampleCode)
+  await expect(button).toBeFocused()
+  await expect(page.getByText('已复制到剪贴板。', { exact: true })).toBeVisible()
+  await page.evaluate(() => { document.execCommand = () => false })
+  await button.click()
+  await expect(page.getByText('复制失败，请手动选择文字复制。', { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('')
 })
 
 test('ships an installable manifest and opens the cached shell offline', async ({ page, context, request }) => {

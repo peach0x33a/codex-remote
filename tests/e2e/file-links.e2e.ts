@@ -1,6 +1,7 @@
 import { expect, test } from '../fixtures'
 import { readFile } from 'node:fs/promises'
 import { MOCK_ENDPOINT, MOCK_URL } from '../config'
+import { sampleCode } from '../markdown-fixture'
 
 test.beforeEach(async ({ page, request }, info) => {
   await request.get(MOCK_URL + '/test/reset')
@@ -40,6 +41,12 @@ test('opens Markdown on the right and resolves its relative file links on the re
   await expect(panel).toContainText('文件所在的远端设备')
   await expect(page.getByRole('dialog', { name: '下载文件？', exact: true })).toBeHidden()
   expect(await page.evaluate(() => (window as any).__filePreviewScript)).toBeUndefined()
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__previewCode = text } }, configurable: true })
+  })
+  await panel.getByRole('button', { name: '复制代码', exact: true }).first().click()
+  await expect.poll(() => page.evaluate(() => (window as any).__previewCode)).toBe(sampleCode)
+  await expect(panel).toBeVisible()
   await panel.getByRole('button', { name: '下一页', exact: true }).click()
   await expect(panel.getByRole('heading', { name: '使用指南', exact: true })).toBeVisible()
   await expect(panel.locator('.workspace-file-path')).toHaveText('/test/files/guide.md')

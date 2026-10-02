@@ -2,6 +2,22 @@ import { describe, expect, test } from 'bun:test'
 import { markdownEngine as markdown } from '../../src/lib/markdown-engine'
 const tick = String.fromCharCode(96)
 
+test('adds copy controls only to escaped fenced and indented code, including unfinished and empty blocks', () => {
+  const source = '<script>alert(1)</script> & 你好'
+  for (const input of [tick.repeat(3) + 'ts\n' + source + '\n' + tick.repeat(3), '~~~\n' + source, '    ' + source]) {
+    const html = markdown.render(input)
+    expect(html.match(/aria-label="复制代码"/g)).toHaveLength(1)
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; 你好')
+    expect(html).not.toContain('<script>')
+  }
+  expect(markdown.render(tick.repeat(3) + 'text\n' + tick.repeat(3))).toContain('aria-label="复制代码"')
+  expect(markdown.render('~~~\n' + source)).toContain('你好</code>')
+  expect(markdown.render(tick + 'inlineOnly' + tick)).not.toContain('复制代码')
+  const hostile = markdown.render('~~~<img/src=x/onerror=alert(1)>\ncode\n~~~')
+  expect(hostile).not.toContain('<img')
+  expect(hostile).toContain('&lt;img/src=x/onerror=alert(1)&gt;')
+})
+
 describe('CJK Markdown emphasis compatibility', () => {
   test('renders a punctuation-ending bold label adjacent to Chinese text', () => {
     expect(markdown.render('**验证：**最新类型检查通过。')).toBe('<p><strong>验证：</strong>最新类型检查通过。</p>\n')

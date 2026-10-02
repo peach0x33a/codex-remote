@@ -5,6 +5,7 @@ import InlineImage from './InlineImage.vue'
 import { messageParts, reasoningText } from '../lib/prompt'
 import type { Item } from '../../shared/protocol'
 import { renderMarkdown } from '../lib/markdown'
+import { codeBlockFromEvent } from '../lib/markdown-code'
 import { fileLinkFromEvent, type FileLinkTarget } from '../lib/file-links'
 import { parseCollabTool } from '../lib/collab-tool'
 import { highlightCommand } from '../lib/command-highlight'
@@ -13,7 +14,11 @@ import { vAnimatedDetails } from '../lib/details-motion'
 import { formatWorkDuration, isWorkDurationCandidate } from '../lib/turn-duration'
 const props = defineProps<{ item: Item; now?: number; workDurationSeconds?: number; actionsDisabled?: boolean; editDisabled?: boolean; actionHint?: string }>()
 const emit = defineEmits<{ copy: [text: string]; edit: [id: string]; withdraw: [id: string]; openFile: [target: FileLinkTarget] }>()
-function openFile(event: MouseEvent) { const target = fileLinkFromEvent(event); if (target) emit('openFile', target) }
+function onMarkdownClick(event: MouseEvent) {
+  const code = codeBlockFromEvent(event)
+  if (code !== null) { emit('copy', code); return }
+  const target = fileLinkFromEvent(event); if (target) emit('openFile', target)
+}
 const expanded = ref(false)
 const workDurationLabel = computed(() => isWorkDurationCandidate(props.item) ? formatWorkDuration(props.workDurationSeconds) : undefined)
 const parts = computed(() => messageParts(props.item.content))
@@ -44,9 +49,9 @@ const activityError = computed(() => toolActivityError(props.item))
   <article v-if="item.type === 'userMessage'" class="message message-user" aria-label="你的消息"><div class="user-bubble"><template v-for="(part, index) in parts" :key="index"><span v-if="part.type === 'text'" class="user-text">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineImage v-else :src="part.url" :name="part.name" /></template></div><div class="user-message-actions"><button type="button" class="icon-button small" aria-label="编辑消息" :title="actionHint || '编辑消息'" :disabled="actionsDisabled || editDisabled" @click="emit('edit', item.id)"><PhPencilSimple :size="16" /></button><button type="button" class="icon-button small" aria-label="撤回消息" title="撤回消息" :disabled="actionsDisabled" @click="emit('withdraw', item.id)"><PhArrowCounterClockwise :size="16" /></button></div></article>
   <article v-else-if="item.type === 'agentMessage' || item.type === 'plan'" class="message message-agent" aria-label="Codex 回复">
     <div class="agent-avatar"><PhTerminal :size="18" weight="bold" /></div>
-    <div class="agent-content"><div class="message-author">Codex <span v-if="item.type === 'plan'">计划</span><span v-else-if="item.phase === 'commentary'">进展</span></div><div class="markdown" @click="openFile" v-html="html" /><div v-if="item.text" class="agent-message-actions"><button type="button" class="icon-button copy-button" aria-label="复制回复" @click="emit('copy', item.text || '')"><PhCopy :size="16" /></button><span v-if="workDurationLabel" class="work-duration">{{ workDurationLabel }}</span></div></div>
+    <div class="agent-content"><div class="message-author">Codex <span v-if="item.type === 'plan'">计划</span><span v-else-if="item.phase === 'commentary'">进展</span></div><div class="markdown" @click="onMarkdownClick" v-html="html" /><div v-if="item.text" class="agent-message-actions"><button type="button" class="icon-button copy-button" aria-label="复制回复" @click="emit('copy', item.text || '')"><PhCopy :size="16" /></button><span v-if="workDurationLabel" class="work-duration">{{ workDurationLabel }}</span></div></div>
   </article>
-  <template v-else-if="item.type === 'reasoning'"><details v-if="reasoning && (item.status !== 'inProgress' || item.completedAtMs != null)" v-animated-details="(open: boolean) => expanded = open" class="activity reasoning" @toggle="expanded = ($event.target as HTMLDetailsElement).open"><summary><PhSparkle :size="16" /><span>{{ reasoningLabel }}</span></summary><div v-if="expanded" class="markdown" @click="openFile" v-html="summaryHtml" /></details></template>
+  <template v-else-if="item.type === 'reasoning'"><details v-if="reasoning && (item.status !== 'inProgress' || item.completedAtMs != null)" v-animated-details="(open: boolean) => expanded = open" class="activity reasoning" @toggle="expanded = ($event.target as HTMLDetailsElement).open"><summary><PhSparkle :size="16" /><span>{{ reasoningLabel }}</span></summary><div v-if="expanded" class="markdown" @click="onMarkdownClick" v-html="summaryHtml" /></details></template>
   <div v-else-if="item.type === 'contextCompaction' && item.status !== 'inProgress'" class="activity compaction-activity"><PhArrowsIn :size="16" /><span>{{ item.status === 'failed' ? '上下文压缩失败' : '上下文已压缩' }}</span></div>
   <template v-else-if="item.type === 'contextCompaction'" />
   <details v-else v-animated-details="(open: boolean) => expanded = open" class="activity tool-activity" :open="expanded" @toggle="expanded = ($event.target as HTMLDetailsElement).open">

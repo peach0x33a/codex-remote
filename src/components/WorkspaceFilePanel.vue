@@ -5,9 +5,10 @@ import BaseDialog from './BaseDialog.vue'
 import { createWorkspaceFiles, type WorkspaceFile, type WorkspaceRun } from '../lib/workspace-files'
 import { fileLinkFromEvent, type FileLinkTarget } from '../lib/file-links'
 import { renderMarkdown } from '../lib/markdown'
+import { codeBlockFromEvent } from '../lib/markdown-code'
 
 const props = defineProps<{ target: FileLinkTarget | null; cwd: string; deviceName: string; connected: boolean; run: WorkspaceRun; floating?: boolean }>()
-const emit = defineEmits<{ close: []; copy: [path: string] }>()
+const emit = defineEmits<{ close: []; copy: [text: string] }>()
 const file = ref<WorkspaceFile | null>(null), location = ref<FileLinkTarget | null>(null)
 const loading = ref(false), downloading = ref(false), error = ref(''), downloadError = ref(''), downloaded = ref(0)
 const source = ref<HTMLElement>(), panel = ref<HTMLElement>()
@@ -24,7 +25,11 @@ const preview = computed(() => file.value?.preview)
 const downloadOnly = computed(() => file.value?.kind === 'file' && (!preview.value || preview.value.kind === 'binary'))
 const markdown = computed(() => preview.value?.kind === 'text' && /\.(?:md|markdown|mdown)$/i.test(file.value?.name || '') && !location.value?.line)
 const markdownHtml = computed(() => markdown.value ? renderMarkdown(preview.value?.text || '') : '')
-function followFile(event: MouseEvent) { const target = fileLinkFromEvent(event); if (target) void load(target, parent.value) }
+function onMarkdownClick(event: MouseEvent) {
+  const code = codeBlockFromEvent(event)
+  if (code !== null) { emit('copy', code); return }
+  const target = fileLinkFromEvent(event); if (target) void load(target, parent.value)
+}
 const sourceText = computed(() => {
   const text = preview.value?.text || '', line = location.value?.line
   if (!line) return { before: text, selected: '', after: '' }
@@ -127,7 +132,7 @@ async function download() {
       </template>
       <template v-else-if="file?.kind === 'file'">
         <img v-if="preview?.kind === 'image' && preview.dataBase64" class="workspace-file-image" :src="'data:' + preview.mime + ';base64,' + preview.dataBase64" :alt="file.name" />
-        <template v-else-if="preview?.kind === 'text'"><div v-if="markdown" class="markdown workspace-file-markdown" @click="followFile" v-html="markdownHtml" /><pre v-else ref="source" class="workspace-file-source"><code>{{ sourceText.before }}<mark v-if="sourceText.selected">{{ sourceText.selected }}</mark>{{ sourceText.after }}</code></pre><p v-if="preview.truncated" class="field-hint">预览已截断，下载可获取完整文件。</p></template>
+        <template v-else-if="preview?.kind === 'text'"><div v-if="markdown" class="markdown workspace-file-markdown" @click="onMarkdownClick" v-html="markdownHtml" /><pre v-else ref="source" class="workspace-file-source"><code>{{ sourceText.before }}<mark v-if="sourceText.selected">{{ sourceText.selected }}</mark>{{ sourceText.after }}</code></pre><p v-if="preview.truncated" class="field-hint">预览已截断，下载可获取完整文件。</p></template>
         <div v-else class="workspace-file-state"><PhFile :size="32" /><p>{{ file.name }}</p><span>{{ sizeLabel(file.size) }} · 下载后打开</span></div>
       </template>
       <p v-else-if="file" class="workspace-file-state">此路径不是普通文件或文件夹。</p>

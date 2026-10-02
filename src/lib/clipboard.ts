@@ -24,8 +24,10 @@ export async function copyText(text: string): Promise<boolean> {
   } catch { return false }
   finally {
     try {
-      if (active?.isConnected) active.focus({ preventScroll: true })
       if (selection) { selection.removeAllRanges(); for (const range of ranges) selection.addRange(range) }
+      // Restoring a range inside an editor can focus it in Chromium. Restore
+      // the triggering control afterward so keyboard navigation stays there.
+      if (active?.isConnected) active.focus({ preventScroll: true })
       if (input?.isConnected && caret && caret.start !== null && caret.end !== null) input.setSelectionRange(caret.start, caret.end, caret.direction ?? undefined)
     } catch { /* Selection may have disappeared during the browser copy event. */ }
     field.remove()

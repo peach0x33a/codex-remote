@@ -70,3 +70,13 @@ markdownEngine.renderer.rules.link_open = (tokens, index, options, env, renderer
   return originalLink ? originalLink(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options)
 }
 markdownEngine.renderer.rules.image = (tokens, index) => '<span class="image-label">[图片：' + markdownEngine.utils.escapeHtml(tokens[index].content || '未命名') + ']</span>'
+
+for (const kind of ['fence', 'code_block'] as const) {
+  const renderCode = markdownEngine.renderer.rules[kind]!
+  markdownEngine.renderer.rules[kind] = (tokens, index, options, env, renderer) => {
+    const language = markdownEngine.utils.escapeHtml(tokens[index].info.trim().split(/\s+/, 1)[0] || '代码')
+    return '<div class="markdown-code-block"><div class="markdown-code-header"><span class="markdown-code-language">' + language
+      + '</span><button type="button" class="markdown-code-copy" aria-label="复制代码">复制</button></div>'
+      + renderCode(tokens, index, options, env, renderer) + '</div>\n'
+  }
+}

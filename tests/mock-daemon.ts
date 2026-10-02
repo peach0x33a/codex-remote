@@ -2,6 +2,7 @@
 import type { ServerWebSocket } from 'bun'
 import type { Item, MessageContent, RpcMessage, Thread, Turn } from '../shared/protocol'
 import { MOCK_PORT } from './config'
+import { codeMarkdown } from './markdown-fixture'
 type Peer = { initialized: boolean; acknowledged: boolean; threadId: string; threadIds: string[] }
 const clients = new Set<ServerWebSocket<Peer>>()
 let threads = new Map<string, Thread>()
@@ -28,7 +29,7 @@ const fileFixtureBytes = (path: string) => {
   if (path === '/test/files/build.AppImage') return Uint8Array.from({ length: 600123 }, (_, i) => i % 256)
   if (path === '/test/files/pixel.gif') return Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
   const text: Record<string, string> = {
-    '/test/files/README.md': '# 发布说明\n\n这是远端设备的 Markdown 文件。\n\n[下一页](./guide.md)\n\n<script>window.__filePreviewScript = true</script>\n',
+    '/test/files/README.md': '# 发布说明\n\n这是远端设备的 Markdown 文件。\n\n[下一页](./guide.md)\n\n<script>window.__filePreviewScript = true</script>\n\n' + codeMarkdown,
     '/test/files/guide.md': '# 使用指南\n\n相对链接解析到文件所在目录。',
     '/test/files/slow.md': '# 延迟返回的旧文件',
     '/test/project/src/main.ts': 'const one = 1\nconst two = 2\nexport { one, two }\n',
@@ -65,7 +66,7 @@ function finish(thread: Thread, turn: Turn, text: string) {
   emit(thread.id, 'item/completed', { turnId: turn.id, item }); emit(thread.id, 'turn/completed', { turn })
 }
 function stream(thread: Thread, turn: Turn, long: boolean, unsafe: boolean) {
-  const text = scenario === 'markdown-cjk' ? '**验证：**最新类型检查通过。' : unsafe ? '<script>window.__xss = true</script>\n\n[危险](javascript:alert(1))\n\n![远程图片](https://tracker.example/collect)' : long ? '这是需要持续执行的长任务。'.repeat(50) : '你好，这是通过真实 WebSocket 桥接返回的流式回复。'
+  const text = scenario === 'markdown-code' ? codeMarkdown : scenario === 'markdown-cjk' ? '**验证：**最新类型检查通过。' : unsafe ? '<script>window.__xss = true</script>\n\n[危险](javascript:alert(1))\n\n![远程图片](https://tracker.example/collect)' : long ? '这是需要持续执行的长任务。'.repeat(50) : '你好，这是通过真实 WebSocket 桥接返回的流式回复。'
   const item: Item = { id: crypto.randomUUID(), type: 'agentMessage', text: '', phase: 'final_answer' }
   turn.items.push(item); emit(thread.id, 'item/started', { turnId: turn.id, item })
   let position = 0
