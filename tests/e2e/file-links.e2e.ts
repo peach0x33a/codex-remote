@@ -41,6 +41,7 @@ test('opens Markdown on the right and resolves its relative file links on the re
   await expect(panel).toContainText('文件所在的远端设备')
   await expect(page.getByRole('dialog', { name: '下载文件？', exact: true })).toBeHidden()
   expect(await page.evaluate(() => (window as any).__filePreviewScript)).toBeUndefined()
+  await expect(panel.locator('.markdown-code-block .hljs-keyword').first()).toHaveText('if')
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__previewCode = text } }, configurable: true })
   })

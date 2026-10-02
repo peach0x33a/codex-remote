@@ -1,7 +1,8 @@
 import MarkdownIt from 'markdown-it'
 import { parseFileLink } from './file-links'
+import { highlightCode } from './code-highlight'
 
-export const markdownEngine = new MarkdownIt({ html: false, linkify: true, breaks: true })
+export const markdownEngine = new MarkdownIt({ html: false, linkify: true, breaks: true, highlight: highlightCode })
 const validateLink = markdownEngine.validateLink
 markdownEngine.validateLink = href => /^file:/i.test(href) ? !!parseFileLink(href) : validateLink(href)
 type Token = ReturnType<typeof markdownEngine.parse>[number]

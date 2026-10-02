@@ -89,6 +89,7 @@ test('copies individual streamed code blocks exactly and supports HTTP fallback 
   await configure(page); await send(page, '显示代码')
   const blocks = page.locator('.message-agent .markdown-code-block'), first = blocks.first()
   await expect(first.locator('code')).toContainText('console')
+  await expect(first.locator('.hljs-keyword').first()).toHaveText('if')
   await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
   const partial = await page.evaluate(() => {
     const block = document.querySelector('.message-agent .markdown-code-block')!
@@ -107,6 +108,8 @@ test('copies individual streamed code blocks exactly and supports HTTP fallback 
   }
   await expect(page.locator('.markdown p > code')).toHaveText('inlineOnly')
   await expect(page.locator('.markdown script')).toHaveCount(0)
+  await expect(first.locator('.hljs-string').first()).toHaveText('"你好"')
+  await expect(blocks.nth(1).locator('[class^="hljs-"]')).toHaveCount(0)
   const button = first.getByRole('button', { name: '复制代码', exact: true })
   await button.scrollIntoViewIfNeeded()
   const before = await button.boundingBox()
@@ -116,8 +119,21 @@ test('copies individual streamed code blocks exactly and supports HTTP fallback 
   expect((await button.boundingBox())!.x).toBe(before!.x)
   await first.locator('pre').evaluate(pre => { pre.scrollLeft = 0 })
   await first.screenshot({ path: info.outputPath('code-copy.png') })
+  const lightColors = await first.locator('code').evaluate(code => ({
+    base: getComputedStyle(code).color, keyword: getComputedStyle(code.querySelector('.hljs-keyword')!).color,
+    string: getComputedStyle(code.querySelector('.hljs-string')!).color, comment: getComputedStyle(code.querySelector('.hljs-comment')!).color,
+  }))
+  expect(new Set(Object.values(lightColors)).size).toBe(4)
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark' })
   await first.screenshot({ path: info.outputPath('code-copy-dark.png') })
+  const darkColors = await first.locator('code').evaluate(code => ({
+    base: getComputedStyle(code).color, keyword: getComputedStyle(code.querySelector('.hljs-keyword')!).color,
+    string: getComputedStyle(code.querySelector('.hljs-string')!).color, comment: getComputedStyle(code.querySelector('.hljs-comment')!).color,
+  }))
+  expect(new Set(Object.values(darkColors)).size).toBe(4)
+  expect(darkColors.keyword).not.toBe(lightColors.keyword)
+  expect(darkColors.string).not.toBe(lightColors.string)
+  await expect(first.locator('code')).toHaveJSProperty('textContent', sampleCode)
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })

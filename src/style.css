@@ -358,6 +358,18 @@
   .markdown-code-copy:active { background: var(--active); }
   .markdown-code-copy:focus-visible { outline-offset: -2px; }
   .markdown .markdown-code-block > pre { margin: 0; padding: var(--space-3) var(--space-4) var(--space-4); border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; background: transparent; }
+  .markdown-code-block .hljs-keyword, .markdown-code-block .hljs-selector-tag, .markdown-code-block .hljs-doctag, .markdown-code-block .hljs-name { color: var(--syntax-keyword); }
+  .markdown-code-block .hljs-string, .markdown-code-block .hljs-regexp, .markdown-code-block .hljs-quote { color: var(--syntax-string); }
+  .markdown-code-block .hljs-number, .markdown-code-block .hljs-literal { color: var(--syntax-number); }
+  .markdown-code-block .hljs-title, .markdown-code-block .hljs-section, .markdown-code-block .hljs-type, .markdown-code-block .hljs-selector-class, .markdown-code-block .hljs-selector-id { color: var(--syntax-flag); }
+  .markdown-code-block .hljs-built_in, .markdown-code-block .hljs-attr, .markdown-code-block .hljs-attribute, .markdown-code-block .hljs-meta, .markdown-code-block .hljs-selector-attr, .markdown-code-block .hljs-selector-pseudo { color: var(--syntax-command); }
+  .markdown-code-block .hljs-variable, .markdown-code-block .hljs-template-variable, .markdown-code-block .hljs-symbol, .markdown-code-block .hljs-bullet { color: var(--syntax-variable); }
+  .markdown-code-block .hljs-operator { color: var(--syntax-operator); }
+  .markdown-code-block .hljs-comment, .markdown-code-block .hljs-code { color: var(--syntax-comment); }
+  .markdown-code-block .hljs-addition { color: var(--diff-added); background: var(--diff-added-bg); }
+  .markdown-code-block .hljs-deletion { color: var(--diff-removed); background: var(--diff-removed-bg); }
+  .markdown-code-block .hljs-emphasis { font-style: italic; }
+  .markdown-code-block .hljs-strong { font-weight: 600; }
   .markdown :not(pre) > code { font-size: .87em; padding: 2px 6px; border-radius: var(--radius-xs); background: var(--fill-2); }
   .markdown blockquote { margin: 16px 0; padding: 0 14px; border-left: 3px solid var(--fill-2); color: var(--muted); }
   .markdown ul, .markdown ol { padding-left: 24px; margin: 0 0 14px; }

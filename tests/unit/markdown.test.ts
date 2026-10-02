@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { markdownEngine as markdown } from '../../src/lib/markdown-engine'
+import { highlightCode } from '../../src/lib/code-highlight'
 const tick = String.fromCharCode(96)
 
 test('adds copy controls only to escaped fenced and indented code, including unfinished and empty blocks', () => {
@@ -7,7 +8,7 @@ test('adds copy controls only to escaped fenced and indented code, including unf
   for (const input of [tick.repeat(3) + 'ts\n' + source + '\n' + tick.repeat(3), '~~~\n' + source, '    ' + source]) {
     const html = markdown.render(input)
     expect(html.match(/aria-label="复制代码"/g)).toHaveLength(1)
-    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; 你好')
+    expect(html.replace(/<\/?span\b[^>]*>/g, '')).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; 你好')
     expect(html).not.toContain('<script>')
   }
   expect(markdown.render(tick.repeat(3) + 'text\n' + tick.repeat(3))).toContain('aria-label="复制代码"')
@@ -16,6 +17,47 @@ test('adds copy controls only to escaped fenced and indented code, including unf
   const hostile = markdown.render('~~~<img/src=x/onerror=alert(1)>\ncode\n~~~')
   expect(hostile).not.toContain('<img')
   expect(hostile).toContain('&lt;img/src=x/onerror=alert(1)&gt;')
+})
+
+test('highlights common code languages and aliases without changing code text', () => {
+  const entities: Record<string, string> = { lt: '<', gt: '>', quot: '"', '#x27': "'", amp: '&' }
+  const cases = [
+    ['JS', 'const message = "你好";'], ['ts', 'const count: number = 3'], ['tsx', 'const view = <div>Hello</div>'],
+    ['py', 'def greet(name):\n    return "Hello " + name'], ['go', 'func main() { return }'], ['rs', 'fn main() { let x = 3; }'],
+    ['bash', 'if true; then echo "$HOME"; fi'], ['shell', 'echo "$HOME"'], ['json', '{"enabled": true, "count": 3}'],
+    ['yaml', 'enabled: true'], ['sql', 'SELECT name FROM users WHERE id = 1;'], ['css', '.panel { color: red; }'],
+    ['html', '<div title="你好">&amp;</div>'], ['vue', '<template><div>{{ message }}</div></template>'],
+    ['dockerfile', 'FROM alpine:3\nRUN echo hello'], ['powershell', '$name = "hello"'],
+  ]
+  for (const [language, code] of cases) {
+    const html = highlightCode(code!, language!)
+    expect(html).toContain('class="hljs-')
+    const text = html.replace(/<\/?span\b[^>]*>/g, '').replace(/&(lt|gt|quot|#x27|amp);/g, (_, entity: string) => entities[entity]!)
+    expect(text).toBe(code!)
+  }
+})
+
+test('keeps unsafe, unknown, plain and oversized blocks escaped with copy controls', () => {
+  const unsafe = '<script>alert(1)</script><img src=x onerror=alert(1)> & 你好'
+  for (const language of ['html', 'javascript', 'missing-language', '__proto__', 'constructor', 'text', '']) {
+    const html = markdown.render('~~~' + language + '\n' + unsafe + '\n~~~')
+    expect(html).not.toContain('<script>'); expect(html).not.toContain('<img ')
+    expect(html).toContain('aria-label="复制代码"')
+    if (['missing-language', '__proto__', 'constructor', 'text', ''].includes(language)) expect(html).not.toContain('hljs-')
+  }
+  const oversized = 'const x = 1;\n'.repeat(2000)
+  expect(highlightCode(oversized, 'js')).toBe('')
+  const html = markdown.render('~~~js\n' + oversized + '~~~')
+  expect(html).toContain(oversized); expect(html).not.toContain('hljs-')
+  expect(html).toContain('aria-label="复制代码"')
+})
+
+test('updates incomplete streamed code and retains correct results after cache eviction', () => {
+  const partial = highlightCode('const text = "你', 'js')
+  const completed = highlightCode('const text = "你好"', 'js')
+  expect(partial).toContain('你'); expect(partial).not.toContain('你好'); expect(completed).toContain('你好')
+  for (let index = 0; index < 80; index++) highlightCode('const value = ' + index, 'js')
+  expect(highlightCode('const text = "你好"', 'js')).toBe(completed)
 })
 
 describe('CJK Markdown emphasis compatibility', () => {
