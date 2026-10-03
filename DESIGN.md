@@ -105,3 +105,7 @@ Current interaction refinements:
 File browser: provide a persistent folder button in the top navigation, disabled until a device connects. Open the active conversation directory, or the selected working directory on the home screen. Absolute and home-relative browsing must not depend on the configured directory existing; missing paths retain parent navigation.
 
 Entry-point audits count named slash commands as first-level menu entries, on equal footing with buttons and menus. Do not label Goal, Git changes, skills or mentions as missing entry points merely because their primary entry is /goal, /diff, /skills or /mention.
+
+Conversation state: only the runtime current-turn ID drives the working clock, Stop and steering; historical inProgress records must not reactivate finished work. Resuming derives that ID from the newest turn metadata, preserving genuine long-running turns and explicit completion/queue safeguards.
+
+Session location: keep the selected real device/thread IDs in the URL query (device and thread) using replaceState. Restore only after authentication and server profiles load, honor an explicit URL over the last selected device, and cancel restoration when the user chooses another conversation. Failed targets retain their URL for retry; new conversations clear it. Never write pending IDs, credentials or server endpoints into these parameters.

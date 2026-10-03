@@ -45,6 +45,8 @@ import ModelPicker from './components/ModelPicker.vue'
 import PermissionPicker from './components/PermissionPicker.vue'
 import ComposerPopover from './components/ComposerPopover.vue'
 import { useCodexWorkspace } from './composables/useCodexWorkspace'
+import { useSessionUrl } from './composables/useSessionUrl'
+import { readSessionTarget, sessionLocation } from './lib/session-url'
 import { useTaskNotifications } from './composables/useTaskNotifications'
 import type { NoticeTarget } from './lib/task-notifications'
 import ThreadActionsMenu from './components/ThreadActionsMenu.vue'
@@ -61,15 +63,16 @@ const AgentCommandCenter = defineAsyncComponent(() => import('./components/Agent
 const ArchiveDialog = defineAsyncComponent(() => import('./components/ArchiveDialog.vue'))
 const archiveOpen = ref(false), archiveTrigger = ref<HTMLButtonElement>()
 const agentCenterOpen = ref(false)
-const codex = useCodexWorkspace()
+const initialSessionTarget = readSessionTarget(new URL(location.href))
+const codex = useCodexWorkspace({ autoConnect: !initialSessionTarget })
 const typography = useTypography(codex.toast)
 const pendingNoticeTarget = ref<NoticeTarget>(), openingNotice = ref(false)
-const notifications = useTaskNotifications(target => { pendingNoticeTarget.value = target; void openNoticeTarget() })
+const notifications = useTaskNotifications(target => { sessionUrl.cancelRestore(); pendingNoticeTarget.value = target; void openNoticeTarget() })
 const unsubscribeNotices = codex.onTaskNotice(notice => { void notifications.notify(notice) })
 onUnmounted(unsubscribeNotices)
 async function openNoticeTarget() {
   const target = pendingNoticeTarget.value
-  if (!target || openingNotice.value || !codex.authenticated.value) return
+  if (!target || openingNotice.value || !codex.authenticated.value || !codex.profilesLoaded.value) return
   if (codex.revising.value || changesState.value.applying || codex.goalSaving.value) { codex.toast('当前操作完成后，请再次点击通知打开会话。'); pendingNoticeTarget.value = undefined; return }
   const profile = codex.profiles.value.find(profile => profile.id === target.deviceId)
   if (!profile) { codex.toast('通知对应的设备已不在设备列表中。'); pendingNoticeTarget.value = undefined; return }
@@ -82,7 +85,7 @@ async function openNoticeTarget() {
     }
   } finally { openingNotice.value = false }
 }
-watch(() => codex.authenticated.value, value => { if (value) void openNoticeTarget() })
+watch([codex.authenticated, codex.profilesLoaded], () => { void openNoticeTarget() })
 const { profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, currentQueue, queuePaused, serverQueueSupported, revising } = codex
 const deviceConfigRequest = computed<ConfigRequest>(() => {
   const device = selectedId.value
@@ -130,12 +133,13 @@ function copyConversation(all = false) {
 }
 function openConversationWindow() {
   if (!active.value) return
-  const url = new URL(location.href); url.search = ''; url.hash = ''; url.searchParams.set('notificationDevice', selectedId.value); url.searchParams.set('notificationThread', active.value.id)
+  const url = sessionLocation(location.href, { deviceId: selectedId.value, threadId: active.value.id })
   window.open(url.href, '_blank', 'noopener,noreferrer,popup,width=1100,height=850')
 }
 watch(profiles, rows => { if (sideChat.value && !rows.some(profile => profile.id === sideChat.value!.profile.id)) sideChat.value = undefined })
 const changesOpen = ref(false), changesPanel = ref<InstanceType<typeof ChangesPanel>>()
 const changesState = ref({ undone: false, applying: false })
+const sessionUrl = useSessionUrl(codex, initialSessionTarget, () => revising.value || changesState.value.applying || codex.goalSaving.value)
 const workspaceFileTarget = ref<FileLinkTarget | null>(null)
 function toggleFileBrowser() {
   if (!connected.value || loadingThread.value || changesState.value.applying) return
@@ -434,8 +438,8 @@ function trapMenu(event: KeyboardEvent) {
 const awaitingDevice = computed(() => status.value === 'disconnected' || status.value === 'error')
 const connectLabel = computed(() => selected.value ? '连接 ' + selected.value.name : '添加设备')
 function connectSelected() { if (selected.value) connectProfile(selected.value); else openConnections() }
-function connectProfile(profile: ConnectionProfile) { if (revising.value || codex.goalSaving.value || changesState.value.applying || editingMessage.value || queueDraftThread.value) return; menuOpen.value = false; search.value = ''; if (connected.value && selectedId.value === profile.id) return; void codex.connect(profile) }
-function startNew() { if (revising.value || codex.goalSaving.value || changesState.value.applying) return; draftEpoch++; composerEngaged.value = false; codex.newThread(); draft.value = []; attachmentError.value = ''; menuOpen.value = false }
+function connectProfile(profile: ConnectionProfile) { if (revising.value || codex.goalSaving.value || changesState.value.applying || editingMessage.value || queueDraftThread.value) return; sessionUrl.cancelRestore(); menuOpen.value = false; search.value = ''; if (connected.value && selectedId.value === profile.id) return; void codex.connect(profile) }
+function startNew() { if (revising.value || codex.goalSaving.value || changesState.value.applying) return; sessionUrl.cancelRestore(); draftEpoch++; composerEngaged.value = false; codex.newThread(); draft.value = []; attachmentError.value = ''; menuOpen.value = false; sessionUrl.sync() }
 async function closeArchives() {
   archiveOpen.value = false; await nextTick(); await nextTick()
   if (isMobile.value || collapsed.value) menuButton.value?.focus()
@@ -448,7 +452,7 @@ async function restoreArchived(id: string) {
   return success
 }
 async function archiveThread(id: string) { if (!changesState.value.applying) await codex.archive(id) }
-function selectThread(id: string) { if (revising.value || changesState.value.applying) return; menuOpen.value = false; void codex.openThread(id) }
+function selectThread(id: string) { if (revising.value || changesState.value.applying) return; sessionUrl.cancelRestore(); menuOpen.value = false; void codex.openThread(id) }
 async function send(queueOnly = false) {
   if (draft.value.every(part => part.type === 'text')) {
     const parts = draft.value, epoch = draftEpoch, text = promptText(parts)
@@ -557,8 +561,8 @@ onUnmounted(() => { cancelFileSearch(); clearTimeout(searchTimer); clearTimeout(
       <div class="chat-body" :class="{ 'is-welcome': welcome }">
         <section ref="scrollArea" class="conversation" aria-label="对话内容" @scroll.passive="trackScroll">
           <div v-if="welcome" class="welcome"><h1>有什么需要帮忙？</h1></div>
-          <div v-else-if="loadingThread" class="loading-conversation" role="status"><span class="spinner" /><span>{{ loadSlow ? '这个会话较长，正在读取最近消息…' : '正在打开对话…' }}</span><button class="text-button" @click="codex.cancelThreadLoad()">取消加载</button></div>
-          <div v-else-if="threadLoadError" class="thread-load-error" role="alert"><PhWarningCircle :size="24" /><h2>会话未能加载</h2><p>{{ threadLoadError }}</p><div><button class="button primary" :disabled="!connected" @click="codex.openThread(pendingThreadId)">重新加载</button><button class="button secondary" @click="codex.cancelThreadLoad()">返回</button></div></div>
+          <div v-else-if="loadingThread" class="loading-conversation" role="status"><span class="spinner" /><span>{{ loadSlow ? '这个会话较长，正在读取最近消息…' : '正在打开对话…' }}</span><button class="text-button" @click="sessionUrl.cancelRestore(); codex.cancelThreadLoad(); sessionUrl.sync()">取消加载</button></div>
+          <div v-else-if="threadLoadError" class="thread-load-error" role="alert"><PhWarningCircle :size="24" /><h2>会话未能加载</h2><p>{{ threadLoadError }}</p><div><button class="button primary" :disabled="!connected" @click="selectThread(pendingThreadId)">重新加载</button><button class="button secondary" @click="sessionUrl.cancelRestore(); codex.cancelThreadLoad(); sessionUrl.sync()">返回</button></div></div>
           <div v-else class="message-list"><button v-if="historyCursor" class="text-button history-more" :disabled="loadingEarlier || revising" @click="earlier"><PhArrowsClockwise :size="15" :class="{ spinning: loadingEarlier }" />{{ loadingEarlier ? '正在加载…' : '加载更早消息' }}</button><p v-if="active && !items.length && !busy" class="empty-thread">这个对话还没有消息。写下你想做的事。</p><template v-for="row in activityRows" :key="row.key"><p v-if="'stoppedLabel' in row" class="turn-stopped-duration" :data-turn-id="row.turnId">{{ row.stoppedLabel }}</p><ToolActivityGroup @open-file="workspaceFileTarget = $event" v-else-if="'group' in row" :items="row.group" :document-summary="row.documentSummary" :now="clockNow" /><template v-else><MessageRevisionEditor v-if="editingMessage?.id === row.item.id" :parts="editingMessage.parts" :saving="revising" :error="editingMessage.error" @save="saveEdited" @cancel="editingMessage = undefined" /><MessageItem v-else @open-file="workspaceFileTarget = $event" :work-duration-seconds="workDurations.get(row.item.id)" :item="row.item" :now="clockNow" :actions-disabled="changesState.applying || !connected || loadingThread || revising || codex.sending.value" :edit-disabled="!!messageEditError(row.item)" :action-hint="messageEditError(row.item)" @copy="copy" @edit="beginEdit" @withdraw="requestWithdraw" /></template></template><MotionCollapse :open="showCurrentTurnFiles"><FileChangeSummary ref="fileSummary" :key="selectedId + '/' + active?.id + '/' + active?.turns.at(-1)?.id" :files="currentTurnFiles" :disabled="changesState.applying" :undo-disabled="!!undoHint" :undo-hint="undoHint" :undone="changesState.undone" :undoing="changesState.applying" @view="openChanges" @undo="undoChanges" /></MotionCollapse><TurnFailure :failure="turnFailure" :retryable="active?.turns.at(-1)?.status === 'failed'" :loading="retryingFailure" :disabled="composerBlocked || busy || !!activeApprovals.length" @retry="retryFailedTurn" /><div v-if="(busy || reconnectStatus) && !activeApprovals.length && (!liveReasoning || reconnectStatus || compacting)" class="working-status" :class="{ reconnecting: !!reconnectStatus }" role="status"><span class="working-dots"><i /><i /><i /></span><span v-if="reconnectStatus" class="runtime-status">{{ reconnectStatus }}</span><span v-else-if="compacting" class="runtime-status">压缩上下文中</span><template v-else><span>Codex 正在工作<span v-if="workingElapsed !== undefined" class="working-elapsed" aria-live="off"> · {{ elapsedLabel(workingElapsed) }}</span></span></template></div></div>
         </section>
         <div ref="composerArea" class="composer-area" :class="{ 'is-moving': composerMoving }"><button v-if="!atBottom && !welcome" class="scroll-bottom icon-button" aria-label="滚动到最新消息" @click="atBottom = true; scrollBottom()"><PhArrowDown :size="19" /></button>

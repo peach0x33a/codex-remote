@@ -24,6 +24,7 @@ export type FuzzyFileSearchResult = { root: string; path: string; match_type: 'f
 export type ComposerSettings = { model: string; effort: string; permission: PermissionMode; serviceTier?: string | null }
 export type QueuedMessage = { id: string; deviceId: string; threadId: string; parts: PromptPart[]; settings: ComposerSettings; state: 'queued' | 'sending' | 'failed'; source?: 'server'; editError?: string; error?: string }
 type PendingUserMessage = { id: string; clientId: string; threadId: string; input: MessageContent[]; priorUserIds: string[]; placement: 'conversation' | 'island'; accepted: boolean; cancelable: boolean }
+const isLiveTurn = (turn: Turn | undefined): turn is Turn => !!turn && turn.status === 'inProgress' && turn.completedAt == null
 
 function isThreadSummary(value: unknown): value is Thread {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -200,7 +201,13 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     }
   }, { flush: 'sync' })
   const connected = computed(() => status.value === 'connected')
-  const activeTurn = computed(() => active.value?.turns.findLast(t => t.status === 'inProgress'))
+  // History can retain unfinished older turns. Only the current runtime turn
+  // may drive the clock, Stop, steering and queue dispatch.
+  const activeTurn = computed(() => {
+    const thread = active.value, id = thread && runningTurns.value.get(thread.id)
+    const turn = id ? thread?.turns.find(turn => turn.id === id) : undefined
+    return isLiveTurn(turn) ? turn : undefined
+  })
   const busy = computed(() => sending.value || !!activeTurn.value || active.value?.status?.type === 'active' || (active.value ? runningTurns.value.has(active.value.id) : false) || currentQueue.value.some(job => job.state === 'sending'))
   function inputFingerprint(input: (MessageContent | string)[]) {
     return JSON.stringify(input.map(part => typeof part === 'string' ? { type: 'string', text: part } : {
@@ -656,14 +663,15 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     try {
       const result = await rpc.request<ThreadResult>('thread/resume', { threadId: id, excludeTurns: true }, options)
       let resumedSettings = result
-      let turns: Turn[], cursor: string | null = null
+      let turns: Turn[], latestTurn: Turn | undefined, cursor: string | null = null
       try {
         const [metadata, page] = await Promise.all([
           rpc.request<{ data: Turn[] }>('thread/turns/list', { threadId: id, limit: 20, sortDirection: 'desc', itemsView: 'notLoaded' }, options),
           rpc.request<ThreadItemsPage>('thread/items/list', { threadId: id, limit: 60, sortDirection: 'desc' }, options),
         ])
         if (epoch !== generation || requestId !== threadGeneration) return
-        turns = hydrateItems(page, metadata.data, id); cursor = page.nextCursor
+        latestTurn = metadata.data[0] // Requested in descending turn order.
+        turns = hydrateItems(page, metadata.data, id, isLiveTurn(latestTurn) ? latestTurn.id : undefined); cursor = page.nextCursor
       } catch (e) {
         // Older servers have no pagination. Only fall back on an explicit method-not-found.
         if (!(e instanceof RpcError) || e.code !== -32601) throw e
@@ -671,6 +679,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
         resumedSettings = legacy
         if (epoch !== generation || requestId !== threadGeneration) return
         turns = (legacy.thread.turns || []).map(turn => ({ ...turn, items: turn.items.map(item => rememberReasoning(id, turn.id, item.type === 'reasoning' ? { ...item, status: turn.status === 'inProgress' ? item.status || 'inProgress' : 'completed' } : item)) }))
+        latestTurn = turns.at(-1)
         if (legacy.turnsBackwardsCursor || legacy.itemsBackwardsCursor) toast('服务器仅返回了部分历史，请升级 App Server 以加载更早消息。')
       }
       if (epoch !== generation || requestId !== threadGeneration) return
@@ -690,8 +699,11 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       restoringSettings = true
       model.value = restored.model; effort.value = restored.effort; permission.value = restored.permission; serviceTier.value = restored.serviceTier
       restoringSettings = false
-      const running = turns.find(t => t.status === 'inProgress')
+      const running = isLiveTurn(latestTurn) ? latestTurn : undefined
       if (running) runningTurns.value.set(id, running.id); else runningTurns.value.delete(id)
+      // Turn metadata was read after resume; buffered notifications below can
+      // still supersede it. Do not let the earlier summary retain stale busy.
+      if (latestTurn && ['active', 'idle'].includes(active.value.status?.type || '')) updateThreadMetadata(id, { status: { type: running ? 'active' : 'idle' } })
       if (!running || retries.value.get(queueKey(id))?.turnId !== running.id) retries.value.delete(queueKey(id))
       openingThread = ''
       for (const event of bufferedEvents) handleMessage(event)
@@ -706,7 +718,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     }
     finally { if (epoch === generation && requestId === threadGeneration) { loadingThread.value = false; openingThread = ''; bufferedEvents = [] } }
   }
-  function hydrateItems(page: ThreadItemsPage, metadata: Turn[], threadId: string): Turn[] {
+  function hydrateItems(page: ThreadItemsPage, metadata: Turn[], threadId: string, liveTurnId?: string): Turn[] {
     const byId = new Map(metadata.map(t => [t.id, t]))
     const ordered = new Map<string, Turn>()
     for (const { turnId, item, startedAtMs, completedAtMs } of [...page.data].reverse()) {
@@ -717,7 +729,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       turn.items.push(hydrated)
     }
     // Empty live turns still need a Stop control, even before their first item.
-    for (const turn of [...metadata].reverse()) if (turn.status === 'inProgress' && !ordered.has(turn.id)) ordered.set(turn.id, { ...turn, items: [] })
+    const live = liveTurnId ? byId.get(liveTurnId) : undefined
+    if (live && !ordered.has(live.id)) ordered.set(live.id, { ...live, items: [] })
     return [...ordered.values()]
   }
   async function loadEarlier() {
@@ -922,7 +935,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       // older debounce later; edits made after dispatch must still be synced.
       if (settingsByThread.get(settingsKey) === settings) pendingSettings.delete(threadId)
       acknowledgeSettings(settingsKey, settings)
-      if (result.turn.status === 'inProgress' && !terminalTurns.has(result.turn.id)) runningTurns.value.set(threadId, result.turn.id)
+      if (isLiveTurn(result.turn) && !terminalTurns.has(result.turn.id)) runningTurns.value.set(threadId, result.turn.id)
       const preview = promptText(parts).trim().slice(0, 200)
       if (active.value?.id === threadId) { mergeTurn(result.turn, true); if (!active.value.preview) active.value.preview = preview }
       const listed = threads.value.find(thread => thread.id === threadId)
@@ -1125,7 +1138,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
         if (epoch !== generation || rpc !== client) return
         const turn = await queue.start(threadId)
         if (epoch !== generation) return
-        if (turn.status === 'inProgress' && !terminalTurns.has(turn.id)) runningTurns.value.set(threadId, turn.id)
+        if (isLiveTurn(turn) && !terminalTurns.has(turn.id)) runningTurns.value.set(threadId, turn.id)
         if (active.value?.id === threadId) mergeTurn(turn, true)
       } catch (cause) { if (epoch === generation) error.value = '启动队列失败：' + messageOf(cause) }
       finally { if (epoch === generation) sending.value = false }

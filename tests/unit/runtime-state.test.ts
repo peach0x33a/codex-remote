@@ -441,6 +441,47 @@ describe('runtime retry, timing, and projects without network ports', () => {
     expect(state.liveReasoning.value).toBe('')
     expect(state.thinkingElapsed.value).toBeUndefined()
   })
+  test.each([false, true])('old unfinished history never becomes the live turn after a newer completion (legacy=%s)', async legacy => {
+    const now = Math.floor(Date.now() / 1000)
+    const old: Turn = { id: 'old-orphan', status: 'inProgress', startedAt: now - 82422, items: [{ id: 'old-output', type: 'agentMessage', text: 'old partial reply' }] }
+    const completed: Turn = { id: 'latest-completed', status: 'completed', startedAt: now - 612, completedAt: now, durationMs: 612000, items: [{ id: 'latest-answer', type: 'agentMessage', text: 'finished', phase: 'final_answer' }] }
+    store.get('a')!.turns = [old, { id: 'empty-orphan', status: 'inProgress', startedAt: now - 80000, items: [] }, completed]
+    if (legacy) archiveTransport = (method, params, reply, fail) => {
+      if (method === 'thread/turns/list') { fail(-32601, 'Unknown method'); return true }
+      if (method === 'thread/resume' && !params.excludeTurns) { reply({ thread: structuredClone(store.get('a')!), model: 'm', approvalPolicy: 'on-request', sandbox: { type: 'workspaceWrite' } }); return true }
+      return false
+    }
+    await state.openThread('a'); await settle()
+    expect(state.busy.value).toBe(false)
+    expect(state.activeTurn.value).toBeUndefined(); expect(state.workingElapsed.value).toBeUndefined()
+    expect(state.items.value.some(item => item.id === 'old-output')).toBe(true)
+    expect(completedTurnDurations(state.displayTurns.value).get('latest-answer')).toBe(612)
+    expect(await state.send([{ type: 'text', text: 'next question' }])).toBe(true)
+    const started = requests.filter(request => request.method === 'turn/start')
+    expect(started).toHaveLength(1); expect(started[0]!.params.input[0].text).toBe('next question')
+    expect(requests.some(request => request.method === 'turn/steer' || request.method === 'thread/queue/add')).toBe(false)
+    const live = state.activeTurn.value!
+    expect(live.id).not.toBe(old.id); expect(state.workingElapsed.value).toBe(0)
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...live, status: 'completed' } }); await settle()
+    expect(state.busy.value).toBe(false); expect(state.workingElapsed.value).toBeUndefined()
+    socket.emit('item/completed', { threadId: 'a', turnId: 'older-unloaded', item: { id: 'late-history', type: 'agentMessage', text: 'delayed historical event' } }); await settle()
+    expect(state.activeTurn.value).toBeUndefined(); expect(state.busy.value).toBe(false)
+  })
+  test('an empty latest live turn wins over older unfinished items and remains live for long-running work', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    store.get('a')!.turns = [
+      { id: 'orphan-with-items', status: 'inProgress', startedAt: now - 200000, items: [{ id: 'old-reasoning', type: 'reasoning', status: 'inProgress', summary: ['old thought'] }] },
+      { id: 'done', status: 'completed', items: [{ id: 'done-answer', type: 'agentMessage', text: 'done' }] },
+      { id: 'current-empty', status: 'inProgress', startedAt: now - 90000, items: [] },
+    ]
+    await state.openThread('a'); await settle()
+    expect(state.activeTurn.value?.id).toBe('current-empty'); expect(state.busy.value).toBe(true)
+    expect(state.workingElapsed.value).toBe(90000); expect(state.liveReasoning.value).toBe('')
+    socket.emit('turn/completed', { threadId: 'a', turn: { id: 'orphan-with-items', status: 'completed', items: [] } }); await settle()
+    expect(state.activeTurn.value?.id).toBe('current-empty'); expect(state.busy.value).toBe(true)
+    socket.emit('turn/completed', { threadId: 'a', turn: { id: 'current-empty', status: 'completed', items: [] } }); await settle()
+    expect(state.activeTurn.value).toBeUndefined(); expect(state.busy.value).toBe(false)
+  })
   test('work time advances without reasoning and resets for a new turn', async () => {
     const turn: Turn = { id: 'working-turn', status: 'inProgress', items: [] }
     store.get('a')!.turns = [turn]

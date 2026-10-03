@@ -95,6 +95,16 @@ const server = Bun.serve<Peer>({
     const path = new URL(request.url).pathname
     if (path === '/health') return new Response('ok')
     if (path === '/test/reset') { reset(); return Response.json({ ok: true }) }
+    if (path === '/test/scenario' && new URL(request.url).searchParams.get('name') === 'stale-turn') {
+      scenario = 'stale-turn'
+      const thread = threads.get('existing-thread')!, now = Math.floor(Date.now() / 1000)
+      thread.turns.unshift(
+        { id: 'stale-history', status: 'inProgress', startedAt: now - 82422, items: [{ id: 'stale-answer', type: 'agentMessage', text: '旧任务的历史输出。' }] },
+        { id: 'empty-stale-history', status: 'inProgress', startedAt: now - 82000, items: [] },
+      )
+      Object.assign(thread.turns.at(-1)!, { startedAt: now - 612, completedAt: now, durationMs: 612000 })
+      return Response.json({ ok: true })
+    }
     if (path === '/test/metrics') return Response.json({ received, approved, requests, resumed, forks: [...threads.values()].filter(thread => 'forkedFromId' in thread), nativeQueues: Object.fromEntries(nativeQueues), nativeSettings: Object.fromEntries(nativeSettings) })
     if (path === '/test/native-queue' || path === '/test/native-settings') {
       if (scenario !== 'native-queue' || request.method !== 'POST') return Response.json({ error: 'Native queue scenario required' }, { status: 409 })
