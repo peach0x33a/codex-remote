@@ -3,42 +3,33 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published frontend: e1c8e62
+Published frontend: f276f68
 Published backend: 1f36f43
 
 ## Latest delivery
 
-Command menu now displays 快速模式 with a Chinese Priority description, and 压缩上下文 for /compact. Frontend e1c8e62 published with typechecks/build and live asset verification; backend PID unchanged. See task-history/2026-10-04-fast-menu-name.md.
+Two deliberate older-direction gestures at the transcript top load one earlier page, with wheel inertia grouping, touch support, duplicate/loading guards and fresh retry intent. The manual history button is centered. A visible message anchor preserves reading position; late responses cannot scroll a different device/thread.
 
-`/fast` toggles Priority off/on; the reasoning panel top-left lightning button shares its state and supports both priority and legacy fast wire tiers. `/compact` and the context capacity window button invoke native thread/compact/start, with busy/connection guards and existing streamed progress. Frontend 955fd61 published without restarting backend 1f36f43 (PID 527090). 171 related unit tests and four desktop/mobile browser tests passed, with typechecks, Vite/PWA build and live asset hashes verified. Details: task-history/2026-10-04-fast-priority-manual-compaction.md.
+Read groups expand into deduplicated vertical paths under 读取了 X 个文件; original execution data is behind 执行详情. Image-view records can open the actual remote image through the conversation device's file preview. Completed one-line reasoning displays its icon, sanitized text and native duration inline; multi-line reasoning stays collapsible, and live/blank reasoning stays out of the transcript. Application updates use a full-width banner below navigation with manual update, work-time protection and retry. Details: task-history/2026-10-04-history-gestures-tool-previews-update-banner.md.
 
-Removed literal outer square brackets from pasted-text chips in the composer and sent/steer previews. Frontend 2822c29 published; backend 1f36f43 and PID 527090 remain live. Typechecks, isolated Vite/PWA build and served asset hashes passed. See task-history/2026-10-03-pasted-text-label.md.
+/fast toggles Priority off/on and shares its state with the top-left reasoning lightning button. The menu displays 快速模式 with Chinese description. /compact and the context-capacity button invoke native thread/compact/start with streamed progress. See task-history/2026-10-04-fast-priority-manual-compaction.md and task-history/2026-10-04-fast-menu-name.md.
 
-Terminal unobserved steers can be removed as hints or returned to the composer draft; they no longer remain permanently waiting or count as live work. Long pastes fold into editable text chips while preserving full native input, and caret scrolling follows paste/expansion/recall. The latest 100 submitted inputs per device are stored privately on the Bun server and recalled across conversations, refreshes and browser contexts. Details and the active-steer cancellation protocol limit: task-history/2026-10-03-composer-history-pasted-text-steer-recovery.md.
-
-Session device/thread IDs now appear in the URL and restore after authentication/profile loading. The live-turn ID owns timers and sends, preventing historical unfinished turns from restarting a finished working clock. Prior release: task-history/2026-10-03-session-url-live-turn-state.md.
-
-Navigation error banners remain directly below the header, edge to edge. The header file-browser button opens the current directory and can navigate out of a missing default path. Details and capability/entry matrix: task-history/2026-10-03-navigation-files-entry-audit.md.
-
-User criterion: commands count as first-level menu entries. Goal, Git changes, skills and mentions already have valid command entries. Under this criterion, no additional independent capability lacking a button/menu/command entry was confirmed after adding the file browser. Do not add duplicate controls merely because a capability's entry is a command.
+Terminal unobserved steers can be removed as hints or returned to the draft. Long pastes fold into editable chips (outer square brackets removed) while preserving full native input and caret scrolling. Device-wide input history keeps the latest 100 website submissions on the private Bun store and restores them across conversations, refreshes and browser contexts. See task-history/2026-10-03-composer-history-pasted-text-steer-recovery.md and task-history/2026-10-03-pasted-text-label.md.
 
 ## Verification
 
-670 full unit/integration tests passed (5,770 assertions, 51 files), and 112 full desktop/mobile browser cases passed. After the final local pasted-part ID fix, 16 prompt/history unit cases and 10 browser cases passed against the exact final build. Final Vue/server typechecks and Vite/PWA build passed. Light/dark desktop/mobile pasted-input and terminal-steer captures were inspected. Mobile coverage is emulated. Existing large-bundle warning remains.
+674 full unit/integration cases passed (5,800 assertions, 51 files). 28 focused desktop/mobile browser cases passed; four stream/tool/reasoning cases passed against the exact final build after the final guard fix. Vue/server typechecks, isolated Vite/PWA build, diff check and live asset hashes passed. Desktop/mobile control and tool-list/image-preview captures were inspected. Mobile gestures are browser emulation; no physical handset check. Earlier full-browser results are historical, not a full-suite run for this release.
 
 ## Running service
 
-Current frontend 955fd61 published at 2026-10-04T01:26:31.302524+08:00; backend remains 1f36f43, PID 527090. Health, exact frontend assets and unchanged auth/credentials verified.
+Frontend f276f68 published at 2026-10-04T02:06:52.808796+08:00. Backend 1f36f43 remains running as Bun PID 527090 on 127.0.0.1:3000; no restart for this release. Health, exact HTML/service worker/entry hashes, unchanged auth and saved credentials verified. Existing requiresKey=false state preserved. .local/deployment.json records the actual release and rollback frontend.
 
-Previous frontend 2822c29 published at 2026-10-03T23:29:37.154232+08:00 without a backend restart. Backend 1f36f43 was published at 2026-10-03T23:12:05.694749+08:00. Actual Bun PID 527090 listens on 127.0.0.1:3000 after a verified restart from PID 3102363. Health, auth, history API and exact served hashes were verified. The existing requiresKey=false state, environment and saved device credentials were preserved. Metadata: .local/deployment.json. Previous frontend: .local/releases/20261003-231205-before-1f36f43. Rollback backend source: .local/releases/20261003-231205-backend-b2266f5. Older PID/auth state records are historical.
-
-Input history shares the existing .local/credentials.json private atomic store; 100 entries per device and 16 MiB globally. Do not put this file under dist. The installed Codex CLI is 0.159.0; its schema has no individual accepted-steer cancellation method. Ended-steer removal is a hint/draft operation, not a server history edit. Website history is collected prospectively; external TUI inputs are not bulk-imported.
+Input history shares .local/credentials.json (private, atomic; 100 entries per device, 16 MiB globally). Do not put credentials under dist. Codex CLI 0.159.0 has no individual accepted-steer cancellation method: ended-steer removal is a hint/draft operation, not a server history edit. External TUI input history is not bulk-imported.
 
 ## Preserved behavior
 
-- Markdown syntax highlighting and copy controls remain deployed. See task-history/2026-10-02-markdown-syntax-highlighting.md and task-history/2026-10-02-markdown-code-copy.md.
-
-- Multiple exact APP_ORIGIN values, active Goal time updates and unified menu geometry remain deployed; Tailscale is not configured. See task-history/2026-10-02-origins-goal-menu-consistency.md.
-- Mobile keyboard avoidance, server-side device persistence, deferred workspace preparation, Goal resume, context-window-only Session ID copying, stream backpressure handling and stopped-turn work time remain in place.
-- Prior GitHub publication is recorded in task-history/2026-10-02-github-publication.md. This fix is committed on local master and was not pushed by this task.
-- Older feature/snapshot worktrees remain available as recovery points. The earlier merge/test-pruning record is task-history/2026-10-01-main-merge-test-pruning.md.
+- Session device/thread URL restoration and runtime current-turn timers/sending remain in place. Historical inProgress items cannot reactivate finished work. See task-history/2026-10-03-session-url-live-turn-state.md.
+- Error banners stay below navigation, edge to edge. The persistent header file-browser button opens the current directory and can recover from a missing default path. Slash commands count as first-level entries; avoid duplicate controls for /goal, /diff, /skills and /mention. See task-history/2026-10-03-navigation-files-entry-audit.md.
+- Markdown code highlighting/copy, multiple exact APP_ORIGIN values, active Goal time, unified menu geometry, mobile keyboard avoidance, server-side device persistence and deferred default-directory preparation remain deployed. Tailscale is not configured.
+- Goal resume, context-window-only Session ID copy, stream backpressure handling and stopped-turn duration remain in place.
+- Local master changes from this task were not pushed to origin. Prior publication/merge/pruning records and recovery worktrees remain available.
