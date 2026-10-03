@@ -3,22 +3,24 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published frontend: b6de9a0
+Published frontend: d0dcb2c
 Published backend: b2266f5
 
 ## Latest delivery
 
-Markdown code blocks now have language-aware syntax colors in both themes, alongside their always-visible copy buttons. Common languages plus Dockerfile/PowerShell and framework/shell aliases are supported. Source text and copying are preserved. Unknown/unlabeled code and blocks over 20,000 UTF-16 code units use escaped plain text; highlighting has a bounded cache. Details: task-history/2026-10-02-markdown-syntax-highlighting.md. Prior copy-control delivery: task-history/2026-10-02-markdown-code-copy.md.
+The top workspace error banner now fills the full workspace width with no outer margin or rounded corners on desktop/mobile. Inner padding, wrapping and dismissal remain intact. Details: task-history/2026-10-03-edge-to-edge-error-banner.md.
 
 ## Verification
 
-658 unit/integration tests passed (5,669 assertions, 50 files). Vue/server typechecks and Vite/PWA build passed. Eight focused desktop/mobile browser cases passed, including colored tokens/theme switching, exact copy behavior, file previews, sanitization and the existing HTTP fallback. Four light/dark desktop/mobile captures were reviewed. The full browser suite was not rerun. Mobile coverage is emulated; the existing large-bundle warning remains.
+For this CSS-only change: Vue/server typechecks, Vite/PWA production build and diff checks passed. Four isolated browser checks reproduced the real connection-error banner across desktop/mobile and light/dark themes, verifying exact edge alignment, no overflow, header adjacency and dismissal. Screenshots were reviewed. Mobile coverage is emulated. No permanent test was added and the full suite was not rerun; prior highlighting validation had 658 unit/integration tests and eight browser cases passing. Existing large-bundle warning remains.
 
 ## Running service
 
-Frontend published at 2026-10-02T14:26:19.006711+08:00. Bun PID 274217 continues on port 3000 without restart; existing login sessions and connections remain intact. Environment and saved device credentials were preserved. Health, authentication requirement and served hashes were verified. Metadata: .local/deployment.json. Logs/PID: .local/server.log and .local/server.pid. Previous frontend: /home/peach0x33a/source/repos/apps/codex-remote/.local/releases/20261002-142618-before-b6de9a0.
+Frontend published at 2026-10-03T19:05:30.582501+08:00. Actual Bun listener PID 3102363 continues on port 3000 without a restart. Health and exact served hashes were verified. The live unauthenticated session endpoint already reported requiresKey=false before this deployment; this task preserved it, the environment and device credentials. Earlier records referring to PID 274217 and enabled access-key authentication are historical. Deployment metadata: .local/deployment.json. Previous frontend: /home/peach0x33a/source/repos/apps/codex-remote/.local/releases/20261003-190530-before-d0dcb2c.
 
 ## Preserved behavior
+
+- Markdown syntax highlighting and copy controls remain deployed. See task-history/2026-10-02-markdown-syntax-highlighting.md and task-history/2026-10-02-markdown-code-copy.md.
 
 - Multiple exact APP_ORIGIN values, active Goal time updates and unified menu geometry remain deployed; Tailscale is not configured. See task-history/2026-10-02-origins-goal-menu-consistency.md.
 - Mobile keyboard avoidance, server-side device persistence, deferred workspace preparation, Goal resume, context-window-only Session ID copying, stream backpressure handling and stopped-turn work time remain in place.
