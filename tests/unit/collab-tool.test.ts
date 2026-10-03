@@ -170,12 +170,15 @@ describe('collab tool cards and reasoning visibility', () => {
     expect(descendants(view.root).some(target => ['script', 'img'].includes(target.type) || target.props.innerHTML)).toBe(false)
   })
 
-  test('keeps live reasoning out of the transcript and inserts it collapsed on completion', async () => {
+  test('hides live and blank reasoning, displays one line directly and folds multiple lines', async () => {
     const item = { id: 'reasoning', type: 'reasoning', summary: [], content: ['已有实际思考正文'], status: 'inProgress', startedAtMs: 1000 }
     const view = mount(item)
     expect(view.text().trim()).toBe('')
     expect(descendants(view.root).some(target => target.type === 'details')).toBe(false)
     await view.update({ ...item, status: 'completed', completedAtMs: 4000 })
+    expect(descendants(view.root).filter(target => target.type === 'details')).toHaveLength(0)
+    expect(descendants(view.root).some(target => String(target.props.innerHTML || '').includes('已有实际思考正文'))).toBe(true)
+    await view.update({ ...item, content: ['已有实际思考正文', '第二行思考正文'], status: 'completed', completedAtMs: 4000 })
     expect(view.text()).toContain('已思考 3秒')
     expect(view.text()).not.toContain('已有实际思考正文')
     expect(descendants(view.root).filter(target => target.type === 'details')).toHaveLength(1)
@@ -183,6 +186,9 @@ describe('collab tool cards and reasoning visibility', () => {
     expect(descendants(view.root).some(target => target.props.innerHTML)).toBe(false)
     await view.open()
     expect(descendants(view.root).some(target => String(target.props.innerHTML || '').includes('已有实际思考正文'))).toBe(true)
+    await view.update({ ...item, summary: [' '], content: [], status: 'completed', completedAtMs: 4000 })
+    expect(view.text().trim()).toBe('')
+    expect(descendants(view.root).some(target => target.type === 'details')).toBe(false)
   })
 
 })

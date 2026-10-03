@@ -121,7 +121,7 @@ export function toolActivityError(item: Item): string {
 export function toolActivityTitle(item: Item): string {
   if (item.type === 'commandExecution') {
     const kind = commandActivityKind(item)
-    if (kind === 'read') return '读取 ' + readFilePaths([item]).join('、')
+    if (kind === 'read') return (toolActivityState(item).completed ? '读取了 ' : toolActivityState(item).running ? '正在读取 ' : '读取 ') + readFilePaths([item]).length + ' 个文件'
     return item.command?.replace(/\s+/g, ' ').trim() || ({ listFiles: '列出目录', search: '搜索文件', unknown: '运行命令' })[kind as Exclude<CommandActivityKind, 'read'>]
   }
   const collab = parseCollabTool(item)
@@ -142,7 +142,7 @@ export function summarizeToolActivity(items: Item[]) {
   const prefix = completed ? '已' : running ? '正在' : ''
   let title = '工具调用'
   const kind = first && commandActivityKind(first)
-  if (kind === 'read') title = `${prefix}读取 ${readFilePaths(items).length} 个文件`
+  if (kind === 'read') title = `${completed ? '读取了' : prefix + '读取'} ${readFilePaths(items).length} 个文件`
   else if (kind === 'listFiles') title = `${prefix}查看 ${items.length} 次目录`
   else if (kind === 'search') title = `${prefix}搜索 ${items.length} 次`
   else if (kind === 'unknown') title = `${prefix}运行 ${items.length} 个命令`

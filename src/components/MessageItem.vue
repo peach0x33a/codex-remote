@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { PhArrowCounterClockwise, PhPencilSimple, PhX, PhCode, PhCopy, PhFileText, PhGlobe, PhSparkle, PhTerminal, PhArrowsIn } from '@phosphor-icons/vue'
+import { PhArrowCounterClockwise, PhPencilSimple, PhX, PhCode, PhCopy, PhFileText, PhGlobe, PhImage, PhSparkle, PhTerminal, PhArrowsIn } from '@phosphor-icons/vue'
 import InlineImage from './InlineImage.vue'
 import PastedText from './PastedText.vue'
 import { messageParts, reasoningText } from '../lib/prompt'
@@ -13,7 +13,7 @@ import { highlightCommand } from '../lib/command-highlight'
 import { commandActivityKind, readFilePaths, toolActivityError, toolActivityState, toolActivityTitle } from '../lib/tool-activity'
 import { vAnimatedDetails } from '../lib/details-motion'
 import { formatWorkDuration, isWorkDurationCandidate } from '../lib/turn-duration'
-const props = defineProps<{ item: Item; now?: number; workDurationSeconds?: number; actionsDisabled?: boolean; editDisabled?: boolean; actionHint?: string }>()
+const props = defineProps<{ item: Item; now?: number; workDurationSeconds?: number; actionsDisabled?: boolean; editDisabled?: boolean; actionHint?: string; readDetailsOnly?: boolean }>()
 const emit = defineEmits<{ copy: [text: string]; edit: [id: string]; withdraw: [id: string]; openFile: [target: FileLinkTarget] }>()
 function onMarkdownClick(event: MouseEvent) {
   const code = codeBlockFromEvent(event)
@@ -24,6 +24,7 @@ const expanded = ref(false)
 const workDurationLabel = computed(() => isWorkDurationCandidate(props.item) ? formatWorkDuration(props.workDurationSeconds) : undefined)
 const parts = computed(() => messageParts(props.item.content))
 const reasoning = computed(() => reasoningText(props.item).trim())
+const singleLineReasoning = computed(() => !/[\r\n]/.test(reasoning.value))
 const reasoningElapsed = computed(() => {
   const start = props.item.startedAtMs
   const end = props.item.completedAtMs ?? (props.item.status === 'inProgress' ? props.now : undefined)
@@ -40,8 +41,10 @@ const summaryHtml = computed(() => renderMarkdown(reasoning.value))
 const collab = computed(() => parseCollabTool(props.item))
 const commandHtml = computed(() => highlightCommand(props.item.command || ''))
 const commandKind = computed(() => commandActivityKind(props.item))
-const readPaths = computed(() => readFilePaths([props.item]))
-const activityTitle = computed(() => toolActivityTitle(props.item))
+const readPaths = computed(() => props.readDetailsOnly ? [] : readFilePaths([props.item]))
+const activityTitle = computed(() => props.readDetailsOnly ? '执行详情' : toolActivityTitle(props.item))
+const viewedImagePath = computed(() => props.item.type === 'imageView' && typeof props.item.path === 'string' && props.item.path.trim() ? props.item.path : '')
+const viewedImageName = computed(() => viewedImagePath.value.split(/[\\/]/).filter(Boolean).at(-1) || '图片')
 const activityState = computed(() => toolActivityState(props.item))
 const activityError = computed(() => toolActivityError(props.item))
 </script>
@@ -52,11 +55,16 @@ const activityError = computed(() => toolActivityError(props.item))
     <div class="agent-avatar"><PhTerminal :size="18" weight="bold" /></div>
     <div class="agent-content"><div class="message-author">Codex <span v-if="item.type === 'plan'">计划</span><span v-else-if="item.phase === 'commentary'">进展</span></div><div class="markdown" @click="onMarkdownClick" v-html="html" /><div v-if="item.text" class="agent-message-actions"><button type="button" class="icon-button copy-button" aria-label="复制回复" @click="emit('copy', item.text || '')"><PhCopy :size="16" /></button><span v-if="workDurationLabel" class="work-duration">{{ workDurationLabel }}</span></div></div>
   </article>
-  <template v-else-if="item.type === 'reasoning'"><details v-if="reasoning && (item.status !== 'inProgress' || item.completedAtMs != null)" v-animated-details="(open: boolean) => expanded = open" class="activity reasoning" @toggle="expanded = ($event.target as HTMLDetailsElement).open"><summary><PhSparkle :size="16" /><span>{{ reasoningLabel }}</span></summary><div v-if="expanded" class="markdown" @click="onMarkdownClick" v-html="summaryHtml" /></details></template>
+  <template v-else-if="item.type === 'reasoning'">
+    <template v-if="reasoning && (item.status !== 'inProgress' || item.completedAtMs != null)">
+    <div v-if="singleLineReasoning" class="activity reasoning-inline" :title="reasoningLabel"><PhSparkle :size="16" aria-hidden="true" /><div class="markdown" @click="onMarkdownClick" v-html="summaryHtml" /><span v-if="reasoningElapsed !== undefined" class="reasoning-inline-time">{{ reasoningElapsed }}秒</span></div>
+    <details v-else v-animated-details="(open: boolean) => expanded = open" class="activity reasoning" @toggle="expanded = ($event.target as HTMLDetailsElement).open"><summary><PhSparkle :size="16" /><span>{{ reasoningLabel }}</span></summary><div v-if="expanded" class="markdown" @click="onMarkdownClick" v-html="summaryHtml" /></details>
+    </template>
+  </template>
   <div v-else-if="item.type === 'contextCompaction' && item.status !== 'inProgress'" class="activity compaction-activity"><PhArrowsIn :size="16" /><span>{{ item.status === 'failed' ? '上下文压缩失败' : '上下文已压缩' }}</span></div>
   <template v-else-if="item.type === 'contextCompaction'" />
   <details v-else v-animated-details="(open: boolean) => expanded = open" class="activity tool-activity" :open="expanded" @toggle="expanded = ($event.target as HTMLDetailsElement).open">
-    <summary><PhFileText v-if="commandKind === 'read' || item.type === 'fileChange'" :size="16" /><PhTerminal v-else-if="item.type === 'commandExecution'" :size="16" /><PhGlobe v-else-if="item.type === 'webSearch'" :size="16" /><PhCode v-else :size="16" /><span class="activity-title" :class="{ 'activity-command-summary': item.type === 'commandExecution' && commandKind !== 'read' }" :title="activityTitle">{{ activityTitle }}</span><span v-if="activityState.failed" class="activity-state failed" :title="activityError || undefined"><PhX :size="13" aria-hidden="true" />失败</span></summary>
+    <summary><PhFileText v-if="commandKind === 'read' || item.type === 'fileChange'" :size="16" /><PhTerminal v-else-if="item.type === 'commandExecution'" :size="16" /><PhGlobe v-else-if="item.type === 'webSearch'" :size="16" /><PhImage v-else-if="item.type === 'imageView'" :size="16" /><PhCode v-else :size="16" /><span class="activity-title" :class="{ 'activity-command-summary': item.type === 'commandExecution' && commandKind !== 'read' }" :title="activityTitle">{{ activityTitle }}</span><span v-if="activityState.failed" class="activity-state failed" :title="activityError || undefined"><PhX :size="13" aria-hidden="true" />失败</span></summary>
     <template v-if="expanded"><template v-if="item.type === 'commandExecution'"><div class="command-output"><div v-for="path in readPaths" :key="path" class="activity-path activity-read-path">{{ path }}</div><div v-if="item.cwd" class="activity-path">{{ item.cwd }}</div><pre v-if="item.command" class="command-code"><code v-html="commandHtml" /></pre><pre v-if="item.aggregatedOutput" class="command-result"><code>{{ item.aggregatedOutput }}</code></pre></div></template>
     <template v-else-if="item.type === 'fileChange'"><div v-for="change in item.changes" :key="change.path" class="file-change"><strong>{{ change.path }}</strong><pre v-if="change.diff"><code>{{ change.diff }}</code></pre></div></template>
     <p v-else-if="item.type === 'webSearch'">{{ item.query }}</p>
@@ -69,6 +77,7 @@ const activityError = computed(() => toolActivityError(props.item))
       <div v-if="collab.prompt" class="collab-section"><strong>{{ collab.promptLabel }}</strong><p class="collab-text">{{ collab.prompt }}</p></div>
       <div v-if="collab.agents.length" class="collab-section"><strong>代理（{{ collab.agents.length }}）</strong><ul class="collab-agents"><li v-for="agent in collab.agents" :key="agent.id || agent.path"><div class="collab-agent-heading"><span v-if="agent.path" class="activity-path">{{ agent.path }}</span><span v-if="agent.id" class="activity-path">{{ agent.id }}</span><span class="collab-agent-state" :class="{ failed: agent.failed }">{{ agent.status }}</span></div><p v-if="agent.message" class="collab-text"><span class="collab-message-label">{{ agent.messageLabel }}：</span>{{ agent.message }}</p></li></ul></div>
     </div>
+    <div v-else-if="viewedImagePath" class="viewed-image"><button type="button" class="inline-image" :aria-label="'查看图片 ' + viewedImageName" :title="viewedImagePath" @click="emit('openFile', { path: viewedImagePath })"><PhImage :size="20" /><span>{{ viewedImageName }}</span></button><p class="activity-path viewed-image-path">{{ viewedImagePath }}</p></div>
     <pre v-else><code>{{ JSON.stringify(item.result || item.error || item, null, 2) }}</code></pre>
     <p v-if="activityError" class="activity-error" role="status">{{ activityError }}</p>
     </template>
@@ -79,12 +88,18 @@ const activityError = computed(() => toolActivityError(props.item))
 .agent-message-actions { display: flex; align-items: center; gap: 8px; margin: 4px 0 0 -8px; }
 .agent-message-actions > .copy-button { display: grid; flex-shrink: 0; margin: 0; color: var(--subtle); }
 .work-duration { color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
+.reasoning-inline { display: flex; align-items: flex-start; gap: var(--space-2); }
+.reasoning-inline > svg { flex-shrink: 0; margin-top: 3px; }
+.reasoning-inline > .markdown { flex: 1; min-width: 0; color: inherit; font-size: inherit; line-height: inherit; }
+.reasoning-inline-time { flex-shrink: 0; font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
 .tool-activity > summary { max-width: 100%; }
 .activity-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-command-summary { color: var(--muted); }
 .tool-activity .activity-state { flex-shrink: 0; }
 .activity-error { color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
 .command-code { color: var(--ink-soft); }
+.viewed-image { margin: var(--space-2) 0; padding-left: 14px; }
+.viewed-image-path { margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
 .command-output { margin-top: 6px; max-width: 100%; padding-left: 14px; }
 .command-output pre { margin: 0; max-width: none; padding: 6px 0; border: 0; border-radius: 0; background: transparent; }
 .command-output .command-result { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line-soft); color: var(--muted); }

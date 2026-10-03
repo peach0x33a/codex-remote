@@ -239,7 +239,7 @@
   .thread-load-error { max-width: 480px; margin: 12vh auto; padding: 24px; display: grid; justify-items: center; gap: 14px; text-align: center; }
   .thread-load-error > svg { color: var(--muted); }.thread-load-error h2 { font-size: calc(18px * var(--ui-font-scale, 1)); font-weight: 500; }.thread-load-error p { font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }.thread-load-error > div { display: flex; gap: 10px; }
   .loading-conversation { flex-wrap: wrap; }.loading-conversation .text-button { flex-basis: 100%; justify-content: center; }
-  .history-more { margin: 0 auto 20px; }
+  .history-more.text-button { display: flex; width: fit-content; min-height: 44px; margin: 0 auto 20px; }
   .suggestions { display: flex; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap; padding-top: 40px; }
   .suggestions > button { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding: 0 20px; background: rgba(255, 255, 255, .4); border: 1px solid rgba(9, 45, 78, .18); border-radius: var(--radius-round); color: var(--ink-soft); font-size: calc(15px * var(--ui-font-scale, 1)); font-weight: 500; line-height: 120%; white-space: nowrap; overflow: hidden; isolation: isolate; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: border-color .35s ease; }
   .suggestions > button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 150%; aspect-ratio: 1; border-radius: var(--radius-round); opacity: 0; z-index: -1; background: rgba(0, 0, 0, .05); transform: translate(-50%, -50%) scale(0); transition: transform .36s ease-out, opacity .1s ease; }
@@ -449,7 +449,9 @@
   .top-notice > svg { color: var(--accent); }
   .top-notice.offline { background: var(--danger-soft); color: var(--danger-ink); border-bottom: 1px solid color-mix(in srgb, var(--danger) 16%, transparent); }
   .top-notice.offline > svg { color: var(--danger); }
-  .error-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 20px; margin: 0; border-radius: 0; background: var(--danger-soft); color: var(--danger-ink); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
+  .error-banner, .update-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 20px; margin: 0; border-radius: 0; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
+  .error-banner { background: var(--danger-soft); color: var(--danger-ink); }
+  .update-banner { background: var(--accent-soft); color: var(--notice-ink); }
   .error-banner > span { flex: 1; overflow-wrap: anywhere; }
   .error-banner .icon-button { color: var(--danger-ink); }
 
@@ -532,7 +534,7 @@
     
     .suggestions { gap: 8px; padding-top: 28px; }.suggestions > button { height: 40px; padding: 0 14px; font-size: calc(14px * var(--ui-font-scale, 1)); gap: 6px; }
     .message-list { padding: 8px 16px 24px; }.message-agent { gap: 10px; }.agent-avatar { width: 28px; height: 28px; }.activity, .working-status { margin-left: 38px; }.approval-card { margin-left: 0; padding: 16px; }.markdown { font-size: calc(15px * var(--ui-font-scale, 1)); line-height: calc(26px * var(--ui-font-scale, 1)); }.user-bubble { max-width: 88%; font-size: calc(15px * var(--ui-font-scale, 1)); line-height: calc(26px * var(--ui-font-scale, 1)); padding: 8px 14px; }
-    .error-banner { padding: 8px 8px 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); }.top-notice { padding: 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); justify-content: flex-start; }
+    .error-banner, .update-banner { padding: 8px 8px 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); }.top-notice { padding: 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); justify-content: flex-start; }
     .dialog { max-height: calc(var(--app-viewport-height, 100dvh) - 28px); border-radius: var(--radius-lg); width: calc(100% - 24px); }:root { --dialog-padding: var(--space-4); }.dialog-header h2 { font-size: calc(19px * var(--ui-font-scale, 1)); }.dialog-header p { font-size: calc(13px * var(--ui-font-scale, 1)); }.field > input, .password-field input { font-size: calc(16px * var(--ui-font-scale, 1)); }.dialog-actions .button { font-size: calc(13px * var(--ui-font-scale, 1)); padding: 0 14px; }
     .icon-button { min-width: 38px; min-height: 38px; }.icon-button.small { min-width: 32px; min-height: 32px; }.text-button { min-height: 32px; }.saved-tabs button { min-height: 38px; }
   }

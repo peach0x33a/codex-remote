@@ -13,6 +13,7 @@ export type Item = {
   content?: (MessageContent | string)[];
   summary?: string[]; command?: string; cwd?: string; aggregatedOutput?: string;
   commandActions?: CommandAction[];
+  path?: string;
   changes?: { path: string; diff?: string; kind?: unknown }[];
   tool?: string; server?: string; query?: string; result?: unknown; error?: unknown;
 }

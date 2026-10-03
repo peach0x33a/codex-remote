@@ -1,0 +1,153 @@
+import { expect, test, type Page, type APIRequestContext } from '../fixtures'
+import { MOCK_ENDPOINT, MOCK_URL } from '../config'
+
+const transcript = (page: Page) => page.getByRole('region', { name: '对话内容', exact: true })
+const more = (page: Page) => page.getByRole('button', { name: '加载更早消息', exact: true })
+const historyCalls = async (request: APIRequestContext) => (await (await request.get(MOCK_URL + '/test/metrics')).json()).requests.filter((row: any) => row.method === 'thread/items/list' && row.params.cursor)
+async function top(page: Page) {
+  await transcript(page).evaluate(node => { node.scrollTop = 0 })
+  await expect.poll(() => transcript(page).evaluate(node => node.scrollTop)).toBe(0)
+}
+async function wheel(page: Page, mobile = false) {
+  if (mobile) { await transcript(page).dispatchEvent('wheel', { deltaY: -80 }); return }
+  const box = (await transcript(page).boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + 90)
+  await page.mouse.wheel(0, -80)
+}
+async function swipe(page: Page, downward = true) {
+  await transcript(page).evaluate((host, direction) => {
+    const box = host.getBoundingClientRect()
+    const point = (y: number) => new Touch({ identifier: 1, target: host, clientX: box.x + box.width / 2, clientY: y })
+    const start = point(box.y + 100), end = point(box.y + (direction ? 180 : 40))
+    host.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [start], changedTouches: [start] }))
+    host.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, touches: [end], changedTouches: [end] }))
+    host.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [end] }))
+  }, downward)
+}
+test.beforeEach(async ({ page, request }, info) => {
+  await request.get(MOCK_URL + '/test/reset')
+  await request.get(MOCK_URL + '/test/scenario?name=' + (info.title.includes('tool previews') ? 'tool-previews' : info.title.includes('failure') ? 'paged-error' : 'paged-slow'))
+  await page.goto('/')
+  await page.getByRole('button', { name: '选择设备', exact: true }).click()
+  await page.getByRole('menuitem', { name: '添加设备', exact: true }).click()
+  await page.getByLabel('设备名称').fill('历史加载测试')
+  await page.getByLabel('App Server 地址').fill(MOCK_ENDPOINT)
+  await page.getByRole('button', { name: '保存并连接', exact: true }).click()
+  const navigation = page.getByRole('button', { name: '打开导航', exact: true })
+  if (await navigation.isVisible()) await navigation.click()
+  await page.getByRole('button', { name: '已有项目分析', exact: true }).click()
+  await expect(page.locator('.message-user')).toHaveCount(info.title.includes('tool previews') ? 1 : 30)
+})
+
+test('centers the manual history control and keeps the visible message anchored', async ({ page }, info) => {
+  await top(page)
+  const button = (await more(page).boundingBox())!, list = (await page.locator('.message-list').boundingBox())!
+  expect(Math.abs(button.x + button.width / 2 - list.x - list.width / 2)).toBeLessThan(2)
+  const anchor = page.locator('.message-user').filter({ hasText: '历史问题 65' })
+  const y = (await anchor.boundingBox())!.y
+  if (process.env.HISTORY_SCROLL_VISUAL_CHECK) await transcript(page).screenshot({ path: info.outputPath('history-control.png') })
+  await more(page).click()
+  await expect(page.locator('.message-user')).toHaveCount(60)
+  await expect.poll(async () => Math.abs((await anchor.boundingBox())!.y - y)).toBeLessThan(2)
+})
+
+test('two wheel gestures load one page without an inertia chain or duplicate request', async ({ page, request, isMobile }) => {
+  await top(page)
+  await wheel(page, isMobile)
+  // These events belong to the same wheel burst, rather than new gestures.
+  for (let i = 0; i < 5; i++) await transcript(page).dispatchEvent('wheel', { deltaY: -80 })
+  expect(await historyCalls(request)).toHaveLength(0)
+  await page.waitForTimeout(220)
+  await wheel(page, isMobile)
+  await expect(page.getByRole('button', { name: '正在加载…', exact: true })).toBeDisabled()
+  for (let i = 0; i < 5; i++) await transcript(page).dispatchEvent('wheel', { deltaY: -80 })
+  await expect(page.locator('.message-user')).toHaveCount(60)
+  expect(await historyCalls(request)).toHaveLength(1)
+  await expect.poll(() => transcript(page).evaluate(node => node.scrollTop)).toBeGreaterThan(100)
+  // A new boundary visit needs two fresh attempts; loading does not cascade.
+  await top(page); await wheel(page, isMobile)
+  expect(await historyCalls(request)).toHaveLength(1)
+  await page.waitForTimeout(220); await wheel(page, isMobile)
+  await expect(page.locator('.message-user')).toHaveCount(90)
+  expect(await historyCalls(request)).toHaveLength(2)
+})
+
+test('touch gestures reset on reverse direction and stop when history is exhausted', async ({ page, request }) => {
+  await top(page)
+  await swipe(page); await swipe(page, false); await swipe(page)
+  expect(await historyCalls(request)).toHaveLength(0)
+  await swipe(page)
+  await expect(page.locator('.message-user')).toHaveCount(60)
+  await top(page); await swipe(page); await swipe(page)
+  await expect(page.locator('.message-user')).toHaveCount(90)
+  await top(page); await swipe(page); await swipe(page)
+  await expect(page.locator('.message-user')).toHaveCount(95)
+  await expect(more(page)).toHaveCount(0)
+  await top(page); await swipe(page); await swipe(page)
+  expect(await historyCalls(request)).toHaveLength(3)
+  expect(await page.locator('.message-user .user-text').allTextContents()).toEqual(Array.from({ length: 95 }, (_, i) => '历史问题 ' + i))
+})
+
+test('history failure retains the page and supports a deliberate retry', async ({ page, request }) => {
+  await top(page); await swipe(page); await swipe(page)
+  await expect(page.getByRole('alert')).toContainText('加载更早消息失败')
+  await expect(page.locator('.message-user')).toHaveCount(30)
+  await expect(more(page)).toBeEnabled()
+  expect(await historyCalls(request)).toHaveLength(1)
+  await top(page)
+  await swipe(page)
+  expect(await historyCalls(request)).toHaveLength(1)
+  await top(page)
+  await swipe(page)
+  await expect(page.locator('.message-user')).toHaveCount(60)
+  expect(await historyCalls(request)).toHaveLength(2)
+})
+
+test('tool previews show a flat file list and open viewed images from the conversation device', async ({ page }, info) => {
+  const short = page.locator('.reasoning-inline')
+  await expect(short).toContainText('Inspecting register notify')
+  await expect(short.locator('svg')).toHaveCount(1)
+  await expect(short.locator('details, summary')).toHaveCount(0)
+  const long = page.locator('details.reasoning')
+  await expect(long).toHaveCount(1)
+  await long.locator('summary').click()
+  await expect(long).toContainText('Preparing browser-size test')
+  await expect(long).toContainText('Rewriting browser-size test')
+  const reads = page.locator('.tool-activity-group').filter({ hasText: '读取了 5 个文件' })
+  await expect(reads.locator(':scope > summary')).not.toContainText('/test/')
+  await reads.locator(':scope > summary').click()
+  const paths = reads.getByRole('list', { name: '读取的文件', exact: true }).getByRole('listitem')
+  await expect(paths).toHaveCount(5)
+  expect(await paths.allTextContents()).toEqual(['/test/project/src/main.ts', '/test/files/README.md', '/test/files/guide.md', '/test/files/pixel.gif', '/test/files/build.AppImage'])
+  const boxes = await paths.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().top))
+  expect(boxes.every((y, index) => !index || y > boxes[index - 1]!)).toBe(true)
+  await expect(reads.locator('.tool-activity > summary')).toHaveText(['执行详情', '执行详情'])
+  if (process.env.HISTORY_SCROLL_VISUAL_CHECK) await reads.screenshot({ path: info.outputPath('flat-read-files.png') })
+  await reads.getByText('执行详情', { exact: true }).first().click()
+  await expect(reads).toContainText('保留执行输出')
+  const images = page.locator('.tool-activity-group').filter({ hasText: '查看 2 张图片' })
+  await images.locator(':scope > summary').click()
+  await images.locator('.tool-activity > summary').first().click()
+  await images.getByRole('button', { name: '查看图片 pixel.gif', exact: true }).click()
+  const preview = page.locator('.workspace-file-image')
+  await expect(preview).toHaveAttribute('alt', 'pixel.gif')
+  await expect.poll(() => preview.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBe(1)
+  if (process.env.HISTORY_SCROLL_VISUAL_CHECK) await page.locator('.workspace-file-panel').screenshot({ path: info.outputPath('viewed-image-preview.png') })
+  await page.getByRole('button', { name: '关闭文件预览', exact: true }).click()
+  await images.locator('.tool-activity > summary').last().click()
+  await images.getByRole('button', { name: '查看图片 missing.png', exact: true }).click()
+  await expect(page.locator('.workspace-file-body')).toContainText('文件不存在')
+})
+
+test('switching conversations ignores the delayed older page and preserves the new screen', async ({ page, request }) => {
+  await top(page); await swipe(page); await swipe(page)
+  await expect(page.getByRole('button', { name: '正在加载…', exact: true })).toBeDisabled()
+  const navigation = page.getByRole('button', { name: '打开导航', exact: true })
+  if (await navigation.isVisible()) await navigation.click()
+  await page.getByRole('button', { name: 'Codex Remote 首页', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '有什么需要帮忙？', exact: true })).toBeVisible()
+  await page.waitForTimeout(400)
+  await expect(page.locator('.message-user')).toHaveCount(0)
+  await expect(more(page)).toHaveCount(0)
+  expect(await historyCalls(request)).toHaveLength(1)
+})

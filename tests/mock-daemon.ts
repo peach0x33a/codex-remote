@@ -105,6 +105,22 @@ const server = Bun.serve<Peer>({
       Object.assign(thread.turns.at(-1)!, { startedAt: now - 612, completedAt: now, durationMs: 612000 })
       return Response.json({ ok: true })
     }
+    if (path === '/test/scenario' && new URL(request.url).searchParams.get('name') === 'tool-previews') {
+      scenario = 'tool-previews'
+      const paths = ['/test/project/src/main.ts', '/test/files/README.md', '/test/files/guide.md', '/test/files/pixel.gif', '/test/files/build.AppImage']
+      const read = (id: string, files: string[]): Item => ({ id, type: 'commandExecution', status: 'completed', command: 'cat ' + files.join(' '), cwd: '/test/project', aggregatedOutput: '保留执行输出', commandActions: files.map(path => ({ type: 'read', command: 'cat ' + path, name: path.split('/').at(-1)!, path })) })
+      threads.get('existing-thread')!.turns = [{ id: 'preview-turn', status: 'completed', items: [
+        { id: 'preview-user', type: 'userMessage', content: [{ type: 'text', text: '读取文件并查看图片' }] },
+        read('read-one', paths.slice(0, 3)), read('read-two', [paths[0]!, ...paths.slice(3)]),
+        { id: 'image-one', type: 'imageView', path: '/test/files/pixel.gif' },
+        { id: 'image-missing', type: 'imageView', path: '/test/files/missing.png' },
+        { id: 'reason-short', type: 'reasoning', status: 'completed', summary: ['Inspecting register notify'], startedAtMs: 1000, completedAtMs: 2000 },
+        { id: 'reason-long', type: 'reasoning', status: 'completed', summary: ['Preparing browser-size test', 'Rewriting browser-size test'], startedAtMs: 1000, completedAtMs: 7000 },
+        { id: 'reason-blank', type: 'reasoning', status: 'completed', summary: ['  '] },
+        { id: 'preview-agent', type: 'agentMessage', text: '读取完成。' },
+      ] }]
+      return Response.json({ ok: true })
+    }
     if (path === '/test/metrics') return Response.json({ received, approved, requests, resumed, forks: [...threads.values()].filter(thread => 'forkedFromId' in thread), nativeQueues: Object.fromEntries(nativeQueues), nativeSettings: Object.fromEntries(nativeSettings) })
     if (path === '/test/native-queue' || path === '/test/native-settings') {
       if (scenario !== 'native-queue' || request.method !== 'POST') return Response.json({ error: 'Native queue scenario required' }, { status: 409 })
@@ -138,7 +154,7 @@ const server = Bun.serve<Peer>({
       }
       return Response.json({ ok: true })
     }
-    if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'file-links') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '[说明文档](/test/files/README.md) · [AppImage](/test/files/build.AppImage) · [目录](/test/files) · [源代码](src/main.ts:2) · [图片](file:///test/files/pixel.gif) · [网站](https://example.com) · [慢文件](/test/files/slow.md) · [不存在](/test/files/missing.md)' }; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario === 'paged') { const thread = threads.get('existing-thread')!; thread.turns = Array.from({ length: 45 }, (_, i) => ({ id: 'history-turn-' + i, status: 'completed', items: [{ id: 'user-' + i, type: 'userMessage', content: [{ type: 'text', text: '历史问题 ' + i }] }, { id: 'agent-' + i, type: 'agentMessage', text: '历史回答 ' + i }] })) }; return Response.json({ ok: true }) }
+    if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'file-links') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '[说明文档](/test/files/README.md) · [AppImage](/test/files/build.AppImage) · [目录](/test/files) · [源代码](src/main.ts:2) · [图片](file:///test/files/pixel.gif) · [网站](https://example.com) · [慢文件](/test/files/slow.md) · [不存在](/test/files/missing.md)' }; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario.startsWith('paged')) { const thread = threads.get('existing-thread')!; thread.turns = Array.from({ length: scenario === 'paged' ? 45 : 95 }, (_, i) => ({ id: 'history-turn-' + i, status: 'completed', items: [{ id: 'user-' + i, type: 'userMessage', content: [{ type: 'text', text: '历史问题 ' + i }] }, { id: 'agent-' + i, type: 'agentMessage', text: '历史回答 ' + i }] })) }; return Response.json({ ok: true }) }
     if (path === '/test/finish') { for (const thread of threads.values()) { const turn = thread.turns.find(t => t.status === 'inProgress'); if (turn) { clearInterval(timers.get(turn.id)); timers.delete(turn.id); finish(thread, turn, '当前任务已完成。') } }; return Response.json({ ok: true }) }
     if (path === '/test/upstream-retry' || path === '/test/upstream-resume') {
       for (const thread of threads.values()) {
@@ -178,7 +194,7 @@ const server = Bun.serve<Peer>({
       if (!ws.data.initialized || !ws.data.acknowledged) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Not initialized' } })); return }
       if (method === 'fs/createDirectory') { if (scenario === 'directory-denied') fail(-32603, 'Permission denied: default directory'); else respond({}); return }
       if (method === 'command/exec' && Array.isArray(p.command) && p.command[3] === 'codex-remote-directory') { respond({ exitCode: 0, stdout: '/mock-home/' + String(p.command[4]).replace(/^~\/?/, ''), stderr: '' }); return }
-      if (method === 'command/exec' && scenario === 'file-links') {
+      if (method === 'command/exec' && ['file-links', 'tool-previews'].includes(scenario)) {
         const command = Array.isArray(p.command) ? p.command as string[] : []
         if (command.some(part => part.startsWith('# codex-remote workspace files'))) {
           const reply = { exitCode: 0, stdout: JSON.stringify(fileFixtureReport(command)), stderr: '' }
@@ -346,7 +362,10 @@ const server = Bun.serve<Peer>({
         const entries = thread.turns.filter(turn => !p.turnId || turn.id === p.turnId).flatMap(turn => turn.items.map(item => ({ turnId: turn.id, item })))
         if (p.sortDirection !== 'asc') entries.reverse()
         const offset = Number(p.cursor || 0), limit = Number(p.limit || 60)
-        respond({ data: entries.slice(offset, offset + limit), nextCursor: offset + limit < entries.length ? String(offset + limit) : null }); return
+        if (p.cursor && scenario === 'paged-error') { scenario = 'paged-recovered'; fail(-32603, '测试历史加载失败'); return }
+        const deliver = () => respond({ data: entries.slice(offset, offset + limit), nextCursor: offset + limit < entries.length ? String(offset + limit) : null })
+        if (p.cursor && scenario === 'paged-slow') setTimeout(deliver, 350); else deliver()
+        return
       }
       if (method === 'thread/revert') {
         const thread = threads.get(String(p.threadId))!, index = thread?.turns.findIndex(turn => turn.id === p.beforeTurnId) ?? -1

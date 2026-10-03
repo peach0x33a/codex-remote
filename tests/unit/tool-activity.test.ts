@@ -32,8 +32,8 @@ describe('server-classified command activities', () => {
   test('deduplicates exact server paths across actions and items, keeping first-seen order', () => {
     const items = [command('a', [read('/src/a'), read('/src/b'), read('/src/a')]), command('b', [read('/src/b'), read('/other/a')])]
     expect(readFilePaths(items)).toEqual(['/src/a', '/src/b', '/other/a'])
-    expect(summarizeToolActivity(items).title).toBe('已读取 3 个文件')
-    expect(toolActivityTitle(items[0]!)).toBe('读取 /src/a、/src/b')
+    expect(summarizeToolActivity(items).title).toBe('读取了 3 个文件')
+    expect(toolActivityTitle(items[0]!)).toBe('读取了 2 个文件')
   })
 
 })
@@ -147,7 +147,7 @@ describe('truthful activity summaries', () => {
 
 // Compile the real components with the same in-memory renderer as the existing
 // collab tests. No browser, network or extra DOM dependency is needed.
-let MessageItem: Component, ToolActivityGroup: Component
+let MessageItem: Component, ToolActivityGroup: Component, UpdateBanner: Component
 beforeAll(async () => {
   const directory = await mkdtemp(join(tmpdir(), 'codex-tool-activity-'))
   async function compile(name: string) {
@@ -164,7 +164,7 @@ beforeAll(async () => {
     await Bun.write(path, js)
     return (await import(pathToFileURL(path).href)).default
   }
-  try { MessageItem = await compile('MessageItem'); ToolActivityGroup = await compile('ToolActivityGroup') }
+  try { MessageItem = await compile('MessageItem'); ToolActivityGroup = await compile('ToolActivityGroup'); UpdateBanner = await compile('UpdateBanner') }
   finally { await rm(directory, { recursive: true, force: true }) }
 })
 type RenderNode = { type: string; text: string; props: Record<string, unknown>; children: RenderNode[]; parent?: RenderNode }
@@ -214,12 +214,16 @@ describe('collapsed tool groups and streaming detail state', () => {
 
   test('wraps a single read in a collapsed group and shows real paths only when expanded', async () => {
     const view = mountRows([command('a', [read('/actual/file.ts')])])
-    expect(view.text()).toContain('已读取 1 个文件')
+    expect(view.text()).toContain('读取了 1 个文件')
     expect(view.text()).not.toContain('/actual/file.ts')
     expect(view.details()).toHaveLength(1)
     expect(view.details()[0]!.props.open).toBe(false)
     await view.toggle(view.details()[0]!, true)
-    expect(view.text()).toContain('读取 /actual/file.ts')
+    expect(view.text()).toContain('/actual/file.ts')
+    expect(view.text()).toContain('执行详情')
+    expect(view.text()).not.toContain('读取 /actual/file.ts')
+    const list = descendants(view.root).find(target => target.type === 'ul' && target.props['aria-label'] === '读取的文件')!
+    expect(list.children.filter(target => target.type === 'li')).toHaveLength(1)
     expect(view.text()).not.toContain('guessed-name.txt')
     expect(view.details()).toHaveLength(2)
   })
@@ -233,7 +237,7 @@ describe('collapsed tool groups and streaming detail state', () => {
     await view.update([{ ...a, status: 'completed', aggregatedOutput: 'new output' }, command('b', [read('/actual/b')])])
     expect(view.details()[0]).toBe(group); expect(view.details()[1]).toBe(child)
     expect(group.props.open).toBe(true); expect(child.props.open).toBe(true)
-    expect(view.text()).toContain('已读取 2 个文件'); expect(view.text()).toContain('new output')
+    expect(view.text()).toContain('读取了 2 个文件'); expect(view.text()).toContain('new output')
     const html = descendants(view.root).find(target => target.type === 'code' && target.props.innerHTML)?.props.innerHTML as string
     expect(html).toContain('command-token-command'); expect(html).toContain('command-token-variable')
   })
@@ -249,4 +253,22 @@ describe('collapsed tool groups and streaming detail state', () => {
     expect(descendants(view.root).some(target => ['script', 'img'].includes(target.type))).toBe(false)
   })
 
+})
+
+test('update banner blocks work-time and duplicate updates, then allows retry after failure', async () => {
+  let calls = 0, reject: ((cause: Error) => void) | undefined
+  const errors: string[] = []
+  const props = ref({ available: true, disabled: true, update: () => { calls++; return new Promise<void>((_resolve, fail) => { reject = fail }) }, onError: (message: string) => errors.push(message) })
+  const root = node('root'), app = renderer.createApp({ setup: () => () => h(UpdateBanner, props.value) })
+  apps.push(app); app.mount(root)
+  const button = () => descendants(root).find(target => target.type === 'button')!
+  const click = () => (button().props.onClick as () => Promise<void>)()
+  await click(); expect(calls).toBe(0)
+  props.value.disabled = false; await nextTick()
+  const pending = click(); await nextTick(); expect(button().props.disabled).toBe(true)
+  await click(); expect(calls).toBe(1)
+  reject!(new Error('Update failed')); await pending; await nextTick()
+  expect(errors).toEqual(['更新失败，请稍后点击重试。'])
+  expect(button().props.disabled).toBe(false)
+  props.value.available = false; await nextTick(); expect(descendants(root).some(target => target.type === 'button')).toBe(false)
 })
