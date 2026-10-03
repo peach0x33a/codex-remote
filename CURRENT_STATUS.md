@@ -3,22 +3,28 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published frontend: ac18bc1
-Published backend: b2266f5
+Published frontend: 1f36f43
+Published backend: 1f36f43
 
 ## Latest delivery
 
-Error banners now appear directly below the navigation header, edge to edge. A persistent header folder button opens the current conversation/working directory. Missing default paths can navigate to their parent/remote home without creating directories or starting a task. Narrow-header controls remain reachable. Details and capability/entry matrix: task-history/2026-10-03-navigation-files-entry-audit.md.
+Terminal unobserved steers can be removed as hints or returned to the composer draft; they no longer remain permanently waiting or count as live work. Long pastes fold into editable text chips while preserving full native input, and caret scrolling follows paste/expansion/recall. The latest 100 submitted inputs per device are stored privately on the Bun server and recalled across conversations, refreshes and browser contexts. Details and the active-steer cancellation protocol limit: task-history/2026-10-03-composer-history-pasted-text-steer-recovery.md.
+
+Session device/thread IDs now appear in the URL and restore after authentication/profile loading. The live-turn ID owns timers and sends, preventing historical unfinished turns from restarting a finished working clock. Prior release: task-history/2026-10-03-session-url-live-turn-state.md.
+
+Navigation error banners remain directly below the header, edge to edge. The header file-browser button opens the current directory and can navigate out of a missing default path. Details and capability/entry matrix: task-history/2026-10-03-navigation-files-entry-audit.md.
 
 User criterion: commands count as first-level menu entries. Goal, Git changes, skills and mentions already have valid command entries. Under this criterion, no additional independent capability lacking a button/menu/command entry was confirmed after adding the file browser. Do not add duplicate controls merely because a capability's entry is a command.
 
 ## Verification
 
-658 unit/integration tests passed (5,669 assertions, 50 files). Final Vue/server typechecks and Vite/PWA build passed. 36 desktop/mobile browser cases passed. Four theme/viewport file-panel captures, four error-banner captures and ten header geometry/hit-target checks passed; /goal and /diff entries opened their existing panels. Mobile coverage is emulated. Existing large-bundle warning remains.
+670 full unit/integration tests passed (5,770 assertions, 51 files), and 112 full desktop/mobile browser cases passed. After the final local pasted-part ID fix, 16 prompt/history unit cases and 10 browser cases passed against the exact final build. Final Vue/server typechecks and Vite/PWA build passed. Light/dark desktop/mobile pasted-input and terminal-steer captures were inspected. Mobile coverage is emulated. Existing large-bundle warning remains.
 
 ## Running service
 
-Frontend published at 2026-10-03T19:25:01.787096+08:00. Actual Bun PID 3102363 continues on port 3000 without restart. Health, auth state and exact served hashes were verified. The existing requiresKey=false state, environment and saved device credentials were preserved. Metadata: .local/deployment.json. Previous frontend: /home/peach0x33a/source/repos/apps/codex-remote/.local/releases/20261003-192501-before-ac18bc1. Older PID/auth state records are historical.
+Frontend/backend published at 2026-10-03T23:12:05.694749+08:00. Actual Bun PID 527090 listens on 127.0.0.1:3000 after a verified restart from PID 3102363. Health, auth, history API and exact served hashes were verified. The existing requiresKey=false state, environment and saved device credentials were preserved. Metadata: .local/deployment.json. Previous frontend: .local/releases/20261003-231205-before-1f36f43. Rollback backend source: .local/releases/20261003-231205-backend-b2266f5. Older PID/auth state records are historical.
+
+Input history shares the existing .local/credentials.json private atomic store; 100 entries per device and 16 MiB globally. Do not put this file under dist. The installed Codex CLI is 0.159.0; its schema has no individual accepted-steer cancellation method. Ended-steer removal is a hint/draft operation, not a server history edit. Website history is collected prospectively; external TUI inputs are not bulk-imported.
 
 ## Preserved behavior
 
