@@ -289,7 +289,7 @@ const server = Bun.serve<Peer>({
       }
       if (method === 'configRequirements/read') { respond({ requirements: scenario === 'restricted' ? { allowedSandboxModes: ['read-only', 'workspace-write'], allowedApprovalPolicies: ['on-request'] } : null }); return }
       if (method === 'model/list') { if (scenario === 'model-never') return; respond({ data: [
-        { id: 'test-model', model: 'test-model', displayName: '测试模型', isDefault: true, defaultReasoningEffort: 'medium', defaultServiceTier: 'fast', serviceTiers: [{ id: 'fast', name: 'Fast', description: '更快的响应' }], description: '适合复杂的编码任务', supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(reasoningEffort => ({ reasoningEffort, description: reasoningEffort })) },
+        { id: 'test-model', model: 'test-model', displayName: '测试模型', isDefault: true, defaultReasoningEffort: 'medium', defaultServiceTier: scenario === 'fast-priority' ? 'priority' : 'fast', serviceTiers: [{ id: scenario === 'fast-priority' ? 'priority' : 'fast', name: 'Fast', description: '更快的响应' }], description: '适合复杂的编码任务', supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(reasoningEffort => ({ reasoningEffort, description: reasoningEffort })) },
         { id: 'quick-model', model: 'quick-model', displayName: '轻量模型', defaultReasoningEffort: 'low', description: '快速完成日常任务', supportedReasoningEfforts: ['low', 'medium'].map(reasoningEffort => ({ reasoningEffort, description: reasoningEffort })) },
       ], nextCursor: null }); return }
       if (method === 'thread/list') {
@@ -368,6 +368,15 @@ const server = Bun.serve<Peer>({
       if (method === 'turn/interrupt') {
         const thread = threads.get(String(p.threadId))!, turn = thread.turns.find(t => t.id === p.turnId)!
         clearInterval(timers.get(turn.id)); timers.delete(turn.id); turn.status = 'interrupted'; finishTiming(turn); thread.status = { type: 'idle' }; respond({}); emit(thread.id, 'turn/completed', { turn }); return
+      }
+      if (method === 'thread/compact/start') {
+        const thread = threads.get(String(p.threadId))!
+        const item: Item = { id: 'manual-compaction-' + Date.now(), type: 'contextCompaction' }
+        const turn: Turn = { id: 'compact-' + Date.now(), status: 'inProgress', items: [item] }
+        thread.turns.push(turn); thread.status = { type: 'active' }
+        emit(thread.id, 'turn/started', { turn }); emit(thread.id, 'item/started', { turnId: turn.id, item }); respond({})
+        setTimeout(() => { item.status = 'completed'; turn.status = 'completed'; thread.status = { type: 'idle' }; emit(thread.id, 'item/completed', { turnId: turn.id, item }); emit(thread.id, 'turn/completed', { turn }) }, 300)
+        return
       }
       if (method === 'turn/start') {
         const thread = threads.get(String(p.threadId))!

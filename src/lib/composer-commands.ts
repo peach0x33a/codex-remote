@@ -15,6 +15,7 @@ export const COMPOSER_COMMANDS = [
   { id: 'agents', label: '/agents', description: '打开任务中心', requiresConnection: true },
   { id: 'diff', label: '/diff', description: '查看当前会话的文件变更', requiresConnection: true },
   { id: 'mention', label: '/mention', description: '提及当前项目中的文件', requiresConnection: true },
+  { id: 'compact', label: '/compact', description: '压缩当前会话的上下文', requiresConnection: true },
   { id: 'status', label: '/status', description: '查看当前会话的上下文用量', requiresConnection: true },
   { id: 'cd', label: '/cd', description: '选择工作目录', requiresConnection: true },
   { id: 'pwd', label: '/pwd', description: '显示当前工作目录', requiresConnection: true },
@@ -34,7 +35,7 @@ export function composerCommands(query: string, connected: boolean, serviceTiers
     if (('requiresConnection' in command) && !connected) continue
     commands.push(command)
     if (command.id === 'model' && connected) {
-      for (const tier of serviceTiers) commands.push({ id: 'service-tier:' + tier.id, label: '/' + tier.id.toLowerCase(), description: tier.description || '切换服务速度', serviceTier: tier.id })
+      for (const tier of serviceTiers) commands.push({ id: 'service-tier:' + tier.id, label: '/' + (['priority', 'fast'].includes(tier.id.toLowerCase()) ? 'fast' : tier.id.toLowerCase()), description: tier.description || '切换服务速度', serviceTier: tier.id })
     }
   }
   return commands.filter(command => {

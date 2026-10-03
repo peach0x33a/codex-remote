@@ -526,6 +526,37 @@ describe('runtime retry, timing, and projects without network ports', () => {
     expect(completedTurnDurations(state.displayTurns.value).get('stored-final')).toBe(138)
     expect(completedTurnDurations(state.displayTurns.value).has('unknown-final')).toBe(false)
   })
+  test('manual compaction sends only the native RPC and blocks duplicate requests and busy turns', async () => {
+    let release: (() => void) | undefined
+    archiveTransport = (method, params, reply) => {
+      if (method !== 'thread/compact/start') return false
+      expect(params).toEqual({ threadId: 'a' })
+      release = () => reply({}); return true
+    }
+    const pending = state.compactContext(); await settle()
+    expect(state.busy.value).toBe(true)
+    expect(await state.compactContext()).toBe(false)
+    const turn: Turn = { id: 'manual-compact', status: 'inProgress', items: [] }
+    socket.emit('turn/started', { threadId: 'a', turn })
+    socket.emit('item/started', { threadId: 'a', turnId: turn.id, item: { id: 'compact', type: 'contextCompaction' } })
+    release!(); expect(await pending).toBe(true); await settle()
+    expect(state.compacting.value).toBe(true)
+    expect(await state.compactContext()).toBe(false)
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status: 'completed' } }); await settle()
+    expect(state.busy.value).toBe(false)
+    expect(requests.filter(row => row.method === 'thread/compact/start')).toHaveLength(1)
+    expect(requests.some(row => row.method === 'turn/start')).toBe(false)
+  })
+  test('manual compaction failure releases the send lock and preserves conversation', async () => {
+    archiveTransport = (method, _params, _reply, fail) => {
+      if (method !== 'thread/compact/start') return false
+      fail(-32601, 'Unsupported compaction'); return true
+    }
+    expect(await state.compactContext()).toBe(false)
+    expect(state.busy.value).toBe(false)
+    expect(state.active.value?.id).toBe('a')
+    expect(state.error.value).toContain('Unsupported compaction')
+  })
   test('tracks compaction lifecycle even when server items omit their status', async () => {
     const turn: Turn = { id: 'compact-turn', status: 'inProgress', items: [] }
     socket.emit('turn/started', { threadId: 'a', turn })

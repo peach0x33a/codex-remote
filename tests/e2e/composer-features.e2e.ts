@@ -11,7 +11,7 @@ async function configure(page: Page) {
   await expect(page.getByTestId('selected-device')).toContainText('已连接')
 }
 const editor = (page: Page) => page.getByRole('textbox', { name: '发送给 Codex 的消息', exact: true })
-test.beforeEach(async ({ page, request }) => { await request.get(MOCK_URL + '/test/reset'); await page.goto('/'); await configure(page) })
+test.beforeEach(async ({ page, request }, info) => { await request.get(MOCK_URL + '/test/reset'); if (info.title.startsWith('fast toggles')) await request.get(MOCK_URL + '/test/scenario?name=fast-priority'); await page.goto('/'); await configure(page) })
 
 test('starts a goal directly, refills it for editing, and previews status temporarily in the island', async ({ page, request }) => {
   await request.get(MOCK_URL + '/test/scenario?name=goal')
@@ -316,4 +316,29 @@ test('restores the limited-goal resume control and asks before increasing an exh
   const budgetResume = metrics.requests.filter((entry: { method: string }) => entry.method === 'thread/goal/set').at(-1).params
   expect(budgetResume).toMatchObject({ status: 'active', tokenBudget: 2000 })
   expect(budgetResume.objective).toBeUndefined()
+})
+
+test('fast toggles the priority tier through slash command and the reasoning lightning button', async ({ page, request }) => {
+  await editor(page).fill('/fast'); await page.keyboard.press('Enter')
+  await page.getByRole('button', { name: '思考强度', exact: true }).click()
+  const power = page.getByRole('dialog', { name: '思考强度', exact: true })
+  const lightning = power.getByRole('button', { name: '快速模式', exact: true })
+  await expect(lightning).toHaveAttribute('aria-pressed', 'false')
+  await lightning.click(); await expect(lightning).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Escape')
+  await editor(page).fill('priority enabled'); await page.keyboard.press('Enter')
+  await expect.poll(async () => (await (await request.get(MOCK_URL + '/test/metrics')).json()).requests.filter((row: any) => row.method === 'turn/start').at(-1)?.params.serviceTier).toBe('priority')
+})
+test('manual compact is available as a command and a context window button', async ({ page, request }) => {
+  await editor(page).fill('创建压缩会话'); await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '上下文用量', exact: true }).click()
+  await page.getByRole('button', { name: '压缩上下文', exact: true }).click()
+  await expect.poll(async () => (await (await request.get(MOCK_URL + '/test/metrics')).json()).requests.filter((row: any) => row.method === 'thread/compact/start').length).toBe(1)
+  await expect(page.getByRole('button', { name: '压缩上下文', exact: true })).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await editor(page).fill('/compact'); await page.keyboard.press('Enter')
+  await expect(editor(page)).toBeEmpty()
+  await expect.poll(async () => (await (await request.get(MOCK_URL + '/test/metrics')).json()).requests.filter((row: any) => row.method === 'thread/compact/start').length).toBe(2)
 })

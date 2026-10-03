@@ -8,8 +8,8 @@ const props = defineProps<{ modelValue: string; model?: Model; serviceTier?: str
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:serviceTier': [value: string | null] }>()
 const popover = ref<InstanceType<typeof ComposerPopover>>()
 const serviceTiers = computed<ModelServiceTier[]>(() => props.model?.serviceTiers?.length ? props.model.serviceTiers : (props.model?.additionalSpeedTiers || []).map(id => ({ id, name: id })))
-const fastTier = computed(() => serviceTiers.value.find(tier => tier.id === 'fast'))
-const fastEnabled = computed(() => (props.serviceTier === undefined ? props.model?.defaultServiceTier : props.serviceTier) === 'fast')
+const fastTier = computed(() => serviceTiers.value.find(tier => tier.id === 'priority') || serviceTiers.value.find(tier => tier.id === 'fast'))
+const fastEnabled = computed(() => (props.serviceTier === undefined ? props.model?.defaultServiceTier : props.serviceTier) === fastTier.value?.id && !!fastTier.value)
 function toggleFast() { if (!props.disabled && fastTier.value) emit('update:serviceTier', fastEnabled.value ? null : fastTier.value.id) }
 defineExpose({ show: () => popover.value?.show() })
 const names: Record<string, [string, string]> = { none: ['即时', '直接回答，无需额外推理'], minimal: ['极速', '快速处理轻量任务'], low: ['轻度', '快速响应，适合日常任务'], medium: ['标准', '平衡思考深度与响应速度'], high: ['深度', '花更多时间推理复杂问题'], xhigh: ['超高', '充分推理，适合高难度任务'], max: ['Max', '投入更多计算处理最复杂的任务'], ultra: ['Ultra', '最高强度，使用额度消耗更快'] }

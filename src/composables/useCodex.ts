@@ -1284,6 +1284,19 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   }
   const withdrawMessage = (itemId: string) => reviseMessage(itemId)
   const editMessage = (itemId: string, parts: PromptPart[]) => reviseMessage(itemId, parts)
+  async function compactContext(): Promise<boolean> {
+    if (!client || !connected.value || !active.value) { toast('请先打开并连接一个会话'); return false }
+    if (busy.value || loadingThread.value || revising.value || goalSaving.value) { toast('请等待当前任务结束后再压缩上下文'); return false }
+    const rpc = client, epoch = generation, threadId = active.value.id
+    sending.value = true
+    try {
+      await rpc.request('thread/compact/start', { threadId })
+      return epoch === generation && rpc === client
+    } catch (cause) {
+      if (epoch === generation) error.value = '压缩上下文失败：' + messageOf(cause)
+      return false
+    } finally { if (epoch === generation) sending.value = false }
+  }
   async function interrupt() {
     if (!client || !active.value || !activeTurn.value) return
     pauseQueue()
@@ -1588,5 +1601,5 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (getCurrentInstance()) onMounted(() => { void start() })
     else void start()
   }
-  return { profilesLoaded, refreshProfiles, persistSelection, defaultWorkingDirectory, start, dispose, connectWithToken, forkThread, withdrawPendingSteer, takePendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
+  return { compactContext, profilesLoaded, refreshProfiles, persistSelection, defaultWorkingDirectory, start, dispose, connectWithToken, forkThread, withdrawPendingSteer, takePendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
 }
