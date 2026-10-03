@@ -3,7 +3,7 @@ import { pastedTextLabel } from '../lib/prompt'
 defineProps<{ text: string }>()
 </script>
 <template>
-  <details class="pasted-text"><summary class="inline-pasted-text">[{{ pastedTextLabel(text) }}]</summary><pre>{{ text }}</pre></details>
+  <details class="pasted-text"><summary class="inline-pasted-text">{{ pastedTextLabel(text) }}</summary><pre>{{ text }}</pre></details>
 </template>
 <style scoped>
 .pasted-text { display: inline-block; max-width: 100%; vertical-align: middle; }

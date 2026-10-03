@@ -194,7 +194,7 @@ function makeTextChip(part: TextPart) {
   const chip = document.createElement('span')
   chip.className = 'inline-pasted-text editor-text-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = part.pasteId!; chip.tabIndex = 0
   chip.setAttribute('role', 'button'); chip.setAttribute('aria-label', '展开' + pastedTextLabel(part.text)); chip.title = '展开粘贴文本，继续编辑'
-  const label = document.createElement('span'); label.textContent = '[' + pastedTextLabel(part.text) + ']'
+  const label = document.createElement('span'); label.textContent = pastedTextLabel(part.text)
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'image-chip-remove'; remove.dataset.imageRemove = part.pasteId!; remove.tabIndex = -1; remove.setAttribute('aria-label', '移除粘贴文本')
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('aria-hidden', 'true')
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M6 6l12 12M18 6L6 18'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-linecap', 'round'); svg.append(path); remove.append(svg)
