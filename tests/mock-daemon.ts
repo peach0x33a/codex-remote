@@ -39,8 +39,15 @@ const fileFixtureBytes = (path: string) => {
 function fileFixtureReport(command: string[]) {
   const [operation, cwd, requested, fingerprint, _size, offset] = command.slice(command.indexOf('-c') + 2)
   const parts: string[] = []
-  for (const part of (requested!.startsWith('/') ? requested! : cwd + '/' + requested).split('/')) { if (part === '..') parts.pop(); else if (part && part !== '.') parts.push(part) }
+  const resolved = requested === '~' ? '/mock-home' : requested!.startsWith('~/') ? '/mock-home/' + requested!.slice(2) : requested!.startsWith('/') ? requested! : cwd + '/' + requested
+  for (const part of resolved.split('/')) { if (part === '..') parts.pop(); else if (part && part !== '.') parts.push(part) }
   const path = '/' + parts.join('/'), name = parts.at(-1) || '/'
+  const directories: Record<string, { name: string; kind: 'directory' | 'file' }[]> = {
+    '/test/project': [{ name: 'src', kind: 'directory' }],
+    '/test/project/src': [{ name: 'main.ts', kind: 'file' }],
+    '/mock-home': [{ name: 'notes', kind: 'directory' }], '/mock-home/notes': [],
+  }
+  if (directories[path] && operation === 'inspect') return { ok: true, file: { path, name, kind: 'directory', size: 0, fingerprint: '1:1:0:1:1', truncated: false, entries: directories[path]!.map(entry => ({ ...entry, path: path + '/' + entry.name, size: entry.kind === 'file' ? fileFixtureBytes(path + '/' + entry.name)!.length : 0 })) } }
   if (path === '/test/files' && operation === 'inspect') return { ok: true, file: { path, name, kind: 'directory', size: 0, fingerprint: '1:1:0:1:1', truncated: false, entries: ['README.md', 'guide.md', 'build.AppImage', 'pixel.gif'].map(name => ({ path: path + '/' + name, name, kind: 'file', size: fileFixtureBytes(path + '/' + name)!.length })) } }
   const bytes = fileFixtureBytes(path)
   if (!bytes) return { ok: false, code: 'read-failed', message: '文件不存在。' }

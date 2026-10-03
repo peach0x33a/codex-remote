@@ -49,7 +49,7 @@ Animated workspace canvas geometry is anchored to the browser viewport. Sidebar 
 
 Update availability appears in a compact clickable toast below the top-right header, without occupying layout space. It keeps the existing active-task, revision and local-queue update guards. Ordinary action notices keep their bottom toast position.
 
-Connection errors appear as an edge-to-edge strip at the top of the workspace, directly adjoining the header. Use no outer margin or rounded corners on desktop or mobile; retain inner padding, readable wrapping and the dismiss button.
+Connection errors appear as an edge-to-edge strip directly below the workspace navigation header. Use no outer margin or rounded corners on desktop or mobile; retain inner padding, readable wrapping and the dismiss button.
 
 Shared queue ownership: the daemon alone dispatches acknowledged queued inputs. Queue notifications invalidate and refetch the complete list, reconnect/open restore it, and active-thread polling covers missed notifications. Edit/delete use server queue IDs. Model/effort/permission changes update thread settings for subsequent turns; native queue entries do not carry per-message settings snapshots. Native queue controls do not imply an unsupported persistent pause; idle queues expose an explicit start-next action. Uncertain additions are never automatically retried.
 
@@ -101,3 +101,7 @@ Current interaction refinements:
 - Device rows report independent connection and activity states. Switching retains background transports and restores device-specific input drafts.
 - ToggleSwitch uses explicit track/thumb geometry and a white thumb in both themes, with keyboard focus, reduced motion and forced colors.
 - Credentials persist in private server records bound to exact endpoints. Browser metadata retains only opaque references; save/replace/clear states are explicit.
+
+File browser: provide a persistent folder button in the top navigation, disabled until a device connects. Open the active conversation directory, or the selected working directory on the home screen. Absolute and home-relative browsing must not depend on the configured directory existing; missing paths retain parent navigation.
+
+Entry-point audits count named slash commands as first-level menu entries, on equal footing with buttons and menus. Do not label Goal, Git changes, skills or mentions as missing entry points merely because their primary entry is /goal, /diff, /skills or /mention.

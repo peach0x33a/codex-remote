@@ -17,9 +17,9 @@ let opener: HTMLElement | null = null
 const objectUrls = new Set<string>()
 const title = computed(() => file.value?.name || location.value?.path.split(/[\\/]/).filter(Boolean).at(-1) || '文件')
 const parent = computed(() => {
-  const path = file.value?.path || ''
-  if (!path.startsWith('/') || path === '/') return ''
-  return path.replace(/\/+$/, '').slice(0, path.replace(/\/+$/, '').lastIndexOf('/')) || '/'
+  const path = (file.value?.path || location.value?.path || '').replace(/\/+$/, '')
+  if (!path || path === '~' || !path.startsWith('/') && !path.startsWith('~/')) return ''
+  return path.slice(0, path.lastIndexOf('/')) || '/'
 })
 const preview = computed(() => file.value?.preview)
 const downloadOnly = computed(() => file.value?.kind === 'file' && (!preview.value || preview.value.kind === 'binary'))
@@ -45,7 +45,10 @@ async function load(target: FileLinkTarget, cwd = props.cwd) {
   const mine = generation, abort = controller = new AbortController()
   loading.value = true
   try {
-    const files = createWorkspaceFiles(props.run, { cwd })
+    // Absolute/home paths must remain browsable even if the configured cwd
+    // does not exist yet. Relative links still resolve against their source.
+    const absolute = target.path.startsWith('/') || target.path === '~' || target.path.startsWith('~/')
+    const files = createWorkspaceFiles(props.run, { cwd: absolute ? '' : cwd })
     const next = await files.inspect(target.path, { signal: abort.signal })
     if (mine !== generation) return
     file.value = next
@@ -75,7 +78,7 @@ async function download() {
   const current = file.value
   if (!current || current.kind !== 'file' || !props.connected || downloading.value) return
   const mine = generation, abort = downloadController = new AbortController()
-  const files = createWorkspaceFiles(props.run, { cwd: props.cwd })
+  const files = createWorkspaceFiles(props.run, { cwd: '' })
   let sink: Writable | undefined
   downloading.value = true; downloadError.value = ''; downloaded.value = 0
   try {

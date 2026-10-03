@@ -94,7 +94,8 @@
   /* Workspace */
   .workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; isolation: isolate; background: var(--canvas); }
   .workspace-header { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 60px; padding: 10px 20px; }
-  .header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .header-right { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .header-right > .conversation-actions-trigger { flex-shrink: 0; }
   .header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .device-trigger { max-width: min(240px, 44vw); padding: 0 10px; height: 34px; border-radius: var(--radius-round); gap: 7px; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--muted); }
   .device-trigger-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -532,7 +533,8 @@
   }
   @media (max-width: 370px) { .welcome h1 { font-size: calc(30px * var(--ui-font-scale, 1)); letter-spacing: normal; }.brand-remote { display: none; }.permission-trigger > span { display: none; }.model-trigger { max-width: 160px; } }
   @media (max-width: 1050px) and (min-width: 761px) { .sidebar-brand .brand-remote { display: none; } }
-  @media (max-width: 420px) { .workspace-header .conversation-title { display: none; }.header-left { flex: 1; }.model-trigger { max-width: 115px; } }
+  @media (max-width: 420px) { .workspace-header .conversation-title { display: none; }.header-left { flex: 0 0 auto; }.header-right { flex: 1; justify-content: flex-end; }.model-trigger { max-width: 115px; } }
+  @media (max-width: 360px) { .collapsed-controls .icon-button:not(:first-child) { display: none; } }
   @media (max-height: 700px) and (min-width: 761px) { .chat-body.is-welcome { padding-bottom: 0; }.welcome { padding-bottom: 24px; }.suggestions { padding-top: 24px; } }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 }
