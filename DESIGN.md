@@ -49,6 +49,8 @@ Animated workspace canvas geometry is anchored to the browser viewport. Sidebar 
 
 Update availability appears in a compact clickable toast below the top-right header, without occupying layout space. It keeps the existing active-task, revision and local-queue update guards. Ordinary action notices keep their bottom toast position.
 
+Connection errors appear as an edge-to-edge strip at the top of the workspace, directly adjoining the header. Use no outer margin or rounded corners on desktop or mobile; retain inner padding, readable wrapping and the dismiss button.
+
 Shared queue ownership: the daemon alone dispatches acknowledged queued inputs. Queue notifications invalidate and refetch the complete list, reconnect/open restore it, and active-thread polling covers missed notifications. Edit/delete use server queue IDs. Model/effort/permission changes update thread settings for subsequent turns; native queue entries do not carry per-message settings snapshots. Native queue controls do not imply an unsupported persistent pause; idle queues expose an explicit start-next action. Uncertain additions are never automatically retried.
 
 

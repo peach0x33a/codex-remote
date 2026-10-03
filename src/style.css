@@ -443,7 +443,7 @@
   .top-notice > svg { color: var(--accent); }
   .top-notice.offline { background: var(--danger-soft); color: var(--danger-ink); border-bottom: 1px solid color-mix(in srgb, var(--danger) 16%, transparent); }
   .top-notice.offline > svg { color: var(--danger); }
-  .error-banner { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; margin: 0 20px 10px; border-radius: var(--radius-md); background: var(--danger-soft); color: var(--danger-ink); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
+  .error-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 20px; margin: 0; border-radius: 0; background: var(--danger-soft); color: var(--danger-ink); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
   .error-banner > span { flex: 1; overflow-wrap: anywhere; }
   .error-banner .icon-button { color: var(--danger-ink); }
 
@@ -526,7 +526,7 @@
     
     .suggestions { gap: 8px; padding-top: 28px; }.suggestions > button { height: 40px; padding: 0 14px; font-size: calc(14px * var(--ui-font-scale, 1)); gap: 6px; }
     .message-list { padding: 8px 16px 24px; }.message-agent { gap: 10px; }.agent-avatar { width: 28px; height: 28px; }.activity, .working-status { margin-left: 38px; }.approval-card { margin-left: 0; padding: 16px; }.markdown { font-size: calc(15px * var(--ui-font-scale, 1)); line-height: calc(26px * var(--ui-font-scale, 1)); }.user-bubble { max-width: 88%; font-size: calc(15px * var(--ui-font-scale, 1)); line-height: calc(26px * var(--ui-font-scale, 1)); padding: 8px 14px; }
-    .error-banner { margin: 0 12px 8px; font-size: calc(12px * var(--ui-font-scale, 1)); }.top-notice { padding: 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); justify-content: flex-start; }
+    .error-banner { padding: 8px 8px 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); }.top-notice { padding: 8px 14px; font-size: calc(12px * var(--ui-font-scale, 1)); justify-content: flex-start; }
     .dialog { max-height: calc(var(--app-viewport-height, 100dvh) - 28px); border-radius: var(--radius-lg); width: calc(100% - 24px); }:root { --dialog-padding: var(--space-4); }.dialog-header h2 { font-size: calc(19px * var(--ui-font-scale, 1)); }.dialog-header p { font-size: calc(13px * var(--ui-font-scale, 1)); }.field > input, .password-field input { font-size: calc(16px * var(--ui-font-scale, 1)); }.dialog-actions .button { font-size: calc(13px * var(--ui-font-scale, 1)); padding: 0 14px; }
     .icon-button { min-width: 38px; min-height: 38px; }.icon-button.small { min-width: 32px; min-height: 32px; }.text-button { min-height: 32px; }.saved-tabs button { min-height: 38px; }
   }
