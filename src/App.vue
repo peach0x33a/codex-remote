@@ -253,7 +253,7 @@ const composerPlaceholder = computed(() => getComposerPlaceholder(model.value ||
 const menuTabs = computed(() => completionTabs(composerTrigger.value?.kind || 'command'))
 const scopeKey = computed(() => [selectedId.value, active.value?.id || '', active.value?.cwd || workingDirectory.value, codex.skillsRevision.value].join('\0'))
 const sourceNames: Record<string, string> = { user: '个人', repo: '项目', system: '系统', admin: '组织' }
-const commandNames: Record<string, string> = { goal: '目标', new: '新对话', model: '模型', effort: '思考强度', permissions: '权限', skills: '技能', rename: '重命名', archive: '归档对话', resume: '打开对话', agents: '任务中心', diff: '文件变更', mention: '提及', status: '上下文用量', cd: '工作目录', pwd: '当前目录', copy: '复制回复', project: '项目', tasks: '任务中心', settings: '设置', help: '帮助' }
+const commandNames: Record<string, string> = { 'service-tier:priority': '快速模式', 'service-tier:fast': '快速模式', compact: '压缩上下文', goal: '目标', new: '新对话', model: '模型', effort: '思考强度', permissions: '权限', skills: '技能', rename: '重命名', archive: '归档对话', resume: '打开对话', agents: '任务中心', diff: '文件变更', mention: '提及', status: '上下文用量', cd: '工作目录', pwd: '当前目录', copy: '复制回复', project: '项目', tasks: '任务中心', settings: '设置', help: '帮助' }
 const skillRows = computed<ComposerSuggestion[]>(() => catalogSkills.value.filter(skill => skill.enabled).map(skill => ({ id: 'skill:' + skill.path, label: skill.displayName || skill.name.replace(/[-_]+/g, ' ').replace(/\b[a-z]/g, value => value.toUpperCase()), description: skill.description, category: 'skills', group: '技能', source: sourceNames[skill.scope] || skill.scope, skill })))
 const mentionRows = computed<ComposerSuggestion[]>(() => {
   const known = new Map([...projectThreads.value, ...threads.value, ...mentionSearchThreads.value].map(thread => [thread.id, thread]))
@@ -266,7 +266,7 @@ const composerSuggestions = computed<ComposerSuggestion[]>(() => {
   const trigger = composerTrigger.value; if (!trigger) return []
   const query = trigger.query.trim().toLocaleLowerCase()
   const matches = (row: ComposerSuggestion) => !query || [row.label, row.description, row.skill?.name].some(value => value?.toLocaleLowerCase().includes(query)) || !!row.mention && mentionSearchThreads.value.some(thread => 'thread://' + thread.id === row.mention?.path)
-  const commands: ComposerSuggestion[] = composerCommands(trigger.query, connected.value, composerServiceTiers.value).map(command => ({ ...command, id: 'command:' + command.id, label: commandNames[command.id] || command.label, accessibleLabel: command.label + ' ' + (commandNames[command.id] || '') + ' ' + command.description, category: 'commands', group: '命令' }))
+  const commands: ComposerSuggestion[] = composerCommands(trigger.query, connected.value, composerServiceTiers.value).map(command => ({ ...command, id: 'command:' + command.id, description: command.label === '/fast' ? '切换 Priority，更快响应、更多额度消耗' : command.description, label: commandNames[command.id] || command.label, accessibleLabel: command.label + ' ' + (commandNames[command.id] || '') + ' ' + command.description, category: 'commands', group: '命令' }))
   const rows = trigger.kind === 'command' ? [...commands, ...(connected.value ? skillRows.value.filter(matches) : [])] : trigger.kind === 'skill' ? skillRows.value.filter(matches) : [...fileSuggestions.value, ...mentionRows.value.filter(matches), ...skillRows.value.filter(matches)]
   const selected = completionTab.value === 'all' ? rows : rows.filter(row => row.category === completionTab.value)
   const order = ['commands', 'files', 'plugins', 'skills', 'agents', 'threads']
