@@ -3,10 +3,18 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published frontend: f276f68
-Published backend: 1f36f43
+Published frontend: 40b7e98
+Published backend: 40b7e98
 
 ## Latest delivery
+
+Portable appearance export/import includes theme, content width, wrapping, font names/sizes, embedded uploaded background or remote HTTP/HTTPS URL, and image effects. Invalid imports or failed image loads preserve the existing appearance. Network backgrounds load directly in the browser; export excludes connection settings and credentials.
+
+File browser directory actions set the next conversation's cwd, create folders, or create empty files on the remote device without overwriting existing entries. Docked opening/closing animates the conversation width; mobile overlay and reduced-motion behavior are preserved. Complete HTML/HTM files offer static HTML/CSS/SVG preview and source tabs; scripts and relative asset serving are unsupported. Native fileChange activities now use file cards and numbered colored diffs, with truthful raw fallbacks.
+
+Subagent conversations carry visible sidebar/header/details badges, native names/roles and a parent-conversation link; ordinary forks are not mislabeled. The Session ID field is content-sized and retains its explicit copy action. Inline thinking text and icons align to the first line. Details: task-history/2026-10-04-appearance-transfer-file-browser.md.
+
+## Recent preserved delivery
 
 Two deliberate older-direction gestures at the transcript top load one earlier page, with wheel inertia grouping, touch support, duplicate/loading guards and fresh retry intent. The manual history button is centered. A visible message anchor preserves reading position; late responses cannot scroll a different device/thread.
 
@@ -18,11 +26,13 @@ Terminal unobserved steers can be removed as hints or returned to the draft. Lon
 
 ## Verification
 
-674 full unit/integration cases passed (5,800 assertions, 51 files). 28 focused desktop/mobile browser cases passed; four stream/tool/reasoning cases passed against the exact final build after the final guard fix. Vue/server typechecks, isolated Vite/PWA build, diff check and live asset hashes passed. Desktop/mobile control and tool-list/image-preview captures were inspected. Mobile gestures are browser emulation; no physical handset check. Earlier full-browser results are historical, not a full-suite run for this release.
+682 full unit/integration cases passed (5,887 assertions, 51 files). 34 focused desktop/mobile browser cases passed against the final staged build. Vue/server typechecks, Vite/PWA build, diff check and live asset hashes passed. Captures for portable settings, directory actions, HTML, subagent identity, colored diffs and compact Session ID were inspected. Mobile coverage is browser emulation; no physical handset check. Earlier full-browser results are historical, not a full-suite run for this release.
 
 ## Running service
 
-Frontend f276f68 published at 2026-10-04T02:06:52.808796+08:00. Backend 1f36f43 remains running as Bun PID 527090 on 127.0.0.1:3000; no restart for this release. Health, exact HTML/service worker/entry hashes, unchanged auth and saved credentials verified. Existing requiresKey=false state preserved. .local/deployment.json records the actual release and rollback frontend.
+Frontend and backend 40b7e98 published at 2026-10-04T03:16:20.272246+08:00. Backend restarted as Bun PID 2072024 on 127.0.0.1:3000 for the network-image and sandboxed-frame CSP. Isolated startup preflight and live health, exact HTML/service worker/entry hashes, CSP, history API and unchanged saved profiles/credentials passed. Existing requiresKey=false state preserved. .local/deployment.json records the release and both rollback locations.
+
+Appearance remains browser-local but can be transferred by JSON. Font names require those fonts on the destination device; font binaries are not exported. HTTPS pages may block HTTP image URLs under the browser's mixed-content rules. HTML preview is static and isolated, without scripts or automatic relative assets.
 
 Input history shares .local/credentials.json (private, atomic; 100 entries per device, 16 MiB globally). Do not put credentials under dist. Codex CLI 0.159.0 has no individual accepted-steer cancellation method: ended-steer removal is a hint/draft operation, not a server history edit. External TUI input history is not bulk-imported.
 
