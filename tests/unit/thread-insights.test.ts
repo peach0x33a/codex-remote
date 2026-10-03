@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Item, Thread } from '../../shared/protocol'
-import { buildThreadInsights, latestTurnFiles } from '../../src/lib/thread-insights'
+import { buildThreadInsights, latestTurnFiles, subAgentIdentity } from '../../src/lib/thread-insights'
+import { fileChangeViews } from '../../src/lib/file-change-view'
 
 function thread(...turns: Record<string, unknown>[][]): Thread {
   return { id: 'parent', cwd: '/project', createdAt: 0, updatedAt: 0, preview: '', turns: turns.map((items, index) => ({ id: 'turn-' + index, status: 'completed', items })) } as Thread
@@ -9,6 +10,35 @@ const collab = (patch: Record<string, unknown> = {}) => ({ id: 'collab', type: '
 const change = (path: string, diff?: string, kind: unknown = { type: 'update', move_path: null }) => ({ path, diff, kind })
 const file = (changes: unknown[], patch: Record<string, unknown> = {}) => ({ id: 'patch', type: 'fileChange', status: 'completed', changes, ...patch })
 const replacement = '--- a/file\n+++ b/file\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n'
+
+test('identifies native subagents and legacy source metadata without labeling ordinary forks', () => {
+  const base = thread()
+  expect(subAgentIdentity(base)).toBeNull()
+  expect(subAgentIdentity({ ...base, source: 'cli', forkedFromId: 'other' } as Thread)).toBeNull()
+  expect(subAgentIdentity({ ...base, parentThreadId: 'parent', agentNickname: 'Zeno', agentRole: 'worker' })).toEqual({ parentThreadId: 'parent', name: 'Zeno', role: 'worker' })
+  for (const key of ['subAgent', 'subagent']) expect(subAgentIdentity({ ...base, source: { [key]: { thread_spawn: { parent_thread_id: 'parent', agent_path: '/root/explorer', agent_role: 'reviewer' } } } })).toEqual({ parentThreadId: 'parent', name: 'explorer', role: 'reviewer' })
+  for (const source of [{ custom: 'subagent' }, { subAgent: null }, { subAgent: {} }, 'subAgent']) expect(subAgentIdentity({ ...base, source })).toBeNull()
+  expect(subAgentIdentity({ ...base, source: { subAgent: 'review' } })).not.toBeNull()
+})
+
+test('file change views distinguish real unified updates from native add/delete contents and fallback output', () => {
+  const views = fileChangeViews(file([
+    change('/project/update.ts', replacement),
+    change('/project/new.patch', replacement, { type: 'add' }),
+    change('/project/old.txt', 'old\n+literal\n', { type: 'delete' }),
+    change('/project/move.ts', replacement, { type: 'update', move_path: '/project/moved.ts' }),
+    change('/project/unknown.ts', 'opaque raw text'),
+    change('/project/partial.ts', '@@ -1,2 +1 @@\n-old\n+new\n'),
+  ]) as Item)
+  expect(views[0]).toMatchObject({ name: 'update.ts', label: '修改', structured: true, counts: { added: 2, removed: 1 } })
+  expect(views[1]).toMatchObject({ label: '新增', counts: { added: 6, removed: 0 } })
+  expect(views[1]!.diff).toContain('+--- a/file')
+  expect(views[2]).toMatchObject({ label: '删除', counts: { added: 0, removed: 2 } })
+  expect(views[2]!.diff).toContain('-+literal')
+  expect(views[3]).toMatchObject({ label: '移动', movePath: '/project/moved.ts' })
+  for (const view of views.slice(4)) { expect(view.structured).toBe(false); expect(view.counts).toBeUndefined(); expect(view.raw).toBe(view.diff) }
+  expect(fileChangeViews({ id: 'bad', type: 'fileChange', changes: [null, { path: '' }] } as Item)).toEqual([])
+})
 
 describe('latest turn summary', () => {
   test('a new empty running turn hides the previous summary but retains inspector history', () => {

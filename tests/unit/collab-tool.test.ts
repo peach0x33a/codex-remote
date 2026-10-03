@@ -29,6 +29,7 @@ beforeAll(async () => {
     .replace(/import \{ renderMarkdown \} from ["']\.\.\/lib\/markdown["'];?/, 'const renderMarkdown = (text) => text;')
     .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
     .replace(/import PastedText from ["']\.\/PastedText\.vue["'];?/, 'const PastedText = { render: () => null };')
+    .replace(/import FileChangeActivity from ["']\.\/FileChangeActivity\.vue["'];?/, 'const FileChangeActivity = { render: () => null };')
     .replace(/from (["'])([^"']+)\1/g, (_match, _quote, specifier: string) =>
       'from ' + JSON.stringify(specifier.startsWith('.') ? new URL(specifier + '.ts', file).href : import.meta.resolve(specifier)))
   const directory = await mkdtemp(join(tmpdir(), 'codex-remote-collab-tool-'))

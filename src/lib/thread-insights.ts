@@ -1,6 +1,19 @@
 import type { Thread } from '../../shared/protocol'
 
 export type ThreadAgent = { id: string; name: string; role?: string; status?: string; message?: string }
+export type SubAgentIdentity = { parentThreadId?: string; name?: string; role?: string }
+export function subAgentIdentity(thread: Thread | null | undefined): SubAgentIdentity | null {
+  if (!thread) return null
+  const source = record(thread.source) ? thread.source : undefined
+  const subagent = source?.subAgent ?? source?.subagent
+  const spawn = record(subagent) && record(subagent.thread_spawn) ? subagent.thread_spawn : undefined
+  const parentThreadId = text(thread.parentThreadId) ?? text(spawn?.parent_thread_id)
+  const name = text(thread.agentNickname) ?? text(spawn?.agent_nickname) ?? text(spawn?.agent_path)?.split('/').filter(Boolean).at(-1)
+  const role = text(thread.agentRole) ?? text(spawn?.agent_role)
+  const subagentSource = typeof subagent === 'string' && ['review', 'compact', 'memory_consolidation'].includes(subagent) || !!spawn || record(subagent) && !!text(subagent.other)
+  // Native parentThreadId describes subagents; ordinary forks use forkedFromId.
+  return parentThreadId || name || role || subagentSource ? { parentThreadId, name, role } : null
+}
 export type ChangedFile = { path: string; added?: number; removed?: number; diff: string; kind?: string }
 
 /** The automatic footer belongs to the latest turn, not the conversation's history. */
@@ -17,7 +30,7 @@ function text(value: unknown): string | undefined {
 }
 
 /** Count only complete, recognizable unified hunks, never raw file contents. */
-function diffCounts(diff: string): { added: number; removed: number } | undefined {
+export function diffCounts(diff: string): { added: number; removed: number } | undefined {
   let added = 0, removed = 0, oldRemaining = 0, newRemaining = 0, sawHunk = false
   for (const line of diff.split(/\r?\n/)) {
     const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(line)

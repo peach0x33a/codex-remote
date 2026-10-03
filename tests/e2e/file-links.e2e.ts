@@ -93,6 +93,79 @@ test('opens Markdown on the right and resolves its relative file links on the re
   }).toBe(true)
 })
 
+test('animates the released conversation width when the file panel closes, respecting reduced motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const trigger = page.getByRole('button', { name: '文件浏览器', exact: true }), panel = page.getByRole('complementary', { name: '文件预览', exact: true })
+  const fullWidth = (await page.locator('.chat-body').boundingBox())!.width
+  await trigger.click(); await expect(panel.getByRole('button', { name: 'src 文件夹', exact: true })).toBeVisible()
+  await expect.poll(async () => (await panel.boundingBox())!.width).toBeGreaterThan(200)
+  await expect.poll(async () => panel.evaluate(element => element.getAnimations().length)).toBe(0)
+  const openedWidth = (await page.locator('.chat-body').boundingBox())!.width
+  const samples = await page.evaluate(async () => {
+    const values: number[] = [], chat = document.querySelector('.chat-body')!
+    document.querySelector<HTMLButtonElement>('[aria-label="关闭文件预览"]')!.click()
+    const start = performance.now()
+    while (performance.now() - start < 340) { await new Promise(requestAnimationFrame); values.push(chat.getBoundingClientRect().width) }
+    return values
+  })
+  await expect(panel).toHaveCount(0)
+  if (page.viewportSize()!.width >= 1100) {
+    expect(fullWidth - openedWidth).toBeGreaterThan(200)
+    expect(samples.filter(width => width > openedWidth + 8 && width < fullWidth - 8).length).toBeGreaterThan(2)
+  } else expect(samples.every(width => Math.abs(width - fullWidth) < 2)).toBe(true)
+  expect(Math.abs(samples.at(-1)! - fullWidth)).toBeLessThan(3)
+  await page.emulateMedia({ reducedMotion: 'reduce' }); await trigger.click()
+  await expect(panel).toBeVisible(); await panel.getByRole('button', { name: '关闭文件预览', exact: true }).click()
+  await expect(panel).toHaveCount(0)
+})
+
+test('creates folders and files, rejects duplicates and sets a browsed directory for the next conversation', async ({ page, request }, info) => {
+  const panel = page.getByRole('complementary', { name: '文件预览', exact: true })
+  await page.getByRole('button', { name: '文件浏览器', exact: true }).click()
+  await panel.getByRole('button', { name: '新建文件夹', exact: true }).click()
+  const folder = page.getByRole('dialog', { name: '新建文件夹', exact: true })
+  await folder.getByLabel('文件夹名称', { exact: true }).fill('新项目'); await folder.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(folder).toBeHidden(); await expect(panel.getByRole('button', { name: '新项目 文件夹', exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: '新建文件夹', exact: true }).click()
+  await folder.getByLabel('文件夹名称', { exact: true }).fill('新项目'); await folder.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(folder.getByRole('alert')).toContainText('同名'); await folder.getByRole('button', { name: '取消', exact: true }).click()
+  await panel.getByRole('button', { name: '新项目 文件夹', exact: true }).click()
+  await panel.getByRole('button', { name: '新建文件', exact: true }).click()
+  const file = page.getByRole('dialog', { name: '新建文件', exact: true })
+  await file.getByLabel('文件名称', { exact: true }).fill('README.md'); await file.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(file).toBeHidden(); await expect(panel.getByRole('button', { name: 'README.md 0 B', exact: true })).toBeVisible()
+  await panel.screenshot({ path: info.outputPath('directory-actions.png') })
+  const before = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  await panel.getByRole('button', { name: '设为工作目录', exact: true }).click(); await expect(panel).toHaveCount(0)
+  const input = page.getByRole('textbox', { name: '发送给 Codex 的消息', exact: true })
+  await input.fill('在新目录工作'); await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect(page.locator('.message-agent')).toContainText('流式回复')
+  const after = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  expect(after.requests.findLast((call: any) => call.method === 'thread/start').params.cwd).toBe('/test/project/新项目')
+  expect(before.requests.filter((call: any) => call.method === 'thread/start')).toHaveLength(0)
+  expect(before.requests.filter((call: any) => call.method === 'command/exec' && call.params.command.includes('create-directory'))).toHaveLength(2)
+})
+
+test('renders HTML and inline SVG in an isolated preview and switches back to line-referenced source', async ({ page }, info) => {
+  const requests: string[] = []
+  page.on('request', request => { if (request.url().includes('blocked-resource.png')) requests.push(request.url()) })
+  await page.getByRole('button', { name: '文件浏览器', exact: true }).click()
+  const panel = page.getByRole('complementary', { name: '文件预览', exact: true })
+  await panel.getByRole('button', { name: /^index.html / }).click()
+  const frame = panel.frameLocator('iframe')
+  await expect(frame.getByRole('heading', { name: 'HTML 页面预览', exact: true })).toBeVisible()
+  await expect(frame.locator('body')).toHaveCSS('background-color', 'rgb(12, 34, 56)')
+  await expect(frame.locator('svg circle')).toHaveCount(1)
+  await expect(panel.locator('iframe')).toHaveAttribute('sandbox', '')
+  expect(await page.evaluate(() => (window as any).__htmlPreviewScript)).toBeUndefined(); expect(requests).toEqual([])
+  await panel.screenshot({ path: info.outputPath('html-file-preview.png') })
+  await panel.getByRole('button', { name: '源代码', exact: true }).click()
+  await expect(panel.locator('.workspace-file-source')).toContainText('<!doctype html>')
+  await expect(panel.locator('iframe')).toHaveCount(0)
+  await panel.getByRole('button', { name: '页面预览', exact: true }).click()
+  await expect(frame.getByRole('heading', { name: 'HTML 页面预览', exact: true })).toBeVisible()
+})
+
 test('asks before downloading an unsupported file and fetches every binary chunk', async ({ page, request }) => {
   await page.getByRole('button', { name: 'AppImage', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '下载文件？', exact: true })

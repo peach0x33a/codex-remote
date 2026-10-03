@@ -104,6 +104,12 @@ Current interaction refinements:
 
 File browser: provide a persistent folder button in the top navigation, disabled until a device connects. Open the active conversation directory, or the selected working directory on the home screen. Absolute and home-relative browsing must not depend on the configured directory existing; missing paths retain parent navigation.
 
+Directory actions share a compact wrapping toolbar: set the next conversation's working directory, create a folder, or create an empty file. Capture the parent path when opening creation, show real remote errors, and never overwrite or retry an uncertain mutation automatically. Docked file-panel width and conversation width animate together during entry and exit; retain the departing content until the transition ends. Mobile overlays use translation instead of resizing the conversation, and reduced motion removes spatial transitions.
+
+HTML files offer static page preview and source tabs. Preview lives in a sandbox without scripts or forms, with no referrer, an explicit resource policy, and no relative images mistakenly requested from the web app. Line-targeted navigation selects source. Full-file and read-size constraints stay visible through existing download and source fallbacks.
+
+Portable appearance: export/import belong in the appearance pane and use the existing button, input and section tokens. A versioned JSON carries typography names/sizes, theme, content width, wrapping, background choice and effects, plus an embedded uploaded image or a network image URL. Parse and validate before changing the current appearance; exclude connection preferences and credentials. Remote backgrounds load only after a user chooses a URL and have visible failure states. Preserve an existing background on failure.
+
 Entry-point audits count named slash commands as first-level menu entries, on equal footing with buttons and menus. Do not label Goal, Git changes, skills or mentions as missing entry points merely because their primary entry is /goal, /diff, /skills or /mention.
 
 Conversation state: only the runtime current-turn ID drives the working clock, Stop and steering; historical inProgress records must not reactivate finished work. Resuming derives that ID from the newest turn metadata, preserving genuine long-running turns and explicit completion/queue safeguards.
@@ -119,5 +125,9 @@ Input recall: read the latest 100 accepted submissions per device from the authe
 Conversation history: the manual earlier-page control is centered with a 44px minimum target. At the top boundary, two deliberate older-direction gestures within 1.6 seconds load one page; wheel events in one burst do not count separately. Reset on reverse scrolling, leaving the boundary, loading/unavailability and view changes. Preserve a visible message anchor after prepend; never adjust a different device/thread after a late response.
 
 Read activities: successful pure-read groups say 读取了 X 个文件, deduplicate native paths, and expand directly to a vertical list. Keep original execution data behind 执行详情; avoid repeating path strings in disclosure headings. Image-view records offer a user-initiated path-based preview from the current conversation device; use the existing bounded workspace file reader and its visible retry/error states. Completed reasoning with one logical line is shown inline with the sparkle icon, native duration and sanitized Markdown; multi-line reasoning stays collapsible.
+
+Inline reasoning aligns the icon center with the first text line using the actual line height; wrapping retains that alignment. Session ID is a selectable compact text field sized by its content, with the existing explicit copy action and no forced two-row height.
+
+Subagent conversations carry an explicit robot-and-text badge in navigation, the sidebar and details. Native parent/name/role metadata drives identity and a parent-conversation action; forkedFromId alone is insufficient. File-change activities use the shared numbered DiffCode rendering, file type icons, native change labels, and green/red counts. Add/delete payloads are full file contents, while update/move payloads are unified patches; oversized or unrecognized records retain their original text and omit invented counts.
 
 Application updates: restore a full-width banner below navigation, next to the error region, using the same flat geometry and notice colors. Keep explicit manual update, busy protection, progress and retry. Do not put the entry in the header tooltip.

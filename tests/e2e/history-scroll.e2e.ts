@@ -108,6 +108,11 @@ test('tool previews show a flat file list and open viewed images from the conver
   await expect(short).toContainText('Inspecting register notify')
   await expect(short.locator('svg')).toHaveCount(1)
   await expect(short.locator('details, summary')).toHaveCount(0)
+  const alignment = await short.evaluate(element => {
+    const icon = element.querySelector('svg')!.getBoundingClientRect(), paragraph = element.querySelector('.markdown p')!, text = paragraph.getBoundingClientRect()
+    return Math.abs(icon.top + icon.height / 2 - (text.top + parseFloat(getComputedStyle(paragraph).lineHeight) / 2))
+  })
+  expect(alignment).toBeLessThan(1)
   const long = page.locator('details.reasoning')
   await expect(long).toHaveCount(1)
   await long.locator('summary').click()

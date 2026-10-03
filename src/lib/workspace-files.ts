@@ -1,4 +1,4 @@
-/** Bounded read-only access on the device bound to run. Unix + Python 3. */
+/** Bounded file access on the device bound to run. Unix + Python 3. */
 export type WorkspaceRun = (params: Record<string, unknown>, options?: { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown>
 export type WorkspaceEntry = { name: string; path: string; kind: 'file' | 'directory' | 'other'; size: number }
 export type WorkspaceFile = WorkspaceEntry & {
@@ -26,6 +26,10 @@ function record(value: unknown): value is Record<string, unknown> { return !!val
 function size(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 }
 function validPath(value: unknown, absolute = false): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 4096 && !controls.test(value) && encoder.encode(value).length <= 4096 && (!absolute || value.startsWith('/'))
+}
+export function validateWorkspaceName(value: string): string {
+  if (!validPath(value) || value === '.' || value === '..' || value.includes('/') || encoder.encode(value).length > 255) fail('unsafe-name', '请输入单个文件或文件夹名称，不能包含 /、控制字符或超过 255 字节。')
+  return value
 }
 function validFingerprint(value: unknown, bytes: number): value is string {
   return typeof value === 'string' && value.length <= 192 && /^\d+:\d+:\d+:-?\d+:-?\d+$/.test(value) && value.split(':')[2] === String(bytes)
@@ -173,6 +177,29 @@ def main():
     if not valid_path(path):
         fail("unsafe-path", "解析后的路径过长或包含控制字符。")
     initial = os.stat(path)
+    if action in ("create-directory", "create-file"):
+        if not stat.S_ISDIR(initial.st_mode):
+            fail("not-directory", "只能在文件夹中新建文件或文件夹。")
+        name = sys.argv[4]
+        if not valid_path(name) or name in (".", "..") or "/" in name or len(name.encode("utf-8")) > 255:
+            fail("unsafe-name", "请输入单个文件或文件夹名称，不能包含 /、控制字符或超过 255 字节。")
+        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK)
+        try:
+            opened = os.fstat(directory)
+            if (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino):
+                fail("file-changed", "文件夹已发生变化，请刷新后重试。")
+            if action == "create-directory":
+                os.mkdir(name, dir_fd=directory)
+            else:
+                created = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=directory)
+                os.close(created)
+        except FileExistsError:
+            fail("already-exists", "同名文件或文件夹已存在，请使用其他名称。")
+        except PermissionError:
+            fail("permission-denied", "没有在此文件夹中创建文件或文件夹的权限。")
+        finally:
+            os.close(directory)
+        return {"ok": True, "path": os.path.join(path, name), "name": name, "kind": "directory" if action == "create-directory" else "file"}
     if action == "inspect":
         return {"ok": True, "file": inspect(path, initial)}
     if action != "chunk":
@@ -317,5 +344,16 @@ export function createWorkspaceFiles(run: WorkspaceRun, { cwd }: { cwd: string }
     return file
   }
 
-  return { inspect, readChunk }
+  async function create(directory: string, name: string, kind: 'file' | 'directory', options: { signal?: AbortSignal } = {}) {
+    if (!validPath(directory, true)) fail('unsafe-path', '请提供有效的 Unix 绝对文件夹路径。')
+    validateWorkspaceName(name)
+    if (kind !== 'file' && kind !== 'directory') fail('invalid-request', '不支持此新建操作。')
+    const path = (directory === '/' ? '/' : directory.replace(/\/+$/, '') + '/') + name
+    if (!validPath(path, true)) fail('unsafe-path', '新建路径过长，请使用更短的名称。')
+    const report = await command(['create-' + kind, '', directory, name], options.signal)
+    if (report.path !== path || report.name !== name || report.kind !== kind) return malformed()
+    return { path, name, kind }
+  }
+
+  return { inspect, readChunk, create }
 }

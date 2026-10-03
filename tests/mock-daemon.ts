@@ -26,6 +26,7 @@ let pending = new Map<number, { thread: Thread; turn: Turn; kind: string }>()
 const timers = new Map<string, ReturnType<typeof setInterval>>()
 let requestId = 10000
 const fileFixtureBytes = (path: string) => {
+  if (createdEntries.get(path) === 'file') return new Uint8Array()
   if (path === '/test/files/build.AppImage') return Uint8Array.from({ length: 600123 }, (_, i) => i % 256)
   if (path === '/test/files/pixel.gif') return Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
   const text: Record<string, string> = {
@@ -33,9 +34,11 @@ const fileFixtureBytes = (path: string) => {
     '/test/files/guide.md': '# 使用指南\n\n相对链接解析到文件所在目录。',
     '/test/files/slow.md': '# 延迟返回的旧文件',
     '/test/project/src/main.ts': 'const one = 1\nconst two = 2\nexport { one, two }\n',
+    '/test/project/index.html': '<!doctype html><html><head><style>body{background:rgb(12,34,56);color:white}h1{font-size:24px}</style></head><body><h1>HTML 页面预览</h1><svg aria-label="内嵌 SVG" width="100" height="80"><circle cx="40" cy="40" r="30" fill="orange" /></svg><script>parent.__htmlPreviewScript=true;fetch("/api/session")</script><img src="./blocked-resource.png"><form action="/api/profiles"><button>提交</button></form></body></html>',
   }
   return text[path] === undefined ? null : new TextEncoder().encode(text[path])
 }
+const createdEntries = new Map<string, 'file' | 'directory'>()
 function fileFixtureReport(command: string[]) {
   const [operation, cwd, requested, fingerprint, _size, offset] = command.slice(command.indexOf('-c') + 2)
   const parts: string[] = []
@@ -43,9 +46,22 @@ function fileFixtureReport(command: string[]) {
   for (const part of resolved.split('/')) { if (part === '..') parts.pop(); else if (part && part !== '.') parts.push(part) }
   const path = '/' + parts.join('/'), name = parts.at(-1) || '/'
   const directories: Record<string, { name: string; kind: 'directory' | 'file' }[]> = {
-    '/test/project': [{ name: 'src', kind: 'directory' }],
+    '/test/project': [{ name: 'src', kind: 'directory' }, { name: 'index.html', kind: 'file' }],
     '/test/project/src': [{ name: 'main.ts', kind: 'file' }],
     '/mock-home': [{ name: 'notes', kind: 'directory' }], '/mock-home/notes': [],
+  }
+  for (const [created, kind] of createdEntries) if (kind === 'directory') directories[created] = []
+  for (const [created, kind] of createdEntries) {
+    const parent = created.slice(0, created.lastIndexOf('/')) || '/'
+    directories[parent]?.push({ name: created.slice(created.lastIndexOf('/') + 1), kind })
+  }
+  if (operation === 'create-file' || operation === 'create-directory') {
+    const child = path + '/' + fingerprint
+    if (!directories[path]) return { ok: false, code: 'read-failed', message: '文件夹不存在。' }
+    if (directories[child] || fileFixtureBytes(child)) return { ok: false, code: 'already-exists', message: '同名文件或文件夹已存在，请使用其他名称。' }
+    const kind = operation === 'create-file' ? 'file' : 'directory'
+    createdEntries.set(child, kind)
+    return { ok: true, path: child, name: fingerprint, kind }
   }
   if (directories[path] && operation === 'inspect') return { ok: true, file: { path, name, kind: 'directory', size: 0, fingerprint: '1:1:0:1:1', truncated: false, entries: directories[path]!.map(entry => ({ ...entry, path: path + '/' + entry.name, size: entry.kind === 'file' ? fileFixtureBytes(path + '/' + entry.name)!.length : 0 })) } }
   if (path === '/test/files' && operation === 'inspect') return { ok: true, file: { path, name, kind: 'directory', size: 0, fingerprint: '1:1:0:1:1', truncated: false, entries: ['README.md', 'guide.md', 'build.AppImage', 'pixel.gif'].map(name => ({ path: path + '/' + name, name, kind: 'file', size: fileFixtureBytes(path + '/' + name)!.length })) } }
@@ -55,6 +71,7 @@ function fileFixtureReport(command: string[]) {
   return { ok: true, file: { path, name, kind: 'file', size: bytes.length, fingerprint: '1:1:' + bytes.length + ':1:1', preview: path.endsWith('.AppImage') ? { kind: 'binary' } : path.endsWith('.gif') ? { kind: 'image', mime: 'image/gif' } : { kind: 'text', text: new TextDecoder().decode(bytes), mime: 'text/plain', truncated: false } } }
 }
 function reset() {
+  createdEntries.clear()
   configVersion = 1; userConfig = { approvals_reviewer: 'user', model: 'test-model', model_reasoning_effort: 'medium', approval_policy: 'on-request', sandbox_mode: 'workspace-write', web_search: 'cached', model_verbosity: 'medium' }
   for (const timer of timers.values()) clearInterval(timer)
   timers.clear(); pending.clear(); nativeQueues.clear(); nativeSettings.clear(); goals.clear(); received = []; approved = 0; scenario = ''; requests = []; resumed = []
@@ -95,6 +112,7 @@ const server = Bun.serve<Peer>({
     const path = new URL(request.url).pathname
     if (path === '/health') return new Response('ok')
     if (path === '/test/reset') { reset(); return Response.json({ ok: true }) }
+    if (path === '/test/background.png') return new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGOwTPn3H4QZYAwAV+IKaYtEenEAAAAASUVORK5CYII=', 'base64'), { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' } })
     if (path === '/test/scenario' && new URL(request.url).searchParams.get('name') === 'stale-turn') {
       scenario = 'stale-turn'
       const thread = threads.get('existing-thread')!, now = Math.floor(Date.now() / 1000)

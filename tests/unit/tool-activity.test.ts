@@ -157,6 +157,7 @@ beforeAll(async () => {
     const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
       .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
       .replace(/import PastedText from ["']\.\/PastedText\.vue["'];?/, 'const PastedText = { render: () => null };')
+      .replace(/import FileChangeActivity from ["']\.\/FileChangeActivity\.vue["'];?/, 'const FileChangeActivity = { render: () => null };')
       .replace(/from (["'])([^"']+)\1/g, (_match, _quote, specifier: string) => 'from ' + JSON.stringify(
         specifier === './MessageItem.vue' ? pathToFileURL(join(directory, 'MessageItem.mjs')).href
           : specifier.startsWith('.') ? new URL(specifier + '.ts', file).href : import.meta.resolve(specifier)))

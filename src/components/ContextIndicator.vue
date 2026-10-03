@@ -31,7 +31,7 @@ const rows = computed(() => props.usage ? [
       <button type="button" class="text-button context-compact" :disabled="!sessionId || compactDisabled || compacting" @click="emit('compact')"><PhArrowsIn :size="16" /><span>{{ compacting ? '压缩上下文中…' : '压缩上下文' }}</span></button>
       <div class="context-session">
         <div class="context-session-heading"><label :for="sessionFieldId">Session ID</label><button type="button" class="text-button context-session-copy" :disabled="!sessionId" aria-label="复制 Session ID" title="复制 Session ID" @click="copySessionId"><PhCopy :size="16" /><span>复制</span></button></div>
-        <textarea v-if="sessionId" :id="sessionFieldId" :value="sessionId" class="context-session-id" aria-label="Session ID" readonly rows="2" spellcheck="false" />
+        <div v-if="sessionId" :id="sessionFieldId" class="context-session-id" role="textbox" aria-label="Session ID" aria-readonly="true" tabindex="0">{{ sessionId }}</div>
         <p v-else class="context-session-empty">会话创建后显示。</p>
       </div>
     </div>
@@ -43,6 +43,7 @@ const rows = computed(() => props.usage ? [
 .context-session { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
 .context-session-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted); }
 .context-session-copy { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); }
-.context-session-id { display: block; width: 100%; min-width: 0; resize: none; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font-family: var(--code-font-family); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; overflow-wrap: anywhere; user-select: text; cursor: text; }
+.context-session-id { display: block; width: 100%; min-width: 0; padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--canvas); color: var(--ink); font-family: var(--code-font-family); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; overflow-wrap: anywhere; user-select: text; cursor: text; }
+.context-session-id:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .context-session-empty { margin: 0; color: var(--subtle); font-size: calc(12px * var(--ui-font-scale, 1)); }
 </style>

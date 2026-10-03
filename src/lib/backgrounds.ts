@@ -1,8 +1,30 @@
 export type BackgroundImage = { blob: Blob; name: string }
+export type BackgroundSource = BackgroundImage | { url: string; name: string }
 export const BACKGROUND_CHANGED_KEY = 'codex-remote.background.changed'
 const DATABASE = 'codex-remote-backgrounds'
 const TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const MAX_BYTES = 20 * 1024 * 1024
+
+export function normalizeBackgroundUrl(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > 8192 || /[\x00-\x1f\x7f-\x9f]/.test(value)) throw new Error('请输入有效的 HTTP 或 HTTPS 图片地址。')
+  let url: URL
+  try { url = new URL(value.trim()) } catch { throw new Error('请输入完整的 HTTP 或 HTTPS 图片地址。') }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('图片地址仅支持不含用户名和密码的 HTTP 或 HTTPS URL。')
+  return url.href
+}
+export async function verifyBackground(source: BackgroundSource): Promise<void> {
+  if ('blob' in source) validateBackgroundFile(source.blob)
+  const url = 'url' in source ? normalizeBackgroundUrl(source.url) : URL.createObjectURL(source.blob)
+  const image = new Image()
+  image.referrerPolicy = 'no-referrer'
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    image.src = url
+    await Promise.race([image.decode(), new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('图片加载超时。')), 15_000) })])
+    if (!image.naturalWidth || !image.naturalHeight) throw new Error('Invalid image')
+  } catch { throw new Error('url' in source ? '无法加载网络图片，请检查地址和访问权限；HTTPS 页面请使用 HTTPS 图片地址。' : '无法读取背景图片，请选择有效的 JPG、PNG 或 WebP。') }
+  finally { clearTimeout(timeout); image.src = ''; if ('blob' in source) URL.revokeObjectURL(url) }
+}
 
 export function validateBackgroundFile(file: Pick<File, 'type' | 'size'>) {
   if (!TYPES.has(file.type)) throw new Error('请选择 JPG、PNG 或 WebP 图片。')
@@ -45,9 +67,12 @@ function accessBackground<T>(mode: IDBTransactionMode, operation: (store: IDBObj
     }
   })
 }
-export async function loadBackground(): Promise<BackgroundImage | undefined> {
-  const saved = await accessBackground<BackgroundImage | undefined>('readonly', store => store.get('current'))
-  return saved?.blob instanceof Blob && TYPES.has(saved.blob.type) && typeof saved.name === 'string' ? saved : undefined
+export async function loadBackground(): Promise<BackgroundSource | undefined> {
+  const saved = await accessBackground<BackgroundSource | undefined>('readonly', store => store.get('current'))
+  if (saved && 'blob' in saved && saved.blob instanceof Blob && TYPES.has(saved.blob.type) && typeof saved.name === 'string') return saved
+  if (saved && 'url' in saved) {
+    try { const url = normalizeBackgroundUrl(saved.url); return { url, name: url } } catch { /* Ignore unsupported stored addresses. */ }
+  }
 }
-export async function saveBackground(image: BackgroundImage) { await accessBackground('readwrite', store => store.put(image, 'current')) }
+export async function saveBackground(image: BackgroundSource) { await accessBackground('readwrite', store => store.put(image, 'current')) }
 export async function deleteBackground() { await accessBackground('readwrite', store => store.delete('current')) }

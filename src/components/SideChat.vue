@@ -4,6 +4,8 @@ import { PhArrowUp, PhListNumbers, PhSquare, PhX } from '@phosphor-icons/vue'
 import { useCodex } from '../composables/useCodex'
 import MessageItem from './MessageItem.vue'
 import WorkspaceFilePanel from './WorkspaceFilePanel.vue'
+import SubAgentBadge from './SubAgentBadge.vue'
+import { subAgentIdentity } from '../lib/thread-insights'
 import type { FileLinkTarget } from '../lib/file-links'
 import ApprovalIsland from './ApprovalIsland.vue'
 import PromptEditor from './PromptEditor.vue'
@@ -17,6 +19,7 @@ import type { TaskNotice } from '../lib/task-notifications'
 const props = defineProps<{ threadId: string; profile: ConnectionProfile; token: string }>()
 const emit = defineEmits<{ close: []; notice: [event: TaskNotice]; copy: [text: string]; busy: [boolean] }>()
 const codex = useCodex({ autoConnect: false, persistConnection: false })
+const agentIdentity = computed(() => subAgentIdentity(codex.active.value))
 const fileTarget = ref<FileLinkTarget | null>(null)
 const draft = ref<PromptPart[]>([]), ready = ref(false), inheritedIds = new Set<string>(), inheritedTurnIds = new Set<string>()
 const opening = ref(false), submitting = ref(false), attaching = ref(false), queueEditing = ref(false)
@@ -117,7 +120,7 @@ watch([visible, statusMessage, connectionError, codex.currentTurnFailure], async
 <template>
   <aside class="side-chat" aria-label="侧边聊天">
     <WorkspaceFilePanel floating :target="fileTarget" :cwd="codex.active.value?.cwd || profile.cwd" :device-name="profile.name" :connected="codex.connected.value" :run="codex.runWorkspaceCommand" @close="fileTarget = null" @copy="emit('copy', $event)" />
-    <header><div><strong>侧边聊天</strong><small>{{ profile.name }}</small></div><button type="button" class="icon-button" aria-label="关闭侧边聊天" @click="emit('close')"><PhX :size="18" /></button></header>
+    <header><div><strong>侧边聊天</strong><small>{{ profile.name }}</small></div><SubAgentBadge v-if="agentIdentity" :name="agentIdentity.name" :role="agentIdentity.role" /><button type="button" class="icon-button" aria-label="关闭侧边聊天" @click="emit('close')"><PhX :size="18" /></button></header>
     <div ref="messages" class="side-chat-messages" @scroll.passive="onScroll">
       <template v-for="row in transcript" :key="row.key"><p v-if="'stoppedLabel' in row" class="turn-stopped-duration" :data-turn-id="row.turnId">{{ row.stoppedLabel }}</p><MessageItem v-else @open-file="fileTarget = $event" :work-duration-seconds="workDurations.get(row.item.id)" :item="row.item" :now="codex.clockNow.value" actions-disabled @copy="emit('copy', $event)" /></template>
       <p v-if="codex.currentTurnFailure.value" class="side-chat-error" role="alert">{{ codex.currentTurnFailure.value }}</p>

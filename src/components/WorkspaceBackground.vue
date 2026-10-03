@@ -5,7 +5,7 @@ defineProps<{ mode: BackgroundMode; theme: 'light' | 'dark'; imageUrl: string; i
 </script>
 <template>
   <HeroBackdrop v-if="mode === 'animated'" :key="theme" :theme="theme" :class="{ 'is-conversation': !welcome }" />
-  <div v-else-if="mode === 'image' && imageUrl" class="workspace-image-backdrop" :style="{ '--image-opacity': imageSettings.opacity / 100, '--image-blur': imageSettings.blur + 'px', '--image-color': imageSettings.color, '--image-color-opacity': imageSettings.colorOpacity / 100 }" aria-hidden="true"><img :src="imageUrl" alt="" :draggable="false" /></div>
+  <div v-else-if="mode === 'image' && imageUrl" class="workspace-image-backdrop" :style="{ '--image-opacity': imageSettings.opacity / 100, '--image-blur': imageSettings.blur + 'px', '--image-color': imageSettings.color, '--image-color-opacity': imageSettings.colorOpacity / 100 }" aria-hidden="true"><img :src="imageUrl" alt="" :draggable="false" referrerpolicy="no-referrer" /></div>
 </template>
 <style scoped>
 .workspace-image-backdrop { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--canvas); }

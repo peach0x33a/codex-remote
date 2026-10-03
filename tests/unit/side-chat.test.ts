@@ -78,6 +78,7 @@ beforeAll(async () => {
   const script = compileScript(descriptor, { id: 'side-chat-test', inlineTemplate: true })
   // Run the real SFC with injected transport and child boundaries; no browser or network.
   const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
+    .replace(/import SubAgentBadge from ["']\.\/SubAgentBadge\.vue["'];?/, 'const SubAgentBadge = { render: () => null };')
     .replace(/import[^;]*from ["']\.\.\/composables\/useInputHistory["'];?/g, 'const useInputHistory = (_device, _auth, entries) => ({ entries, remember: async () => {}, refresh: async () => {} });')
     .replace(/import[^;]*from ["'](?:\.\.\/composables\/useCodex|\.\/(?:MessageItem|ApprovalIsland|PromptEditor|QueuePane|WorkspaceFilePanel)\.vue)["'];?/g, '')
     .replace(/from (["'])([^"']+)\1/g, (_match, _quote, specifier: string) => 'from ' + JSON.stringify(specifier.startsWith('.') ? new URL(specifier + '.ts', file).href : import.meta.resolve(specifier)))

@@ -3,6 +3,8 @@ import { useStoredChoice, isStringList } from '../composables/useStoredChoice'
 import { computed, ref, useId, watch } from 'vue'
 import { PhArchive, PhCaretDown, PhFolder, PhListNumbers, PhPlus } from '@phosphor-icons/vue'
 import type { Thread } from '../../shared/protocol'
+import { subAgentIdentity } from '../lib/thread-insights'
+import SubAgentBadge from './SubAgentBadge.vue'
 
 const props = defineProps<{
   deviceId?: string
@@ -95,6 +97,7 @@ function archive(thread: Thread) {
       <div :id="`${id}-threads-${index}`" class="project-threads" v-show="!collapsed.has(project.cwd) || activeCwd === project.cwd">
         <div v-for="thread in visibleThreads(project)" :key="thread.id" class="thread-row" :class="{ active: activeId === thread.id, 'can-archive': !archiveDisabled(thread) }">
           <button type="button" class="thread-select" :title="title(thread)" :aria-current="activeId === thread.id ? 'page' : undefined" @click="emit('select', thread.id)">
+            <SubAgentBadge v-if="subAgentIdentity(thread)" compact :name="subAgentIdentity(thread)?.name" :role="subAgentIdentity(thread)?.role" />
             <span class="thread-title">{{ title(thread) }}</span>
             <span v-if="queueCount(thread)" class="queue-badge" :title="`${queueCount(thread)} 条消息排队中`" :aria-label="`${queueCount(thread)} 条消息排队中`"><PhListNumbers :size="12" aria-hidden="true" />{{ queueCount(thread) }}</span>
             <span v-if="approvalIds.has(thread.id)" class="approval-badge" title="等待权限批准">待确认</span>

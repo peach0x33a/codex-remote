@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { PhArrowCounterClockwise, PhPencilSimple, PhX, PhCode, PhCopy, PhFileText, PhGlobe, PhImage, PhSparkle, PhTerminal, PhArrowsIn } from '@phosphor-icons/vue'
 import InlineImage from './InlineImage.vue'
 import PastedText from './PastedText.vue'
+import FileChangeActivity from './FileChangeActivity.vue'
 import { messageParts, reasoningText } from '../lib/prompt'
 import type { Item } from '../../shared/protocol'
 import { renderMarkdown } from '../lib/markdown'
@@ -63,10 +64,10 @@ const activityError = computed(() => toolActivityError(props.item))
   </template>
   <div v-else-if="item.type === 'contextCompaction' && item.status !== 'inProgress'" class="activity compaction-activity"><PhArrowsIn :size="16" /><span>{{ item.status === 'failed' ? '上下文压缩失败' : '上下文已压缩' }}</span></div>
   <template v-else-if="item.type === 'contextCompaction'" />
+  <FileChangeActivity v-else-if="item.type === 'fileChange'" :item="item" @open-file="emit('openFile', $event)" />
   <details v-else v-animated-details="(open: boolean) => expanded = open" class="activity tool-activity" :open="expanded" @toggle="expanded = ($event.target as HTMLDetailsElement).open">
     <summary><PhFileText v-if="commandKind === 'read' || item.type === 'fileChange'" :size="16" /><PhTerminal v-else-if="item.type === 'commandExecution'" :size="16" /><PhGlobe v-else-if="item.type === 'webSearch'" :size="16" /><PhImage v-else-if="item.type === 'imageView'" :size="16" /><PhCode v-else :size="16" /><span class="activity-title" :class="{ 'activity-command-summary': item.type === 'commandExecution' && commandKind !== 'read' }" :title="activityTitle">{{ activityTitle }}</span><span v-if="activityState.failed" class="activity-state failed" :title="activityError || undefined"><PhX :size="13" aria-hidden="true" />失败</span></summary>
     <template v-if="expanded"><template v-if="item.type === 'commandExecution'"><div class="command-output"><div v-for="path in readPaths" :key="path" class="activity-path activity-read-path">{{ path }}</div><div v-if="item.cwd" class="activity-path">{{ item.cwd }}</div><pre v-if="item.command" class="command-code"><code v-html="commandHtml" /></pre><pre v-if="item.aggregatedOutput" class="command-result"><code>{{ item.aggregatedOutput }}</code></pre></div></template>
-    <template v-else-if="item.type === 'fileChange'"><div v-for="change in item.changes" :key="change.path" class="file-change"><strong>{{ change.path }}</strong><pre v-if="change.diff"><code>{{ change.diff }}</code></pre></div></template>
     <p v-else-if="item.type === 'webSearch'">{{ item.query }}</p>
     <div v-else-if="collab" class="collab-details">
       <dl class="collab-meta">
@@ -88,9 +89,10 @@ const activityError = computed(() => toolActivityError(props.item))
 .agent-message-actions { display: flex; align-items: center; gap: 8px; margin: 4px 0 0 -8px; }
 .agent-message-actions > .copy-button { display: grid; flex-shrink: 0; margin: 0; color: var(--subtle); }
 .work-duration { color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
-.reasoning-inline { display: flex; align-items: flex-start; gap: var(--space-2); }
-.reasoning-inline > svg { flex-shrink: 0; margin-top: 3px; }
+.activity.reasoning-inline { display: flex; align-items: flex-start; gap: var(--space-2); min-height: 28px; padding: 3px 0; line-height: calc(22px * var(--ui-font-scale, 1)); }
+.reasoning-inline > svg { flex-shrink: 0; margin-top: calc((22px * var(--ui-font-scale, 1) - 16px) / 2); }
 .reasoning-inline > .markdown { flex: 1; min-width: 0; color: inherit; font-size: inherit; line-height: inherit; }
+.reasoning-inline > .markdown :deep(p) { margin: 0; line-height: inherit; }
 .reasoning-inline-time { flex-shrink: 0; font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
 .tool-activity > summary { max-width: 100%; }
 .activity-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

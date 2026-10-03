@@ -4,7 +4,8 @@ import { PhArrowUpRight, PhArrowsClockwise, PhCaretDown, PhCaretRight, PhFileTex
 import { vAnimatedDetails } from '../lib/details-motion'
 import FileTypeIcon from './FileTypeIcon.vue'
 import MotionCollapse from './MotionCollapse.vue'
-import type { ChangedFile, ThreadAgent } from '../lib/thread-insights'
+import SubAgentBadge from './SubAgentBadge.vue'
+import type { ChangedFile, ThreadAgent, SubAgentIdentity } from '../lib/thread-insights'
 
 const props = withDefaults(defineProps<{
   agents: ThreadAgent[]
@@ -12,6 +13,7 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   error?: string
   disabled?: boolean
+  identity?: SubAgentIdentity | null
 }>(), { loading: false, error: '', disabled: false })
 const emit = defineEmits<{
   inspect: [id: string]
@@ -90,6 +92,11 @@ watch(() => props.disabled ? [] : visibleAgents.value.map(agent => agent.id), (i
     <div class="inspector-body" :aria-busy="loading">
       <div v-if="error" class="inspector-error"><p role="alert">{{ error }}</p><button type="button" class="text-button" :disabled="unavailable" @click="retry">重试</button></div>
       <p v-if="loading" class="inspector-note" role="status">正在读取…</p>
+      <section v-if="identity" class="inspector-section subagent-identity" aria-label="子代理会话信息">
+        <SubAgentBadge :name="identity.name" :role="identity.role" />
+        <dl v-if="identity.name || identity.role" class="inspector-metadata"><div v-if="identity.name"><dt>代理</dt><dd>{{ identity.name }}</dd></div><div v-if="identity.role"><dt>角色</dt><dd>{{ identity.role }}</dd></div></dl>
+        <button v-if="identity.parentThreadId" type="button" class="text-button" :disabled="disabled" @click="emit('openThread', identity.parentThreadId)">返回父会话<PhArrowUpRight :size="15" aria-hidden="true" /></button>
+      </section>
 
       <section class="inspector-section" aria-label="输出内容">
         <h3>输出内容</h3>

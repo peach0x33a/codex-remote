@@ -5,6 +5,7 @@ import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue'
 import { PhTextAa, PhBell, PhTextAlignLeft, PhGearSix, PhPalette, PhCpu, PhShieldCheck, PhDatabase } from '@phosphor-icons/vue'
 import type { BackgroundMode, ImageBackgroundSettings, ThemePreference } from '../lib/ui-preferences'
 import BackgroundSettings from './BackgroundSettings.vue'
+import AppearanceTransfer from './AppearanceTransfer.vue'
 import BaseDialog from './BaseDialog.vue'
 import CodexSettings from './CodexSettings.vue'
 import NotificationSettings from './NotificationSettings.vue'
@@ -15,8 +16,8 @@ import TypographySettings from './TypographySettings.vue'
 import type { TypographyControls } from '../composables/useTypography'
 import type { ConfigRequest } from '../lib/codex-config'
 import type { Model } from '../../shared/protocol'
-const props = defineProps<{ typography: TypographyControls; notifications: TaskNotifications; configRequest: ConfigRequest; models: Model[]; connected: boolean; deviceKey: string; deviceName?: string; modelValue: number; theme: ThemePreference; autoConnect: boolean; autoWrap: boolean; backgroundMode: BackgroundMode; imageBackground: ImageBackgroundSettings; backgroundUrl: string; backgroundName: string; backgroundBusy: boolean; backgroundError: string }>()
-const emit = defineEmits<{ 'update:modelValue': [width: number]; 'update:theme': [theme: ThemePreference]; 'update:autoConnect': [enabled: boolean]; 'update:autoWrap': [enabled: boolean]; 'update:backgroundMode': [mode: BackgroundMode]; 'update:imageBackground': [value: ImageBackgroundSettings]; previewWidth: [value: number | null]; previewImageBackground: [value: ImageBackgroundSettings | null]; uploadBackground: [file: File]; removeBackground: [] }>()
+const props = defineProps<{ typography: TypographyControls; notifications: TaskNotifications; configRequest: ConfigRequest; models: Model[]; connected: boolean; deviceKey: string; deviceName?: string; modelValue: number; theme: ThemePreference; autoConnect: boolean; autoWrap: boolean; backgroundMode: BackgroundMode; imageBackground: ImageBackgroundSettings; backgroundUrl: string; backgroundRemoteUrl: string; exportAppearance: () => Promise<Blob>; importAppearance: (file: File) => Promise<void>; backgroundName: string; backgroundBusy: boolean; backgroundError: string }>()
+const emit = defineEmits<{ 'update:modelValue': [width: number]; 'update:theme': [theme: ThemePreference]; 'update:autoConnect': [enabled: boolean]; 'update:autoWrap': [enabled: boolean]; 'update:backgroundMode': [mode: BackgroundMode]; 'update:imageBackground': [value: ImageBackgroundSettings]; previewWidth: [value: number | null]; previewImageBackground: [value: ImageBackgroundSettings | null]; uploadBackground: [file: File]; useBackgroundUrl: [url: string]; removeBackground: [] }>()
 const options = [{ value: 840, label: '紧凑' }, { value: 1080, label: '舒适' }, { value: 1280, label: '宽屏' }, { value: 0, label: '铺满窗口' }]
 const widthOptions = computed(() => {
   const items = options.map(option => ({ value: String(option.value), label: option.label }))
@@ -85,8 +86,9 @@ async function close() {
         <section v-show="section === 'appearance'" class="settings-section" :aria-labelledby="dialogId + '-appearance'">
           <div class="settings-heading width-setting"><h3 :id="dialogId + '-appearance'">外观</h3><CustomSelect label="颜色主题" :model-value="theme" :options="themes" @update:model-value="emit('update:theme', $event)" /></div>
         </section>
+        <section v-show="section === 'appearance'" class="settings-section" aria-label="外观设置导入与导出"><AppearanceTransfer :export-settings="exportAppearance" :import-settings="importAppearance" :disabled="backgroundBusy" /></section>
         <section v-show="section === 'appearance'" class="settings-section" aria-label="背景">
-          <BackgroundSettings @preview-image-settings="emit('previewImageBackground', $event)" :model-value="backgroundMode" :image-settings="imageBackground" @update:image-settings="emit('update:imageBackground', $event)" :src="backgroundUrl" :name="backgroundName" :busy="backgroundBusy" :error="backgroundError" @update:model-value="emit('update:backgroundMode', $event)" @upload="emit('uploadBackground', $event)" @remove="emit('removeBackground')" />
+          <BackgroundSettings @preview-image-settings="emit('previewImageBackground', $event)" :model-value="backgroundMode" :image-settings="imageBackground" @update:image-settings="emit('update:imageBackground', $event)" :src="backgroundUrl" :remote-url="backgroundRemoteUrl" :name="backgroundName" :busy="backgroundBusy" :error="backgroundError" @update:model-value="emit('update:backgroundMode', $event)" @use-url="emit('useBackgroundUrl', $event)" @upload="emit('uploadBackground', $event)" @remove="emit('removeBackground')" />
         </section>
         <section v-show="section === 'general'" class="settings-section" :aria-labelledby="dialogId + '-width'">
           <div class="settings-heading width-setting"><h3 :id="dialogId + '-width'">内容宽度</h3>

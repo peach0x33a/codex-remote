@@ -38,6 +38,44 @@ async function fixture(files: Record<string, string | Uint8Array> = {}) {
   }
   return { cwd, run, calls, service: createWorkspaceFiles(run, { cwd }) }
 }
+
+test('creates remote directories and empty files with literal names and refreshable listings', async () => {
+  const { cwd, service, calls } = await fixture({ 'keep.txt': 'unchanged' })
+  const name = "项目 ' $(touch SHOULD_NOT_EXIST)"
+  expect(await service.create(cwd, name, 'directory')).toEqual({ path: join(cwd, name), name, kind: 'directory' })
+  expect((await stat(join(cwd, name))).isDirectory()).toBe(true)
+  expect(await service.create(join(cwd, name), 'README.md', 'file')).toMatchObject({ kind: 'file' })
+  expect(await Bun.file(join(cwd, name, 'README.md')).text()).toBe('')
+  expect((await service.inspect(join(cwd, name))).entries?.map(entry => entry.name)).toEqual(['README.md'])
+  expect(await Bun.file(join(cwd, 'keep.txt')).text()).toBe('unchanged')
+  expect(await Bun.file(join(cwd, 'SHOULD_NOT_EXIST')).exists()).toBe(false)
+  expect(calls[0]!.params.command).toContain(name)
+})
+
+test('creation never overwrites existing files, directories or symlink targets', async () => {
+  const { cwd, service } = await fixture({ 'keep.txt': 'preserve' })
+  await mkdir(join(cwd, 'folder')); await symlink(join(cwd, 'keep.txt'), join(cwd, 'link'))
+  for (const name of ['keep.txt', 'folder', 'link']) for (const kind of ['file', 'directory'] as const) await expect(service.create(cwd, name, kind)).rejects.toThrow('同名')
+  expect(await Bun.file(join(cwd, 'keep.txt')).text()).toBe('preserve')
+  expect((await service.inspect(cwd)).entries?.map(entry => entry.name)).toEqual(['folder', 'keep.txt', 'link'])
+  await expect(service.create(join(cwd, 'keep.txt'), 'child', 'file')).rejects.toThrow('只能在文件夹')
+  await expect(service.create(join(cwd, 'missing'), 'child', 'directory')).rejects.toThrow('不存在')
+})
+
+test('creation validates names on both ends and reports permission failures without partial files', async () => {
+  const { cwd, service, run, calls } = await fixture()
+  for (const name of ['', '.', '..', '../escape', 'nested/file', 'nul\0name', '中文'.repeat(86)]) await expect(service.create(cwd, name, 'directory')).rejects.toThrow()
+  expect(calls).toHaveLength(0)
+  const hostile: WorkspaceRun = (params, options) => { const command = [...params.command as string[]]; command[8] = '../escape'; return run({ ...params, command }, options) }
+  await expect(createWorkspaceFiles(hostile, { cwd: '' }).create(cwd, 'safe', 'directory')).rejects.toThrow('名称')
+  expect(await Bun.file(join(cwd, 'safe')).exists()).toBe(false)
+  if (process.getuid?.() !== 0) {
+    await chmod(cwd, 0o500)
+    try { await expect(service.create(cwd, 'denied', 'file')).rejects.toThrow('权限') }
+    finally { await chmod(cwd, 0o700) }
+    expect(await Bun.file(join(cwd, 'denied')).exists()).toBe(false)
+  }
+})
 const reply = (report: unknown) => ({ exitCode: 0, stdout: JSON.stringify(report), stderr: '' })
 function descriptor(bytes = 1): WorkspaceFile { return { path: '/remote/file', name: 'file', kind: 'file', size: bytes, fingerprint: '1:2:' + bytes + ':3:4', preview: { kind: 'binary' } } }
 function chunkReply(file: WorkspaceFile, extra: Record<string, unknown> = {}) {
