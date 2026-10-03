@@ -23,7 +23,7 @@ export type FuzzyFileSearchResult = { root: string; path: string; match_type: 'f
 
 export type ComposerSettings = { model: string; effort: string; permission: PermissionMode; serviceTier?: string | null }
 export type QueuedMessage = { id: string; deviceId: string; threadId: string; parts: PromptPart[]; settings: ComposerSettings; state: 'queued' | 'sending' | 'failed'; source?: 'server'; editError?: string; error?: string }
-type PendingUserMessage = { id: string; clientId: string; threadId: string; input: MessageContent[]; priorUserIds: string[]; placement: 'conversation' | 'island'; accepted: boolean; cancelable: boolean }
+type PendingUserMessage = { id: string; clientId: string; threadId: string; turnId?: string; ended?: boolean; input: MessageContent[]; priorUserIds: string[]; placement: 'conversation' | 'island'; accepted: boolean; cancelable: boolean }
 const isLiveTurn = (turn: Turn | undefined): turn is Turn => !!turn && turn.status === 'inProgress' && turn.completedAt == null
 
 function isThreadSummary(value: unknown): value is Thread {
@@ -150,9 +150,20 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   const pendingUserMessages = ref<PendingUserMessage[]>([])
   const steerWithdrawals = new Map<string, () => void>()
   function withdrawPendingSteer(id: string) {
+    const pending = pendingUserMessages.value.find(message => message.id === id && message.placement === 'island')
+    if (pending?.ended) { removePendingUserMessage(id); return true }
     const withdraw = steerWithdrawals.get(id)
     if (!withdraw) { toast('当前服务端不支持撤回已提交的插话。'); return false }
     steerWithdrawals.delete(id); withdraw(); return true
+  }
+  function takePendingSteer(id: string): PromptPart[] | undefined {
+    const pending = pendingUserMessages.value.find(message => message.id === id && message.placement === 'island' && message.ended)
+    if (!pending) return
+    const parts = messageParts(pending.input)
+    removePendingUserMessage(id); return parts
+  }
+  function settlePendingSteers(threadId: string, turnId: string) {
+    for (const message of pendingUserMessages.value) if (message.threadId === threadId && message.placement === 'island' && message.turnId === turnId) message.ended = true
   }
   const serverQueueSupported = ref(false)
   let serverQueue: ServerQueueClient | undefined, queueAdding = false
@@ -234,7 +245,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       for (const message of pendingUserMessages.value) if (message.threadId === threadId && !message.priorUserIds.includes(itemId)) message.priorUserIds.push(itemId)
     }
   }
-  const pendingSteers = computed(() => pendingUserMessages.value.filter(message => message.threadId === active.value?.id && message.placement === 'island').map(message => ({ id: message.id, accepted: message.accepted, cancelable: message.cancelable, parts: messageParts(message.input) })))
+  const pendingSteers = computed(() => pendingUserMessages.value.filter(message => message.threadId === active.value?.id && message.placement === 'island').map(message => ({ id: message.id, accepted: message.accepted, ended: !!message.ended, cancelable: message.cancelable || !!message.ended, parts: messageParts(message.input) })))
   const displayTurns = computed(() => {
     const thread = active.value
     if (!thread) return [] as Turn[]
@@ -701,6 +712,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       restoringSettings = false
       const running = isLiveTurn(latestTurn) ? latestTurn : undefined
       if (running) runningTurns.value.set(id, running.id); else runningTurns.value.delete(id)
+      for (const message of pendingUserMessages.value) if (message.threadId === id && message.placement === 'island' && message.turnId && message.turnId !== running?.id) message.ended = true
       // Turn metadata was read after resume; buffered notifications below can
       // still supersede it. Do not let the earlier summary retain stale busy.
       if (latestTurn && ['active', 'idle'].includes(active.value.status?.type || '')) updateThreadMetadata(id, { status: { type: running ? 'active' : 'idle' } })
@@ -1039,6 +1051,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     const pending = addPendingUserMessage(threadId, input, 'island')
     let cancelled = false
     const local = pendingUserMessages.value.find(message => message.id === pending.id)!
+    local.turnId = turnId
     local.cancelable = true
     steerWithdrawals.set(pending.id, () => { cancelled = true; removePendingUserMessage(pending.id) })
     let accepted = false
@@ -1060,7 +1073,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (!isRecord(response) || response.turnId !== turnId) throw new RpcError('插话响应无效，发送结果尚未确认。')
       accepted = true
       const row = pendingUserMessages.value.find(message => message.id === pending.id)
-      if (row) row.accepted = true
+      if (row) { row.accepted = true; row.ended ||= terminalTurns.has(turnId) }
       return true
     } catch (cause) {
       if (!currentView()) return false
@@ -1435,6 +1448,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
         if (!terminalTurns.has(turn.id)) runningTurns.value.set(id, turn.id)
       }
       else {
+        for (const item of turn.items || []) if (item.type === 'userMessage') reconcilePendingUserMessage(id, item.id, item.content, item.clientId)
+        settlePendingSteers(id, turn.id)
         const key = queueKey(id) + '/' + turn.id
         const previous = active.value?.id === id ? active.value.turns.find(item => item.id === turn.id) : undefined
         const timing = { startedAt: turn.startedAt ?? previous?.startedAt, completedAt: turn.completedAt ?? previous?.completedAt, durationMs: turn.durationMs ?? previous?.durationMs }
@@ -1573,5 +1588,5 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (getCurrentInstance()) onMounted(() => { void start() })
     else void start()
   }
-  return { profilesLoaded, refreshProfiles, persistSelection, defaultWorkingDirectory, start, dispose, connectWithToken, forkThread, withdrawPendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
+  return { profilesLoaded, refreshProfiles, persistSelection, defaultWorkingDirectory, start, dispose, connectWithToken, forkThread, withdrawPendingSteer, takePendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
 }

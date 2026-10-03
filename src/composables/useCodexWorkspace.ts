@@ -205,7 +205,7 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
     }]
   })) as Runtime
   function deviceBusy(runtime: Runtime) {
-    return runtime.busy.value || runtime.sending.value || runtime.steering.value || runtime.revising.value || runtime.goalSaving.value || !!runtime.pendingSteers.value.length
+    return runtime.busy.value || runtime.sending.value || runtime.steering.value || runtime.revising.value || runtime.goalSaving.value || runtime.pendingSteers.value.some(steer => !steer.ended)
       || runtime.threads.value.some(thread => thread.status?.type === 'active') || runtime.projectThreads.value.some(thread => thread.status?.type === 'active')
   }
   const connectionStates = computed<Record<string, DeviceConnectionState>>(() => {

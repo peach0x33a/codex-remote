@@ -11,7 +11,7 @@ let ApprovalIsland: Component
 beforeAll(async () => {
   const directory = await mkdtemp(join(tmpdir(), 'codex-reasoning-island-'))
   try {
-    for (const name of ['ApprovalCard', 'ApprovalIsland']) {
+    for (const name of ['PastedText', 'ApprovalCard', 'ApprovalIsland']) {
       const file = new URL('../../src/components/' + name + '.vue', import.meta.url)
       const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
       const script = compileScript(descriptor, { id: name, inlineTemplate: true })

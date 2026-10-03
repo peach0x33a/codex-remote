@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createBridge } from '../../server/bridge'
+import { INPUT_HISTORY_BODY_LIMIT } from '../../shared/input-history'
 
 const origin = 'https://app.example'
 const accessKey = 'credentials-test-access-key'
@@ -95,7 +96,7 @@ describe('server-only credential API without network', () => {
     const app = await fixture()
     await app.login()
     const id = await saved(app, 'server-only-token', ' WSS://DAEMON.EXAMPLE:443/rpc ')
-    expect(app.handler.maxRequestBodySize).toBe(16 * 1024)
+    expect(app.handler.maxRequestBodySize).toBe(INPUT_HISTORY_BODY_LIMIT)
     expect((await stat(app.file)).mode & 0o777).toBe(0o600)
     expect((await stat(dirname(app.file))).mode & 0o777).toBe(0o700)
     await upgraded(app, { endpoint, credentialId: id, token: 'must-not-be-used' }, 'server-only-token')

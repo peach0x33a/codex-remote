@@ -3,6 +3,7 @@ import { resolve, sep } from 'node:path'
 import Upstream from 'ws'
 import type { ServerWebSocket } from 'bun'
 import { CredentialError, CredentialStore, credentialEndpoint, credentialId, credentialToken } from './credentials'
+import { INPUT_HISTORY_BODY_LIMIT } from '../shared/input-history'
 
 type Options = { host?: string; port?: number; origins: string[]; accessKey?: string; allowedHosts?: string[]; allowUnix?: boolean; staticDir?: string; credentialFile?: string }
 type Ticket = { endpoint: string; token: string; expires: number; session: string }
@@ -15,8 +16,8 @@ const BROWSER_STALL_MS = 30_000
 // Account for frame/bookkeeping overhead as well, so empty frames cannot grow an unbounded queue.
 const browserFrameBytes = (message: string) => Buffer.byteLength(message) + 16
 
-async function requestJson(request: Request) {
-  if (Number(request.headers.get('content-length')) > MAX_BODY) throw new CredentialError('请求体过大。', 413)
+async function requestJson(request: Request, limit = MAX_BODY) {
+  if (Number(request.headers.get('content-length')) > limit) throw new CredentialError('请求体过大。', 413)
   const reader = request.body?.getReader()
   if (!reader) throw new CredentialError('无效的请求。')
   const chunks: Uint8Array[] = []
@@ -26,7 +27,7 @@ async function requestJson(request: Request) {
       const { done, value } = await reader.read()
       if (done) break
       size += value.byteLength
-      if (size > MAX_BODY) { await reader.cancel(); throw new CredentialError('请求体过大。', 413) }
+      if (size > limit) { await reader.cancel(); throw new CredentialError('请求体过大。', 413) }
       chunks.push(value)
     }
   } catch (error) {
@@ -142,7 +143,7 @@ export function createBridge(options: Options) {
 
   const server = Bun.serve<Peer>({
     hostname: options.host || '127.0.0.1', port: options.port ?? 3000,
-    maxRequestBodySize: MAX_BODY,
+    maxRequestBodySize: INPUT_HISTORY_BODY_LIMIT,
     async fetch(request, server) {
       const url = new URL(request.url)
       const path = url.pathname
@@ -151,7 +152,7 @@ export function createBridge(options: Options) {
       if (path.startsWith('/api/')) {
         // LAN HTTP omits Fetch Metadata. The custom header requires a preflight
         // cross-origin; this bridge never grants CORS permission to another origin.
-        const profileRead = path === '/api/profiles' && request.method === 'GET' && !request.headers.has('origin') && (
+        const profileRead = ['/api/profiles', '/api/input-history'].includes(path) && request.method === 'GET' && !request.headers.has('origin') && (
           request.headers.get('sec-fetch-site') === 'same-origin' || !request.headers.has('sec-fetch-site') && request.headers.get('x-codex-remote') === '1'
         )
         if (!sameOrigin(request) && !profileRead) return json({ error: '请求来源不受信任，请从配置的应用地址打开。' }, 403)
@@ -190,6 +191,13 @@ export function createBridge(options: Options) {
             const endpoint = connectionEndpoint(body?.endpoint)
             if (body?.action !== undefined && body.action !== 'import') throw new CredentialError('无效的设备操作。')
             return json(await credentials.saveProfile({ ...body, endpoint }, body?.action === 'import'))
+          } catch (error) { return configurationError(error) }
+        }
+        if (path === '/api/input-history') {
+          try {
+            if (request.method === 'GET') return json({ entries: await credentials.inputHistory(url.searchParams.get('deviceId')) })
+            if (request.method === 'POST') return json({ entries: await credentials.rememberInput(await requestJson(request, INPUT_HISTORY_BODY_LIMIT)) })
+            return json({ error: '不支持的请求方法。' }, 405)
           } catch (error) { return configurationError(error) }
         }
         if (path === '/api/credentials' && (request.method === 'POST' || request.method === 'DELETE')) {

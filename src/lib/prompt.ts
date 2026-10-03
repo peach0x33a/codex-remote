@@ -1,7 +1,9 @@
 import { randomId } from './random-id'
 import type { Item, MessageContent } from '../../shared/protocol'
 import { THREAD_REFERENCE_MARKER, threadReferenceContext, threadReferenceLink } from './mentions'
-export type PromptPart = { type: 'text'; text: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
+export type PromptPart = { type: 'text'; text: string; pasteId?: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
+export const pastedTextLabel = (text: string) => '粘贴的文本 (' + Array.from(text).length + '字符)'
+export const isLongPaste = (text: string) => text.length >= 1000 || text.split('\n').length >= 12
 export const promptText = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? p.text : p.type === 'skill' ? '$' + p.name : '[' + p.name + ']').join('')
 export const hasPrompt = (parts: PromptPart[]) => parts.some(p => p.type !== 'text' || !!p.text.trim())
 export function toInputs(parts: PromptPart[]): MessageContent[] {
@@ -16,7 +18,7 @@ export function toInputs(parts: PromptPart[]): MessageContent[] {
       continue
     }
     if (part.type === 'skill') { input.push(markedText('$' + part.name, part.name), { type: 'skill', name: part.name, path: part.path }); continue }
-    if (part.type === 'text') { if (part.text) input.push({ type: 'text', text: part.text, text_elements: [] }); continue }
+    if (part.type === 'text') { if (part.text) input.push(part.pasteId ? markedText(part.text, pastedTextLabel(part.text)) : { type: 'text', text: part.text, text_elements: [] }); continue }
     // text_elements is the App Server's native UI-placeholder mechanism. Keep filenames
     // in the recorded input without adding unsupported fields to the image union.
     const marker = '[Image: ' + part.name + ']'
@@ -34,6 +36,7 @@ export function messageParts(content: Item['content']): PromptPart[] {
     if (part.type === 'text') {
       const element = part.text_elements?.[0]
       if (part.text_elements?.length === 1 && element?.byteRange.start === 0 && element.byteRange.end === new TextEncoder().encode(part.text || '').length) {
+        if (/^粘贴的文本 \(\d+字符\)$/.test(element.placeholder || '')) { result.push({ type: 'text', text: part.text || '', pasteId: 'paste-' + randomId() }); continue }
         if (element.placeholder === THREAD_REFERENCE_MARKER && part.text?.startsWith('## Referenced chats with Codex:')) continue
         if (next && typeof next === 'object' && ['skill', 'mention'].includes(next.type) && next.name === element.placeholder) continue
         const match = /^\[@[\s\S]*\]\((thread:\/\/[a-z0-9_-]{1,64})\)$/i.exec(part.text || '')
@@ -51,7 +54,7 @@ export function messageParts(content: Item['content']): PromptPart[] {
     } else result.push({ type: 'text', text: '[' + (part.name || part.type) + ']' })
   }
   const last = result[result.length - 1]
-  if (last?.type === 'text') last.text = last.text.trimEnd()
+  if (last?.type === 'text' && !last.pasteId) last.text = last.text.trimEnd()
   return result
 }
 export function safeImageUrl(url?: string) { return url && (/^data:image\/(png|jpeg|webp|gif);base64,/i.test(url) || /^https?:\/\//i.test(url)) ? url : '' }

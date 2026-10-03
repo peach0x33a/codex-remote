@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { PhArrowCounterClockwise, PhPencilSimple, PhX, PhCode, PhCopy, PhFileText, PhGlobe, PhSparkle, PhTerminal, PhArrowsIn } from '@phosphor-icons/vue'
 import InlineImage from './InlineImage.vue'
+import PastedText from './PastedText.vue'
 import { messageParts, reasoningText } from '../lib/prompt'
 import type { Item } from '../../shared/protocol'
 import { renderMarkdown } from '../lib/markdown'
@@ -46,7 +47,7 @@ const activityError = computed(() => toolActivityError(props.item))
 </script>
 
 <template>
-  <article v-if="item.type === 'userMessage'" class="message message-user" aria-label="你的消息"><div class="user-bubble"><template v-for="(part, index) in parts" :key="index"><span v-if="part.type === 'text'" class="user-text">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineImage v-else :src="part.url" :name="part.name" /></template></div><div class="user-message-actions"><button type="button" class="icon-button small" aria-label="编辑消息" :title="actionHint || '编辑消息'" :disabled="actionsDisabled || editDisabled" @click="emit('edit', item.id)"><PhPencilSimple :size="16" /></button><button type="button" class="icon-button small" aria-label="撤回消息" title="撤回消息" :disabled="actionsDisabled" @click="emit('withdraw', item.id)"><PhArrowCounterClockwise :size="16" /></button></div></article>
+  <article v-if="item.type === 'userMessage'" class="message message-user" aria-label="你的消息"><div class="user-bubble"><template v-for="(part, index) in parts" :key="index"><PastedText v-if="part.type === 'text' && part.pasteId" :text="part.text" /><span v-else-if="part.type === 'text'" class="user-text">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineImage v-else :src="part.url" :name="part.name" /></template></div><div class="user-message-actions"><button type="button" class="icon-button small" aria-label="编辑消息" :title="actionHint || '编辑消息'" :disabled="actionsDisabled || editDisabled" @click="emit('edit', item.id)"><PhPencilSimple :size="16" /></button><button type="button" class="icon-button small" aria-label="撤回消息" title="撤回消息" :disabled="actionsDisabled" @click="emit('withdraw', item.id)"><PhArrowCounterClockwise :size="16" /></button></div></article>
   <article v-else-if="item.type === 'agentMessage' || item.type === 'plan'" class="message message-agent" aria-label="Codex 回复">
     <div class="agent-avatar"><PhTerminal :size="18" weight="bold" /></div>
     <div class="agent-content"><div class="message-author">Codex <span v-if="item.type === 'plan'">计划</span><span v-else-if="item.phase === 'commentary'">进展</span></div><div class="markdown" @click="onMarkdownClick" v-html="html" /><div v-if="item.text" class="agent-message-actions"><button type="button" class="icon-button copy-button" aria-label="复制回复" @click="emit('copy', item.text || '')"><PhCopy :size="16" /></button><span v-if="workDurationLabel" class="work-duration">{{ workDurationLabel }}</span></div></div>

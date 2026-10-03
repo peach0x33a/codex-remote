@@ -104,6 +104,7 @@ beforeAll(async () => {
   const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
   const compiled = compileScript(descriptor, { id: 'turn-duration-test', inlineTemplate: true })
   const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(compiled.content)
+    .replace(/import PastedText from ["']\.\/PastedText\.vue["'];?/, 'const PastedText = { render: () => null };')
     .replace(/import[^;]*from ["'](?:\.\/InlineImage\.vue|\.\.\/lib\/(?:markdown|details-motion))["'];?/g, '')
     .replace(/from (["'])([^"']+)\1/g, (_match, _quote, specifier: string) =>
       'from ' + JSON.stringify(specifier.startsWith('.') ? new URL(specifier + '.ts', file).href : import.meta.resolve(specifier)))

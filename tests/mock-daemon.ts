@@ -207,7 +207,8 @@ const server = Bun.serve<Peer>({
       if (method === 'turn/steer') {
         const thread = threads.get(String(p.threadId)), turn = thread?.turns.find(turn => turn.id === p.expectedTurnId && turn.status === 'inProgress')
         if (!thread || !turn) { fail(-32600, 'no active turn to steer'); return }
-        const user: Item = { id: crypto.randomUUID(), type: 'userMessage', content: p.input as Item['content'] }
+        if (scenario === 'steer-not-consumed') { respond({ turnId: turn.id }); return }
+        const user: Item = { id: crypto.randomUUID(), clientId: p.clientUserMessageId as string | undefined, type: 'userMessage', content: p.input as Item['content'] }
         turn.items.push(user); emit(thread.id, 'item/completed', { turnId: turn.id, item: user }); respond({ turnId: turn.id }); return
       }
       if (method === 'fuzzyFileSearch') {

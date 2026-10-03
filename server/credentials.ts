@@ -6,8 +6,9 @@ import { normalizeEndpoint } from '../shared/endpoint'
 
 import type { ConnectionProfile } from '../shared/protocol'
 import { parseProfile, parseProfileSnapshot, profileFields, profileId, record, type ProfileSnapshot } from '../shared/profiles'
+import { INPUT_HISTORY_LIMIT, INPUT_HISTORY_STORAGE_LIMIT, parseHistoryEntries, parseHistoryInput, type InputHistoryEntry } from '../shared/input-history'
 
-type StoreData = { version: 1 | 2; credentials: Credentials; profiles?: ConnectionProfile[]; selectedId?: string }
+type StoreData = { version: 1 | 2; credentials: Credentials; profiles?: ConnectionProfile[]; selectedId?: string; inputHistory?: InputHistoryEntry[] }
 type Credential = { endpoint: string; token: string }
 type Credentials = Record<string, Credential>
 const pending = new Map<string, Promise<void>>()
@@ -103,6 +104,7 @@ export class CredentialStore {
         if (credentialToken(value.token, true) !== value.token) throw unavailable()
       }
       if (data.version === 2 || data.profiles !== undefined) parseProfileSnapshot(data)
+      if (data.inputHistory !== undefined) parseHistoryEntries(data.inputHistory)
       return data as StoreData
     } catch { throw unavailable() }
   }
@@ -229,6 +231,7 @@ export class CredentialStore {
       const data = await this.read(), profile = data.profiles?.find(p => p.id === id)
       if (!profile) return this.snapshot(data)
       data.profiles = data.profiles!.filter(p => p.id !== id)
+      if (data.inputHistory) data.inputHistory = data.inputHistory.filter(entry => entry.deviceId !== id)
       if (profile.credentialId && !data.profiles.some(p => p.credentialId === profile.credentialId)) delete data.credentials[profile.credentialId]
       if (data.selectedId === id) data.selectedId = data.profiles[0]?.id || ''
       await this.write(data)
@@ -246,6 +249,43 @@ export class CredentialStore {
       data.selectedId = id || data.profiles[0]?.id || ''
       await this.write(data)
       return this.snapshot(data)
+    })
+  }
+
+  async inputHistory(device: unknown): Promise<InputHistoryEntry[]> {
+    let id: string
+    try { id = profileId(device) } catch (error) { throw new CredentialError((error as Error).message) }
+    return this.serialized(async () => {
+      const data = await this.read()
+      if (!data.profiles?.some(profile => profile.id === id)) throw new CredentialError('设备已被移除，请刷新设备列表。', 404)
+      return (data.inputHistory ?? []).filter(entry => entry.deviceId === id).slice(-INPUT_HISTORY_LIMIT)
+    })
+  }
+
+  async rememberInput(value: unknown): Promise<InputHistoryEntry[]> {
+    let id: string, input: ReturnType<typeof parseHistoryInput>, entryId: string
+    try {
+      if (!record(value)) throw new Error('输入历史格式无效。')
+      id = profileId(value.deviceId); input = parseHistoryInput(value.input)
+      entryId = profileId(value.id)
+    } catch (error) { throw new CredentialError((error as Error).message) }
+    return this.serialized(async () => {
+      const data = await this.read()
+      if (!data.profiles?.some(profile => profile.id === id)) throw new CredentialError('设备已被移除，请刷新设备列表。', 404)
+      const entries = data.inputHistory ?? []
+      const old = entries.find(entry => entry.deviceId === id && entry.id === entryId)
+      if (old && JSON.stringify(old.input) !== JSON.stringify(input)) throw new CredentialError('输入历史标识已被使用。', 409)
+      if (!old) {
+        const sameDevice = entries.filter(entry => entry.deviceId === id).slice(-(INPUT_HISTORY_LIMIT - 1))
+        const retained = new Set(sameDevice.map(entry => entry.id))
+        data.inputHistory = [...entries.filter(entry => entry.deviceId !== id || retained.has(entry.id)), { id: entryId, deviceId: id, createdAt: Date.now(), input }]
+        const sizes = data.inputHistory.map(entry => Buffer.byteLength(JSON.stringify(entry)) + 1)
+        let size = sizes.reduce((sum, bytes) => sum + bytes, 2), remove = 0
+        while (size > INPUT_HISTORY_STORAGE_LIMIT) size -= sizes[remove++]!
+        if (remove) data.inputHistory.splice(0, remove)
+        await this.write(data)
+      }
+      return (data.inputHistory ?? entries).filter(entry => entry.deviceId === id)
     })
   }
 }

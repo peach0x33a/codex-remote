@@ -1808,6 +1808,44 @@ describe('explicit steer versus queued input', () => {
     expect(state.pendingSteers.value).toHaveLength(1)
     expect(requests.some(call => call.method === 'turn/interrupt')).toBe(false)
   })
+  test.each(['interrupted', 'completed', 'failed'])('recovers an unobserved steer after its turn is %s without resending', async status => {
+    const turn = await running()
+    archiveTransport = (method, params, reply) => { if (method !== 'turn/steer') return false; reply({ turnId: params.expectedTurnId }); return true }
+    expect(await state.steer(parts)).toBe(true)
+    const pending = state.pendingSteers.value[0]!, mark = requests.length
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status, items: [] } }); await settle()
+    expect(state.pendingSteers.value[0]).toMatchObject({ ended: true, cancelable: true })
+    expect(state.activeTurn.value).toBeUndefined(); expect(state.busy.value).toBe(false)
+    if (status === 'interrupted') expect(state.withdrawPendingSteer(pending.id)).toBe(true)
+    else expect(state.takePendingSteer(pending.id)).toEqual(parts)
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(requests.slice(mark).some(call => ['turn/start', 'turn/steer', 'turn/interrupt', 'thread/revert'].includes(call.method))).toBe(false)
+  })
+  test('a terminal event before the steer acknowledgement stays recoverable, including late echoes', async () => {
+    const turn = await running()
+    let ack: (() => void) | undefined
+    archiveTransport = (method, params, reply) => { if (method !== 'turn/steer') return false; ack = () => reply({ turnId: params.expectedTurnId }); return true }
+    const sending = state.steer(parts); await eventually(() => !!ack, 'steer should await ack')
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status: 'interrupted', items: [] } }); await settle()
+    ack!(); expect(await sending).toBe(true)
+    expect(state.pendingSteers.value[0]).toMatchObject({ ended: true, cancelable: true, accepted: true })
+    const call = requests.findLast(call => call.method === 'turn/steer')!
+    socket.emit('item/completed', { threadId: 'a', turnId: turn.id, item: { id: 'late-steer', clientId: call.params.clientUserMessageId, type: 'userMessage', content: call.params.input } }); await settle()
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(state.items.value.filter(item => item.id === 'late-steer')).toHaveLength(1)
+    expect(state.busy.value).toBe(false)
+  })
+  test('only the owning turn ends a pending steer; terminal snapshots also reconcile native user input', async () => {
+    const turn = await running()
+    archiveTransport = (method, params, reply) => { if (method !== 'turn/steer') return false; reply({ turnId: params.expectedTurnId }); return true }
+    await state.steer(parts)
+    socket.emit('turn/completed', { threadId: 'a', turn: { id: 'older-turn', status: 'interrupted', items: [] } }); await settle()
+    expect(state.pendingSteers.value[0]).toMatchObject({ ended: false, cancelable: false })
+    const call = requests.findLast(call => call.method === 'turn/steer')!
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status: 'completed', items: [{ id: 'snapshot-steer', clientId: call.params.clientUserMessageId, type: 'userMessage', content: call.params.input }] } }); await settle()
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(state.items.value.some(item => item.id === 'snapshot-steer')).toBe(true)
+  })
   test('too many referenced threads are rejected before a steer request is emitted', async () => {
     await running()
     const mentions = Array.from({ length: 17 }, (_, i) => ({ type: 'mention' as const, id: String(i), kind: 'thread' as const, name: 'chat ' + i, path: 'thread://chat-' + i }))

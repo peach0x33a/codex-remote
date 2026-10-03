@@ -5,14 +5,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId,
 import { PhArchive, PhAt, PhBrain, PhChatCircle, PhCopy, PhCpu, PhCube, PhFile, PhFolder, PhGearSix, PhGitDiff, PhLightning, PhMagnifyingGlass, PhPencilSimple, PhPlus, PhQuestion, PhRobot, PhShieldCheck, PhTarget, PhTerminal } from '@phosphor-icons/vue'
 import ImagePreview from './ImagePreview.vue'
 import { captureComposerTrigger, composerSuggestionInsertion, type CapturedComposerToken, type ComposerTrigger } from '../lib/composer-trigger'
-import type { PromptPart } from '../lib/prompt'
+import { isLongPaste, pastedTextLabel, type PromptPart } from '../lib/prompt'
 import { atEditorBoundary, createInputHistory } from '../lib/input-history'
 type ImagePart = Extract<PromptPart, { type: 'image' }>
 type SkillPart = Extract<PromptPart, { type: 'skill' }>
 type MentionPart = Extract<PromptPart, { type: 'mention' }>
+type TextPart = Extract<PromptPart, { type: 'text' }>
 type Suggestion = { id: string; label: string; description?: string; insertText?: string; group?: string; source?: string; category?: string; accessibleLabel?: string }
 const props = defineProps<{ modelValue: PromptPart[]; disabled?: boolean; id?: string; label?: string; placeholder?: string; suggestions?: Suggestion[]; suggestionsLoading?: boolean; suggestionsError?: string; externalSuggestions?: boolean; suggestionTarget?: HTMLElement | null; suggestionsActive?: boolean; inputHistory?: PromptPart[][]; historyScope?: string }>()
-const emit = defineEmits<{ 'update:modelValue': [parts: PromptPart[]]; keydown: [event: KeyboardEvent]; files: [files: File[]]; trigger: [trigger: ComposerTrigger | null]; selectSuggestion: [id: string]; navigateCompletion: [direction: number] }>()
+const emit = defineEmits<{ 'update:modelValue': [parts: PromptPart[]]; keydown: [event: KeyboardEvent]; files: [files: File[]]; trigger: [trigger: ComposerTrigger | null]; selectSuggestion: [id: string]; navigateCompletion: [direction: number]; refreshHistory: [] }>()
 const editor = ref<HTMLDivElement>()
 const fallbackId = useId()
 const empty = computed(() => !props.modelValue.some(p => p.type !== 'text' || p.text))
@@ -25,8 +26,9 @@ watch(() => props.historyScope, resetHistory, { flush: 'sync' })
 watch(() => props.modelValue, parts => { if (recalledFingerprint && fingerprint(parts) !== recalledFingerprint) resetHistory() })
 const images = new Map<string, ImagePart>()
 const skills = new Map<string, SkillPart | MentionPart>()
+const pastedTexts = new Map<string, TextPart>()
 const preview = ref<{ image: ImagePart; anchor: DOMRect; pinned: boolean }>()
-const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? 't:' + p.text : p.type === 'image' ? 'i:' + p.id : JSON.stringify([p.type, p.id, p.name, p.path])).join('\0')
+const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? JSON.stringify(['text', p.text, p.pasteId]) : p.type === 'image' ? 'i:' + p.id : JSON.stringify([p.type, p.id, p.name, p.path])).join('\0')
 const trigger = shallowRef<CapturedComposerToken | null>(null)
 const menu = ref<HTMLDivElement>(), highlighted = ref(0), composing = ref(false)
 const menuId = fallbackId + '-suggestions'
@@ -66,7 +68,7 @@ function refreshTrigger() {
   trigger.value = token; reportTrigger(token)
 }
 function selectionChanged() { captureSelection(); refreshTrigger() }
-function focused() { void nextTick(refreshTrigger) }
+function focused() { emit('refreshHistory'); void nextTick(refreshTrigger) }
 function blur(event: FocusEvent) { captureSelection(); if (props.externalSuggestions && (event.relatedTarget as HTMLElement | null)?.closest?.('.composer-island')) return; dismissSuggestions(true) }
 function compositionStart() {
   clearTimeout(compositionTimer); composing.value = true; compositionCommitPending = false
@@ -188,9 +190,33 @@ function makeChip(image: ImagePart) {
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M6 6l12 12M18 6L6 18'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-linecap', 'round'); svg.append(path); remove.append(svg)
   chip.append(thumb, label, remove); return chip
 }
+function makeTextChip(part: TextPart) {
+  const chip = document.createElement('span')
+  chip.className = 'inline-pasted-text editor-text-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = part.pasteId!; chip.tabIndex = 0
+  chip.setAttribute('role', 'button'); chip.setAttribute('aria-label', '展开' + pastedTextLabel(part.text)); chip.title = '展开粘贴文本，继续编辑'
+  const label = document.createElement('span'); label.textContent = '[' + pastedTextLabel(part.text) + ']'
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'image-chip-remove'; remove.dataset.imageRemove = part.pasteId!; remove.tabIndex = -1; remove.setAttribute('aria-label', '移除粘贴文本')
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M6 6l12 12M18 6L6 18'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-linecap', 'round'); svg.append(path); remove.append(svg)
+  chip.append(label, remove); return chip
+}
+function revealCaret() {
+  const root = editor.value, selection = window.getSelection()
+  if (!root || document.activeElement !== root || !selection?.rangeCount) return
+  const range = selection.getRangeAt(0).cloneRange()
+  if (!range.collapsed || !root.contains(range.startContainer)) return
+  let bounds = range.getBoundingClientRect()
+  if (!bounds.height && range.startContainer.nodeType === Node.TEXT_NODE && range.startOffset > 0) {
+    range.setStart(range.startContainer, range.startOffset - 1); bounds = range.getBoundingClientRect()
+  }
+  if (!bounds.height) return
+  const box = root.getBoundingClientRect(), padding = 8
+  if (bounds.bottom > box.bottom - padding) root.scrollTop += bounds.bottom - box.bottom + padding
+  else if (bounds.top < box.top + padding) root.scrollTop -= box.top + padding - bounds.top
+}
 function read(): PromptPart[] {
   const parts: PromptPart[] = []
-  function text(value: string) { if (!value) return; const last = parts.at(-1); if (last?.type === 'text') last.text += value; else parts.push({ type: 'text', text: value }) }
+  function text(value: string) { if (!value) return; const last = parts.at(-1); if (last?.type === 'text' && !last.pasteId) last.text += value; else parts.push({ type: 'text', text: value }) }
   function walk(node: Node, marker?: { pending: boolean }) {
     if (node.nodeType === Node.TEXT_NODE) {
       let value = node.textContent || ''
@@ -198,7 +224,7 @@ function read(): PromptPart[] {
       text(value); return
     }
     if (!(node instanceof HTMLElement)) return
-    if (node.dataset.attachmentId) { const part = images.get(node.dataset.attachmentId) || skills.get(node.dataset.attachmentId); if (part) parts.push(part); return }
+    if (node.dataset.attachmentId) { const part = images.get(node.dataset.attachmentId) || skills.get(node.dataset.attachmentId) || pastedTexts.get(node.dataset.attachmentId); if (part) parts.push(part); return }
     if (node.tagName === 'BR') { text('\n'); return }
     const block = ['DIV', 'P'].includes(node.tagName) && node !== editor.value
     const last = parts.at(-1)
@@ -210,14 +236,17 @@ function read(): PromptPart[] {
   if (editor.value) walk(editor.value)
   return parts
 }
-function publish(updateTrigger = true) { const parts = read(); lastFingerprint = fingerprint(parts); emit('update:modelValue', parts); captureSelection(); if (updateTrigger) refreshTrigger() }
+function publish(updateTrigger = true) { const parts = read(); lastFingerprint = fingerprint(parts); emit('update:modelValue', parts); captureSelection(); if (updateTrigger) refreshTrigger(); void nextTick(revealCaret) }
 function input(event: Event) { if ((event as InputEvent).isComposing && !composing.value) compositionStart(); publish() }
 function render(parts: PromptPart[]) {
   if (!editor.value) return
   dismissedToken = ''; closeSuggestions()
-  images.clear(); skills.clear(); editor.value.replaceChildren(); savedRange = undefined
+  images.clear(); skills.clear(); pastedTexts.clear(); editor.value.replaceChildren(); savedRange = undefined
   for (const part of parts) {
-    if (part.type === 'text') editor.value.append(document.createTextNode(part.text))
+    if (part.type === 'text') {
+      if (part.pasteId) { pastedTexts.set(part.pasteId, part); const chip = makeTextChip(part); editor.value.append(chip); ensureImageCarets(chip) }
+      else editor.value.append(document.createTextNode(part.text))
+    }
     else {
       if (part.type === 'image') images.set(part.id, part); else skills.set(part.id, part)
       const chip = part.type === 'image' ? makeChip(part) : makeSkillChip(part); editor.value.append(chip); ensureImageCarets(chip)
@@ -230,6 +259,9 @@ function insertNode(node: Node) {
   const range = restoreSelection(); if (!range) return
   range.deleteContents(); range.insertNode(node)
   if (node instanceof HTMLElement && node.dataset.attachmentId) placeCaretInside(ensureImageCarets(node))
+  else if (node.nodeType === Node.TEXT_NODE && node.textContent?.endsWith('\n')) {
+    const anchor = makeCaretAnchor(); node.parentNode?.insertBefore(anchor, node.nextSibling); placeCaretInside(anchor)
+  }
   else {
     if (node.nodeType === Node.TEXT_NODE) range.setStart(node, node.textContent?.length || 0)
     else range.setStartAfter(node)
@@ -297,25 +329,39 @@ function selectSuggestion(index: number) {
 }
 function paste(event: ClipboardEvent) {
   event.preventDefault(); captureSelection()
+  if (props.disabled) return
   const files = [...(event.clipboardData?.files || [])]
   if (files.length) emit('files', files)
-  else insertNode(document.createTextNode(event.clipboardData?.getData('text/plain') || ''))
+  else insertPaste(event.clipboardData?.getData('text/plain') || '')
+}
+function insertPaste(text: string) {
+  if (!text) return
+  if (!isLongPaste(text)) { insertNode(document.createTextNode(text)); return }
+  const part: TextPart = { type: 'text', text, pasteId: 'paste-' + randomId() }
+  pastedTexts.set(part.pasteId!, part); insertNode(makeTextChip(part))
 }
 function drop(event: DragEvent) {
   event.preventDefault()
+  if (props.disabled) return
   const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
   const range = doc.caretRangeFromPoint?.(event.clientX, event.clientY)
   if (range && editor.value?.contains(range.commonAncestorContainer)) savedRange = range
   const files = [...(event.dataTransfer?.files || [])]
   if (files.length) emit('files', files)
-  else insertNode(document.createTextNode(event.dataTransfer?.getData('text/plain') || ''))
+  else insertPaste(event.dataTransfer?.getData('text/plain') || '')
 }
 function chipAt(event: Event) { return (event.target as HTMLElement).closest<HTMLElement>('[data-attachment-id]') }
 function showImage(chip: HTMLElement, pinned: boolean) { const image = images.get(chip.dataset.attachmentId!); if (image?.url) preview.value = { image, anchor: chip.getBoundingClientRect(), pinned } }
+function openChip(chip: HTMLElement) {
+  const part = pastedTexts.get(chip.dataset.attachmentId!)
+  if (!part || props.disabled) { showImage(chip, true); return }
+  const range = document.createRange(); range.selectNode(chip); savedRange = range
+  pastedTexts.delete(chip.dataset.attachmentId!); insertNode(document.createTextNode(part.text))
+}
 function click(event: MouseEvent) {
   const remove = (event.target as HTMLElement).closest<HTMLElement>('[data-image-remove]')
   if (remove) { event.preventDefault(); chipAt(event)?.remove(); preview.value = undefined; publish(); void focus(); return }
-  const chip = chipAt(event); if (chip) { event.preventDefault(); showImage(chip, true) }
+  const chip = chipAt(event); if (chip) { event.preventDefault(); openChip(chip) }
 }
 function deleteAdjacentImage(event: KeyboardEvent) {
   if (!['Backspace', 'Delete'].includes(event.key) || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false
@@ -354,7 +400,7 @@ function key(event: KeyboardEvent) {
   if (recallInput(event)) return
   if (deleteAdjacentImage(event)) return
   const chip = chipAt(event)
-  if (chip && ['Enter', ' '].includes(event.key)) { event.preventDefault(); showImage(chip, true); return }
+  if (chip && ['Enter', ' '].includes(event.key)) { event.preventDefault(); openChip(chip); return }
   emit('keydown', event)
 }
 function recallInput(event: KeyboardEvent) {
@@ -376,6 +422,7 @@ function recallInput(event: KeyboardEvent) {
   const token = captureComposerTrigger(root, caret)
   if (token) dismissedToken = tokenKey(token)
   emit('update:modelValue', parts)
+  void nextTick(revealCaret)
   return true
 }
 function hover(event: PointerEvent) { if (event.pointerType !== 'mouse' || preview.value?.pinned) return; const chip = chipAt(event); if (chip) showImage(chip, false) }

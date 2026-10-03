@@ -11,6 +11,7 @@ import QueuePane from './QueuePane.vue'
 import { hasPrompt, readImages, type PromptPart } from '../lib/prompt'
 import type { ConnectionProfile } from '../../shared/protocol'
 import { conversationInputs } from '../lib/input-history'
+import { useInputHistory } from '../composables/useInputHistory'
 import { completedTurnDurations, withStoppedTurnFooters } from '../lib/turn-duration'
 import type { TaskNotice } from '../lib/task-notifications'
 const props = defineProps<{ threadId: string; profile: ConnectionProfile; token: string }>()
@@ -34,10 +35,11 @@ const visible = computed(() => visibleTurns.value.flatMap(turn => turn.items))
 const transcript = computed(() => withStoppedTurnFooters(visibleTurns.value, turn => turn.items.map(item => ({ key: item.id, item }))))
 const workDurations = computed(() => completedTurnDurations(codex.displayTurns.value))
 const inputHistory = computed(() => conversationInputs([{ id: props.threadId, status: 'inProgress', items: visible.value }]))
+const history = useInputHistory(computed(() => props.profile.id), codex.authenticated, inputHistory, codex.toast)
 const blocked = computed(() => !ready.value || opening.value || !codex.connected.value || codex.active.value?.id !== props.threadId || codex.loadingThread.value || !!codex.threadLoadError.value || codex.revising.value || codex.sending.value || codex.steering.value || submitting.value || attaching.value)
 const hasQueue = computed(() => !!codex.currentQueue.value.length || queueEditing.value)
 const serverManaged = computed(() => (codex.serverQueueSupported.value || codex.currentQueue.value.some(job => job.source === 'server')) && !codex.currentQueue.value.some(job => job.source !== 'server'))
-const updateBusy = computed(() => hasPrompt(draft.value) || opening.value || submitting.value || attaching.value || codex.busy.value || !!codex.activeTurn.value || codex.sending.value || codex.steering.value || !!codex.pendingSteers.value.length || hasQueue.value || codex.revising.value)
+const updateBusy = computed(() => hasPrompt(draft.value) || opening.value || submitting.value || attaching.value || codex.busy.value || !!codex.activeTurn.value || codex.sending.value || codex.steering.value || codex.pendingSteers.value.some(steer => !steer.ended) || hasQueue.value || codex.revising.value)
 watch(updateBusy, value => emit('busy', value), { immediate: true, flush: 'sync' })
 const connectionError = computed(() => openError.value || codex.threadLoadError.value || codex.error.value)
 const statusMessage = computed(() => {
@@ -74,6 +76,7 @@ async function send(queueOnly = false) {
   submitting.value = true; draftError.value = ''
   try {
     if (await (codex.busy.value && !queueOnly ? codex.steer(parts) : codex.send(parts))) {
+      void history.remember(parts)
       if (!disposed && draft.value === parts) draft.value = []
     }
   } catch (cause) { if (!disposed) draftError.value = cause instanceof Error ? cause.message : String(cause) }
@@ -87,9 +90,10 @@ function onKey(event: KeyboardEvent) {
 function restoreDraft(parts: PromptPart[]) {
   if (disposed) return
   draft.value = [...draft.value, ...(hasPrompt(draft.value) ? [{ type: 'text' as const, text: '\n' }] : []), ...parts.map(part => ({ ...part }))]
-  codex.toast('排队消息的编辑草稿已放回输入框。')
+  codex.toast('消息草稿已放回输入框。')
   void nextTick(() => { if (!disposed) editor.value?.focus(true) })
 }
+function restoreSteer(id: string) { const parts = codex.takePendingSteer(id); if (parts) restoreDraft(parts) }
 async function attach(files: File[]) {
   if (disposed || attaching.value || submitting.value) return
   attaching.value = true; draftError.value = ''
@@ -123,11 +127,11 @@ watch([visible, statusMessage, connectionError, codex.currentTurnFailure], async
       <p v-if="codex.notice.value" role="status">{{ codex.notice.value }}</p>
     </div>
     <div class="side-chat-input">
-      <ApprovalIsland :approvals="codex.activeApprovals.value" :steers="codex.pendingSteers.value" :has-queue="hasQueue" :reasoning="codex.reconnectStatus.value || codex.compacting.value ? '' : codex.liveReasoning.value" :thinking-elapsed="codex.thinkingElapsed.value" :disabled="!codex.connected.value || codex.revising.value" @respond="codex.respond" @withdraw-steer="codex.withdrawPendingSteer">
+      <ApprovalIsland :approvals="codex.activeApprovals.value" :steers="codex.pendingSteers.value" :has-queue="hasQueue" :reasoning="codex.reconnectStatus.value || codex.compacting.value ? '' : codex.liveReasoning.value" :thinking-elapsed="codex.thinkingElapsed.value" :disabled="!codex.connected.value || codex.revising.value" @respond="codex.respond" @withdraw-steer="codex.withdrawPendingSteer" @restore-steer="restoreSteer">
         <template #queue><QueuePane :messages="codex.currentQueue.value" :working="codex.busy.value" :paused="codex.queuePaused.value" :server-managed="serverManaged" :save="codex.updateQueued" :disabled="!codex.connected.value || codex.loadingThread.value || opening || codex.revising.value" @editing="queueEditing = $event" @remove="codex.removeQueued" @restore="restoreDraft" @resume="codex.resumeQueue" @pause="codex.pauseQueue" /></template>
       </ApprovalIsland>
       <form @submit.prevent="send()">
-        <PromptEditor :input-history="inputHistory" :history-scope="profile.id + '/' + threadId" ref="editor" v-model="draft" label="侧边聊天消息" placeholder="继续讨论…" :disabled="codex.revising.value" @files="attach" @keydown="onKey" />
+        <PromptEditor :input-history="history.entries.value" @refresh-history="history.refresh()" :history-scope="profile.id + '/' + threadId" ref="editor" v-model="draft" label="侧边聊天消息" placeholder="继续讨论…" :disabled="codex.revising.value" @files="attach" @keydown="onKey" />
         <p v-if="draftError" class="side-chat-error" role="alert">{{ draftError }}</p>
         <div class="side-chat-actions">
           <button v-if="(codex.busy.value || hasQueue) && hasPrompt(draft)" type="button" class="icon-button" aria-label="加入侧边聊天队列" :disabled="blocked" @click="send(true)"><PhListNumbers :size="18" /></button>
