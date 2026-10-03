@@ -3,10 +3,12 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published frontend: 955fd61
+Published frontend: e1c8e62
 Published backend: 1f36f43
 
 ## Latest delivery
+
+Command menu now displays 快速模式 with a Chinese Priority description, and 压缩上下文 for /compact. Frontend e1c8e62 published with typechecks/build and live asset verification; backend PID unchanged. See task-history/2026-10-04-fast-menu-name.md.
 
 `/fast` toggles Priority off/on; the reasoning panel top-left lightning button shares its state and supports both priority and legacy fast wire tiers. `/compact` and the context capacity window button invoke native thread/compact/start, with busy/connection guards and existing streamed progress. Frontend 955fd61 published without restarting backend 1f36f43 (PID 527090). 171 related unit tests and four desktop/mobile browser tests passed, with typechecks, Vite/PWA build and live asset hashes verified. Details: task-history/2026-10-04-fast-priority-manual-compaction.md.
 
