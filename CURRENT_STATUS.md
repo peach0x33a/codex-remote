@@ -3,10 +3,12 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published frontend: 2822c29
+Published frontend: 955fd61
 Published backend: 1f36f43
 
 ## Latest delivery
+
+`/fast` toggles Priority off/on; the reasoning panel top-left lightning button shares its state and supports both priority and legacy fast wire tiers. `/compact` and the context capacity window button invoke native thread/compact/start, with busy/connection guards and existing streamed progress. Frontend 955fd61 published without restarting backend 1f36f43 (PID 527090). 171 related unit tests and four desktop/mobile browser tests passed, with typechecks, Vite/PWA build and live asset hashes verified. Details: task-history/2026-10-04-fast-priority-manual-compaction.md.
 
 Removed literal outer square brackets from pasted-text chips in the composer and sent/steer previews. Frontend 2822c29 published; backend 1f36f43 and PID 527090 remain live. Typechecks, isolated Vite/PWA build and served asset hashes passed. See task-history/2026-10-03-pasted-text-label.md.
 
@@ -24,7 +26,9 @@ User criterion: commands count as first-level menu entries. Goal, Git changes, s
 
 ## Running service
 
-Frontend 2822c29 published at 2026-10-03T23:29:37.154232+08:00 without a backend restart. Backend 1f36f43 was published at 2026-10-03T23:12:05.694749+08:00. Actual Bun PID 527090 listens on 127.0.0.1:3000 after a verified restart from PID 3102363. Health, auth, history API and exact served hashes were verified. The existing requiresKey=false state, environment and saved device credentials were preserved. Metadata: .local/deployment.json. Previous frontend: .local/releases/20261003-231205-before-1f36f43. Rollback backend source: .local/releases/20261003-231205-backend-b2266f5. Older PID/auth state records are historical.
+Current frontend 955fd61 published at 2026-10-04T01:26:31.302524+08:00; backend remains 1f36f43, PID 527090. Health, exact frontend assets and unchanged auth/credentials verified.
+
+Previous frontend 2822c29 published at 2026-10-03T23:29:37.154232+08:00 without a backend restart. Backend 1f36f43 was published at 2026-10-03T23:12:05.694749+08:00. Actual Bun PID 527090 listens on 127.0.0.1:3000 after a verified restart from PID 3102363. Health, auth, history API and exact served hashes were verified. The existing requiresKey=false state, environment and saved device credentials were preserved. Metadata: .local/deployment.json. Previous frontend: .local/releases/20261003-231205-before-1f36f43. Rollback backend source: .local/releases/20261003-231205-backend-b2266f5. Older PID/auth state records are historical.
 
 Input history shares the existing .local/credentials.json private atomic store; 100 entries per device and 16 MiB globally. Do not put this file under dist. The installed Codex CLI is 0.159.0; its schema has no individual accepted-steer cancellation method. Ended-steer removal is a hint/draft operation, not a server history edit. Website history is collected prospectively; external TUI inputs are not bulk-imported.
 
