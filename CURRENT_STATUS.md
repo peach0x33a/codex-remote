@@ -8,6 +8,8 @@ Published backend: 40b7e98
 
 ## Latest delivery
 
+Application updates are no longer gated on running work. The full-width banner below navigation keeps a single availability message, applies the update as an explicit user action regardless of task, revision or queue state, and disables the button only while its own request is in flight. Failure still shows the retryable error toast. Details: task-history/2026-10-04-unblocked-update-banner.md.
+
 Portable appearance export/import includes theme, content width, wrapping, font names/sizes, embedded uploaded background or remote HTTP/HTTPS URL, and image effects. Invalid imports or failed image loads preserve the existing appearance. Network backgrounds load directly in the browser; export excludes connection settings and credentials.
 
 File browser directory actions set the next conversation's cwd, create folders, or create empty files on the remote device without overwriting existing entries. Docked opening/closing animates the conversation width; mobile overlay and reduced-motion behavior are preserved. Complete HTML/HTM files offer static HTML/CSS/SVG preview and source tabs; scripts and relative asset serving are unsupported. Native fileChange activities now use file cards and numbered colored diffs, with truthful raw fallbacks.
@@ -18,7 +20,7 @@ Subagent conversations carry visible sidebar/header/details badges, native names
 
 Two deliberate older-direction gestures at the transcript top load one earlier page, with wheel inertia grouping, touch support, duplicate/loading guards and fresh retry intent. The manual history button is centered. A visible message anchor preserves reading position; late responses cannot scroll a different device/thread.
 
-Read groups expand into deduplicated vertical paths under 读取了 X 个文件; original execution data is behind 执行详情. Image-view records can open the actual remote image through the conversation device's file preview. Completed one-line reasoning displays its icon, sanitized text and native duration inline; multi-line reasoning stays collapsible, and live/blank reasoning stays out of the transcript. Application updates use a full-width banner below navigation with manual update, work-time protection and retry. Details: task-history/2026-10-04-history-gestures-tool-previews-update-banner.md.
+Read groups expand into deduplicated vertical paths under 读取了 X 个文件; original execution data is behind 执行详情. Image-view records can open the actual remote image through the conversation device's file preview. Completed one-line reasoning displays its icon, sanitized text and native duration inline; multi-line reasoning stays collapsible, and live/blank reasoning stays out of the transcript. Application updates use a full-width banner below navigation with manual update, duplicate-request protection and retry; task activity does not disable the action. Details: task-history/2026-10-04-history-gestures-tool-previews-update-banner.md.
 
 /fast toggles Priority off/on and shares its state with the top-left reasoning lightning button. The menu displays 快速模式 with Chinese description. /compact and the context-capacity button invoke native thread/compact/start with streamed progress. See task-history/2026-10-04-fast-priority-manual-compaction.md and task-history/2026-10-04-fast-menu-name.md.
 
@@ -26,7 +28,7 @@ Terminal unobserved steers can be removed as hints or returned to the draft. Lon
 
 ## Verification
 
-682 full unit/integration cases passed (5,887 assertions, 51 files). 34 focused desktop/mobile browser cases passed against the final staged build. Vue/server typechecks, Vite/PWA build, diff check and live asset hashes passed. Captures for portable settings, directory actions, HTML, subagent identity, colored diffs and compact Session ID were inspected. Mobile coverage is browser emulation; no physical handset check. Earlier full-browser results are historical, not a full-suite run for this release.
+682 full unit/integration cases passed (5,889 assertions, 51 files) with the unblocked update banner in the tree; the focused banner case asserts an enabled button during work, one call for duplicate clicks and a real retry after failure. Vue/server typechecks passed. 34 focused desktop/mobile browser cases passed against the previous staged build; this change has no browser or deployment verification yet — no Vite/PWA build, backend restart or served-hash check. Vue/server typechecks, Vite/PWA build, diff check and live asset hashes passed. Captures for portable settings, directory actions, HTML, subagent identity, colored diffs and compact Session ID were inspected. Mobile coverage is browser emulation; no physical handset check. Earlier full-browser results are historical, not a full-suite run for this release.
 
 ## Running service
 
@@ -42,4 +44,4 @@ Input history shares .local/credentials.json (private, atomic; 100 entries per d
 - Error banners stay below navigation, edge to edge. The persistent header file-browser button opens the current directory and can recover from a missing default path. Slash commands count as first-level entries; avoid duplicate controls for /goal, /diff, /skills and /mention. See task-history/2026-10-03-navigation-files-entry-audit.md.
 - Markdown code highlighting/copy, multiple exact APP_ORIGIN values, active Goal time, unified menu geometry, mobile keyboard avoidance, server-side device persistence and deferred default-directory preparation remain deployed. Tailscale is not configured.
 - Goal resume, context-window-only Session ID copy, stream backpressure handling and stopped-turn duration remain in place.
-- Local master changes from this task were not pushed to origin. Prior publication/merge/pruning records and recovery worktrees remain available.
+- Local master commits are published to origin/master. Prior publication/merge/pruning records and recovery worktrees remain available.
