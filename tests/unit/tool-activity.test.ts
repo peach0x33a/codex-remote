@@ -256,20 +256,22 @@ describe('collapsed tool groups and streaming detail state', () => {
 
 })
 
-test('update banner blocks work-time and duplicate updates, then allows retry after failure', async () => {
+test('update banner allows manual updates, blocks duplicate clicks and allows retry after failure', async () => {
   let calls = 0, reject: ((cause: Error) => void) | undefined
   const errors: string[] = []
-  const props = ref({ available: true, disabled: true, update: () => { calls++; return new Promise<void>((_resolve, fail) => { reject = fail }) }, onError: (message: string) => errors.push(message) })
+  const props = ref({ available: true, update: () => { calls++; return new Promise<void>((_resolve, fail) => { reject = fail }) }, onError: (message: string) => errors.push(message) })
   const root = node('root'), app = renderer.createApp({ setup: () => () => h(UpdateBanner, props.value) })
   apps.push(app); app.mount(root)
   const button = () => descendants(root).find(target => target.type === 'button')!
   const click = () => (button().props.onClick as () => Promise<void>)()
-  await click(); expect(calls).toBe(0)
-  props.value.disabled = false; await nextTick()
+  expect(button().props.disabled).toBe(false)
   const pending = click(); await nextTick(); expect(button().props.disabled).toBe(true)
   await click(); expect(calls).toBe(1)
   reject!(new Error('Update failed')); await pending; await nextTick()
   expect(errors).toEqual(['更新失败，请稍后点击重试。'])
+  expect(button().props.disabled).toBe(false)
+  const retry = click(); expect(calls).toBe(2)
+  reject!(new Error('Still unavailable')); await retry; await nextTick()
   expect(button().props.disabled).toBe(false)
   props.value.available = false; await nextTick(); expect(descendants(root).some(target => target.type === 'button')).toBe(false)
 })

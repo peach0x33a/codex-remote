@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { PhDownloadSimple } from '@phosphor-icons/vue'
-const props = defineProps<{ available: boolean; disabled?: boolean; update: () => Promise<void> }>()
+const props = defineProps<{ available: boolean; update: () => Promise<void> }>()
 const emit = defineEmits<{ error: [message: string] }>()
 const updating = ref(false)
 async function apply() {
-  if (!props.available || props.disabled || updating.value) return
+  if (!props.available || updating.value) return
   updating.value = true
   try { await props.update() }
   catch { emit('error', '更新失败，请稍后点击重试。') }
@@ -15,8 +15,8 @@ async function apply() {
 <template>
   <div v-if="available" class="update-banner" role="status">
     <PhDownloadSimple :size="18" aria-hidden="true" />
-    <span>{{ updating ? '正在更新应用…' : disabled ? '新版本可用，任务结束后可更新。' : '新版本可用。' }}</span>
-    <button class="text-button update-banner-button" type="button" :disabled="disabled || updating" :aria-busy="updating" @click="apply"><span v-if="updating" class="spinner" />{{ updating ? '正在更新…' : '更新' }}</button>
+    <span>{{ updating ? '正在更新应用…' : '新版本可用。' }}</span>
+    <button class="text-button update-banner-button" type="button" :disabled="updating" :aria-busy="updating" @click="apply"><span v-if="updating" class="spinner" />{{ updating ? '正在更新…' : '更新' }}</button>
   </div>
 </template>
 <style scoped>

@@ -47,7 +47,7 @@ Working status: append this turn's elapsed time to “Codex 正在工作”, wit
 
 Animated workspace canvas geometry is anchored to the browser viewport. Sidebar collapse/expand changes the clipping region and canvas offset, not the shader resolution or grid origin. Only a real viewport-size change reallocates the canvas backing store; avoid redundant width/height assignments that clear the drawing.
 
-Update availability appears in a compact clickable toast below the top-right header, without occupying layout space. It keeps the existing active-task, revision and local-queue update guards. Ordinary action notices keep their bottom toast position.
+Update availability appears in a full-width banner below navigation. Applying it is an explicit user action independent of task, revision or queue state. Disable only duplicate requests while updating; ordinary action notices keep their bottom toast position.
 
 Connection errors appear as an edge-to-edge strip directly below the workspace navigation header. Use no outer margin or rounded corners on desktop or mobile; retain inner padding, readable wrapping and the dismiss button.
 
@@ -130,4 +130,4 @@ Inline reasoning aligns the icon center with the first text line using the actua
 
 Subagent conversations carry an explicit robot-and-text badge in navigation, the sidebar and details. Native parent/name/role metadata drives identity and a parent-conversation action; forkedFromId alone is insufficient. File-change activities use the shared numbered DiffCode rendering, file type icons, native change labels, and green/red counts. Add/delete payloads are full file contents, while update/move payloads are unified patches; oversized or unrecognized records retain their original text and omit invented counts.
 
-Application updates: restore a full-width banner below navigation, next to the error region, using the same flat geometry and notice colors. Keep explicit manual update, busy protection, progress and retry. Do not put the entry in the header tooltip.
+Application updates: use a full-width banner below navigation, next to the error region, using the same flat geometry and notice colors. Keep explicit manual update, progress, duplicate-request protection and retry. Task activity must not disable the update action. Do not put the entry in the header tooltip.
