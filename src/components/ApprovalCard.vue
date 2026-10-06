@@ -27,11 +27,13 @@ function submit() {
     <p v-if="approval.params.cwd" class="activity-path">{{ approval.params.cwd }}</p>
     <pre v-if="approval.params.command"><code>{{ approval.params.command }}</code></pre>
     <form v-if="isQuestion" @submit.prevent="submit">
-      <fieldset v-for="q in approval.params.questions" :key="q.id"><legend>{{ q.question }}</legend>
+      <div class="question-fields">
+      <fieldset v-for="q in approval.params.questions" :key="q.id" :disabled="disabled"><legend>{{ q.question }}</legend>
         <template v-if="q.options?.length"><label v-for="option in q.options" :key="option.label" class="answer-option"><input v-model="answers[q.id]" type="radio" :name="String(approval.id) + q.id" :value="option.label" /><span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span></label><label v-if="q.isOther" class="answer-option"><input v-model="answers[q.id]" type="radio" :name="String(approval.id) + q.id" value="__other" />其他回答</label><input v-if="answers[q.id] === '__other'" v-model="other[q.id]" :aria-label="q.header + '，其他回答'" :type="q.isSecret ? 'password' : 'text'" placeholder="输入你的回答" autocomplete="off" /></template>
         <input v-else v-model="answers[q.id]" :aria-label="q.header" :type="q.isSecret ? 'password' : 'text'" placeholder="输入你的回答" autocomplete="off" />
       </fieldset>
-      <button class="button primary" type="submit" :disabled="disabled || !canAnswer">提交回答<PhArrowRight :size="16" /></button>
+      </div>
+      <div class="question-submit"><button class="button primary" type="submit" :disabled="disabled || !canAnswer">提交回答<PhArrowRight :size="16" /></button></div>
     </form>
     <template v-else>
       <details><summary>查看请求详情</summary><pre><code>{{ JSON.stringify(approval.params, null, 2) }}</code></pre></details>

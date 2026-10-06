@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } f
 import { createRenderer, nextTick, type App } from 'vue'
 import { useCodex } from '../../src/composables/useCodex'
 import { RpcClient, RpcError } from '../../src/lib/rpc'
-import { promptText } from '../../src/lib/prompt'
+import { messageParts, promptText, type PromptPart } from '../../src/lib/prompt'
 import { completedTurnDurations } from '../../src/lib/turn-duration'
 import type { ThreadGoal } from '../../src/lib/thread-goal'
 import type { ConnectionProfile, Item, MessageContent, Thread, Turn } from '../../shared/protocol'
@@ -26,7 +26,7 @@ class MemoryStorage implements Storage {
 }
 let revertFailure = false, sendFailure = false, turnSequence = 0
 type NativeSubmission = { id: string; input: MessageContent[]; clientUserMessageId: string }
-type NativeServer = { queues: Map<string, NativeSubmission[]>; settings: Map<string, Record<string, any>>; goals: Map<string, ThreadGoal> }
+type NativeServer = { queues: Map<string, NativeSubmission[]>; settings: Map<string, Record<string, any>>; goals: Map<string, ThreadGoal>; attachments: Map<string, { id: string; attachmentType: string; identityKey: string; payload: unknown; createdAt: number }[]> }
 const primaryDevice: ConnectionProfile = { id: 'device', name: 'Device', endpoint: 'ws://memory.test', cwd: '/configured', createdAt: 0 }
 let nativeQueueEnabled = false, queueSequence = 0, holdSettings = false, holdQueueList = false
 let releaseSettings: (() => void) | undefined
@@ -37,7 +37,7 @@ let archivedIds: Set<string>
 let archiveTransport: ((method: string, params: Record<string, any>, reply: (result: unknown) => void, fail: (code: number, message: string) => void) => boolean) | undefined
 function nativeServer(endpoint = primaryDevice.endpoint): NativeServer {
   let server = nativeServers.get(endpoint)
-  if (!server) { server = { queues: new Map(), settings: new Map(), goals: new Map() }; nativeServers.set(endpoint, server) }
+  if (!server) { server = { queues: new Map(), settings: new Map(), goals: new Map(), attachments: new Map() }; nativeServers.set(endpoint, server) }
   return server
 }
 function pendingOnServer(threadId = 'a', endpoint = primaryDevice.endpoint) {
@@ -70,6 +70,19 @@ class MemorySocket {
     if (archiveTransport?.(method, p, result => queueMicrotask(() => this.deliver({ id: message.id, result })), fail)) return
     if (nativeQueueEnabled && nativeFailure && nativeFailure.method === method) { fail(nativeFailure.code, nativeFailure.message); return }
     if (method === 'initialize') result = { userAgent: 'memory-test' }
+    else if (method.startsWith('thread/attachment/')) {
+      const attachments = nativeServer(this.endpoint).attachments
+      if (!attachments.has(p.threadId)) attachments.set(p.threadId, [])
+      const rows = attachments.get(p.threadId)!
+      if (method === 'thread/attachment/list') result = { data: structuredClone(rows), nextCursor: null }
+      else if (method === 'thread/attachment/remove') attachments.set(p.threadId, rows.filter(row => row.attachmentType !== p.attachmentType || row.identityKey !== p.identityKey))
+      else {
+        const old = rows.find(row => row.attachmentType === p.attachmentType && row.identityKey === p.identityKey)
+        const attachment = old || { id: 'attachment-' + rows.length, attachmentType: p.attachmentType, identityKey: p.identityKey, payload: structuredClone(p.payload), createdAt: Date.now() }
+        if (!old) rows.push(attachment)
+        result = { outcome: old ? 'existing' : 'created', attachment }
+      }
+    }
     else if (method.startsWith('thread/queue/')) {
       if (!nativeQueueEnabled) { fail(-32601, 'Unknown method: ' + method); return }
       const queue = pendingOnServer(p.threadId, this.endpoint)
@@ -2175,4 +2188,373 @@ test('freezes live interrupted work time and keeps the next optimistic input aft
   expect(state.displayTurns.value.at(-1)?.status).toBe('inProgress')
   expect(state.displayTurns.value.at(-1)?.items[0]?.type).toBe('userMessage')
   release!(); await next
+})
+
+describe('async question answers', () => {
+  function publish(status = 'inProgress') {
+    const ask: Item = { id: 'async-ask', type: 'agentMessage', delivery: 'async', questions: [{ title: 'Which permissions?', options: ['Administrators only', 'Everyone'] }] }
+    const turn: Turn = { id: 'async-ask-turn', status, items: [ask] }
+    store.get('a')!.turns.push(structuredClone(turn))
+    socket.emit('turn/started', { threadId: 'a', turn: { ...turn, status: 'inProgress', items: [] } })
+    socket.emit('item/completed', { threadId: 'a', turnId: turn.id, item: ask })
+    if (status !== 'inProgress') socket.emit('turn/completed', { threadId: 'a', turn })
+    return state.asyncQuestions.value[0]!
+  }
+  test('waits for acknowledgement, prevents duplicate submission and sends the TUI question identifier', async () => {
+    const question = publish()
+    let release!: () => void
+    archiveTransport = (method, params, reply) => {
+      if (method !== 'turn/steer') return false
+      expect(params.expectedTurnId).toBe('async-ask-turn')
+      const payload = JSON.parse(params.input[0].text.split('\n')[1])[0]
+      expect(payload).toEqual({ questionItemId: '["request_user_input_async","async-ask",0]', question: 'Which permissions?', answer: 'Administrators only' })
+      release = () => reply({ turnId: params.expectedTurnId }); return true
+    }
+    const answering = state.answerAsyncQuestion(question.id, 'Administrators only')
+    await eventually(() => !!release, 'answer should reach the native server')
+    expect(state.asyncQuestions.value).toHaveLength(1)
+    expect((await state.answerAsyncQuestion(question.id, 'Everyone')).ok).toBe(false)
+    expect(requests.filter(call => call.method === 'turn/steer')).toHaveLength(1)
+    release(); expect((await answering).ok).toBe(true)
+    expect(state.asyncQuestions.value).toHaveLength(0)
+    expect(state.pendingSteers.value[0]?.parts).toEqual([{ type: 'text', text: 'Which permissions?\n\nAdministrators only' }])
+  })
+  test.each(['inProgress', 'completed'])('a rejected answer to a %s turn stays pending and can be retried', async status => {
+    const question = publish(status)
+    archiveTransport = (method, _params, _reply, fail) => {
+      if (method !== (status === 'inProgress' ? 'turn/steer' : 'turn/start')) return false
+      fail(-32603, 'Answer rejected'); return true
+    }
+    expect(await state.answerAsyncQuestion(question.id, 'Administrators only')).toMatchObject({ ok: false, error: 'Answer rejected' })
+    expect(state.asyncQuestions.value).toHaveLength(1)
+    expect(state.pendingSteers.value).toHaveLength(0)
+    archiveTransport = (method, params, reply) => {
+      if (method !== 'turn/steer') return false
+      reply({ turnId: params.expectedTurnId }); return true
+    }
+    expect((await state.answerAsyncQuestion(question.id, 'Administrators only')).ok).toBe(true)
+    expect(state.asyncQuestions.value).toHaveLength(0)
+  })
+  test('a completed async question starts a native reply turn and is restored from history', async () => {
+    publish('completed')
+    await state.openThread('a')
+    expect(state.asyncQuestions.value).toHaveLength(1)
+    const id = state.asyncQuestions.value[0]!.id
+    expect((await state.answerAsyncQuestion(id, 'Everyone')).ok).toBe(true)
+    expect(requests.filter(call => call.method === 'turn/steer')).toHaveLength(0)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+    await state.openThread('a')
+    expect(state.asyncQuestions.value).toHaveLength(0)
+  })
+  test('a late answer acknowledgement cannot clear questions on a different device', async () => {
+    const question = publish()
+    let release!: () => void
+    archiveTransport = (method, params, reply) => { if (method !== 'turn/steer') return false; release = () => reply({ turnId: params.expectedTurnId }); return true }
+    const answering = state.answerAsyncQuestion(question.id, 'Everyone')
+    await eventually(() => !!release, 'answer should be pending')
+    await state.connect({ ...primaryDevice, id: 'other', endpoint: 'ws://other.test' })
+    await state.openThread('a')
+    release(); expect((await answering).ok).toBe(false)
+    expect(state.asyncQuestions.value).toHaveLength(1)
+  })
+})
+
+describe('file attachment device binding', () => {
+  test.each(['view', 'device'] as const)('a %s switch during upload cannot publish the file or send later chunks to a different context', async change => {
+    let release!: () => void
+    archiveTransport = (method, params, reply) => {
+      if (method !== 'command/exec') return false
+      const command = params.command as string[], operation = command[5]
+      if (operation === 'begin') reply({ exitCode: 0, stdout: JSON.stringify({ ok: true, directory: '/tmp/codex-remote-attachment-' + command[6] + '-fixture', offset: 0 }) })
+      else if (operation === 'chunk') release = () => reply({ exitCode: 0, stdout: JSON.stringify({ ok: true, offset: 3 }) })
+      else if (operation === 'discard') reply({ exitCode: 0, stdout: '{"ok":true}' })
+      else throw new Error('unexpected upload operation: ' + operation)
+      return true
+    }
+    const mark = requests.length
+    const uploading = state.readAttachments([new File(['abc'], 'input.bin'), new File(['def'], 'second.bin')], []).then(() => null, cause => cause)
+    await eventually(() => !!release, 'upload chunk should be pending')
+    if (change === 'device') { await state.connect({ ...primaryDevice, id: 'other', endpoint: 'ws://other.test' }); await state.openThread('a') }
+    else await state.openThread('b')
+    release(); expect(await uploading).toBeInstanceOf(Error)
+    const uploads = requests.slice(mark).filter(call => call.method === 'command/exec')
+    expect(uploads.every(call => call.endpoint === primaryDevice.endpoint)).toBe(true)
+    expect(uploads.filter(call => call.params.command[5] === 'begin')).toHaveLength(1)
+    expect(uploads.some(call => call.params.command[5] === 'finish')).toBe(false)
+    expect(uploads.every(call => call.params.cwd === undefined)).toBe(true)
+  })
+  test('a cancelled file read never dispatches an upload command', async () => {
+    const controller = new AbortController(); controller.abort()
+    const mark = requests.length
+    await expect(state.readAttachments([new File(['abc'], 'input.pdf')], [], undefined, controller.signal)).rejects.toThrow('取消')
+    expect(requests.slice(mark).some(call => call.method === 'command/exec')).toBe(false)
+  })
+})
+
+describe('stop saves pending steers without starting generation', () => {
+  const followup = [{ type: 'text' as const, text: 'BF1 你先别动' }]
+  async function startPending(parts: PromptPart[] = followup) {
+    await state.send([{ type: 'text', text: 'original task' }])
+    archiveTransport = (method, params, reply) => { if (method !== 'turn/steer') return false; reply({ turnId: params.expectedTurnId }); return true }
+    expect(await state.steer(parts)).toBe(true)
+    return state.activeTurn.value!
+  }
+  test('moves accepted pending text after the stopped turn, persists it and never starts a new turn', async () => {
+    await startPending()
+    const mark = requests.length
+    await Promise.all([state.interrupt(), state.interrupt()])
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(state.items.value.filter(item => item.stoppedInput)).toHaveLength(1)
+    expect(state.items.value.at(-1)?.type).toBe('userMessage')
+    expect(promptText(messageParts(state.items.value.at(-1)?.content))).toBe(followup[0]!.text)
+    expect(state.displayTurns.value.at(-2)?.status).toBe('interrupted')
+    expect(state.displayTurns.value.at(-1)?.status).toBe('completed')
+    expect(state.busy.value).toBe(false); expect(state.activeTurn.value).toBeUndefined(); expect(state.interrupting.value).toBe(false)
+    const calls = requests.slice(mark)
+    expect(calls.filter(call => call.method === 'turn/interrupt')).toHaveLength(1)
+    expect(calls.filter(call => call.method === 'thread/inject_items')).toHaveLength(1)
+    expect(calls.some(call => ['turn/start', 'turn/steer', 'thread/queue/start'].includes(call.method))).toBe(false)
+    await state.connect(primaryDevice, true); await state.openThread('a')
+    expect(state.items.value.filter(item => item.stoppedInput)).toHaveLength(1)
+    expect(state.busy.value).toBe(false)
+  })
+  test('preserves multiple pending inputs and their mixed text, file and image order', async () => {
+    const file: PromptPart = { type: 'file', id: 'file', deviceId: 'device', name: '资料.pdf', size: 10, path: '/tmp/upload/资料.pdf' }
+    const image: PromptPart = { type: 'image', id: 'image', name: 'picture.png', size: 1, url: 'data:image/png;base64,abcd' }
+    const mixed: PromptPart[] = [{ type: 'text', text: 'before ' }, file, image, { type: 'text', text: ' after' }]
+    await startPending(mixed)
+    expect(await state.steer(followup)).toBe(true)
+    await state.interrupt()
+    const recorded = state.items.value.filter(item => item.stoppedInput)
+    expect(recorded).toHaveLength(2)
+    expect(promptText(messageParts(recorded[0]!.content))).toBe('before [资料.pdf][picture.png] after')
+    const injected = requests.filter(call => call.method === 'thread/inject_items').flatMap(call => call.params.items)
+    expect(injected).toHaveLength(2)
+    expect(injected[0].content.map((part: any) => part.type)).toEqual(['input_text', 'input_text', 'input_text', 'input_image', 'input_text'])
+    await state.openThread('a')
+    expect(state.items.value.filter(item => item.stoppedInput).map(item => promptText(messageParts(item.content)))).toEqual(['before [资料.pdf][picture.png] after', followup[0]!.text])
+  })
+  test('keeps ordinary queued messages paused while it records the pending steer', async () => {
+    await startPending()
+    expect(await state.send([{ type: 'text', text: 'queued next task' }])).toBe(true)
+    await state.interrupt()
+    expect(state.currentQueue.value).toHaveLength(1); expect(state.queuePaused.value).toBe(true)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+  })
+  test('completion before the pending steer ack waits for that ack and saves it exactly once', async () => {
+    await state.send([{ type: 'text', text: 'original task' }])
+    let release!: () => void
+    archiveTransport = (method, params, reply) => { if (method !== 'turn/steer') return false; release = () => reply({ turnId: params.expectedTurnId }); return true }
+    const steering = state.steer(followup)
+    await eventually(() => !!release, 'steer should await its acknowledgement')
+    const stopping = state.interrupt()
+    await eventually(() => !state.activeTurn.value, 'interruption should complete before steering acknowledgement')
+    expect(requests.some(call => call.method === 'thread/inject_items')).toBe(false)
+    release(); expect(await steering).toBe(true); await stopping
+    expect(state.pendingSteers.value).toHaveLength(0)
+    expect(requests.filter(call => call.method === 'thread/inject_items')).toHaveLength(1)
+  })
+  test('an observed native echo on interruption is never injected or displayed twice', async () => {
+    const turn = await startPending()
+    const steer = requests.findLast(call => call.method === 'turn/steer')!
+    archiveTransport = (method, params, reply) => {
+      if (method !== 'turn/interrupt') return false
+      const native = store.get('a')!.turns.find(item => item.id === turn.id)!
+      native.items.push({ id: 'consumed-steer', type: 'userMessage', clientId: steer.params.clientUserMessageId, content: steer.params.input })
+      native.status = 'interrupted'; socket.emit('turn/completed', { threadId: 'a', turn: native }); reply({}); return true
+    }
+    await state.interrupt()
+    expect(requests.some(call => call.method === 'thread/inject_items')).toBe(false)
+    expect(state.items.value.filter(item => item.type === 'userMessage')).toHaveLength(2)
+    expect(state.items.value.filter(item => item.stoppedInput)).toHaveLength(0)
+  })
+  test('switching the visible conversation while stopping saves only the original conversation', async () => {
+    const turn = await startPending()
+    let release!: () => void
+    archiveTransport = (method, _params, reply) => {
+      if (method === 'turn/steer') return false
+      if (method !== 'turn/interrupt') return false
+      release = () => { const native = store.get('a')!.turns.find(item => item.id === turn.id)!; native.status = 'interrupted'; socket.emit('turn/completed', { threadId: 'a', turn: native }); reply({}) }; return true
+    }
+    const stopping = state.interrupt(); await eventually(() => !!release, 'stop should be pending')
+    await state.openThread('b'); release(); await stopping
+    expect(state.active.value?.id).toBe('b'); expect(state.items.value.some(item => item.stoppedInput)).toBe(false)
+    expect(requests.find(call => call.method === 'thread/inject_items')?.params.threadId).toBe('a')
+    await state.openThread('a'); expect(state.items.value.filter(item => item.stoppedInput)).toHaveLength(1)
+  })
+  test('a device switch cancels the continuation before any insertion on another connection', async () => {
+    await startPending()
+    let release!: () => void
+    archiveTransport = (method, _params, reply) => { if (method !== 'turn/interrupt') return false; release = () => reply({}); return true }
+    const stopping = state.interrupt(); await eventually(() => !!release, 'stop should be pending')
+    await state.connect({ ...primaryDevice, id: 'other', endpoint: 'ws://other.test' }); release(); await stopping
+    expect(requests.some(call => call.method === 'thread/inject_items')).toBe(false)
+    expect(state.interrupting.value).toBe(false)
+  })
+  test('a failed stop retains an active pending steer', async () => {
+    await startPending()
+    archiveTransport = (method, _params, _reply, fail) => { if (method !== 'turn/interrupt') return false; fail(-32603, 'stop rejected'); return true }
+    await state.interrupt()
+    expect(state.activeTurn.value).toBeDefined()
+    expect(state.pendingSteers.value[0]).toMatchObject({ accepted: true, ended: false })
+    expect(state.error.value).toBe('stop rejected')
+    expect(requests.some(call => call.method === 'thread/inject_items')).toBe(false)
+  })
+  test('a rejected context save retains recoverable input and cannot automatically start or repeat it', async () => {
+    await startPending()
+    archiveTransport = (method, _params, _reply, fail) => { if (method !== 'thread/inject_items') return false; fail(-32603, 'save rejected'); return true }
+    await state.interrupt()
+    expect(state.pendingSteers.value[0]).toMatchObject({ accepted: true, ended: true })
+    expect(state.error.value).toContain('插话保存未确认')
+    expect(state.items.value.some(item => item.stoppedInput)).toBe(false)
+    await state.connect(primaryDevice, true); await state.openThread('a')
+    expect(state.pendingSteers.value[0]).toMatchObject({ ended: true })
+    const mark = requests.length; await state.interrupt()
+    expect(requests.slice(mark)).toHaveLength(0)
+    expect(requests.filter(call => call.method === 'thread/inject_items')).toHaveLength(1)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+  })
+  test('explicit stopping also saves an older ended accepted steer at the latest stop boundary', async () => {
+    const first = await startPending()
+    const native = store.get('a')!.turns.find(turn => turn.id === first.id)!; native.status = 'completed'
+    socket.emit('turn/completed', { threadId: 'a', turn: native }); await settle()
+    await state.send([{ type: 'text', text: 'a later task' }])
+    const last = state.activeTurn.value!
+    await state.interrupt()
+    expect(state.displayTurns.value.at(-2)?.id).toBe(last.id)
+    expect(state.displayTurns.value.at(-1)?.items[0]?.stoppedInput).toBe(true)
+    expect(promptText(messageParts(state.displayTurns.value.at(-1)?.items[0]?.content))).toBe(followup[0]!.text)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(2)
+  })
+})
+
+describe('automatic retry of confirmed failed turns', () => {
+  let realTimeout: typeof setTimeout
+  beforeEach(() => {
+    realTimeout = globalThis.setTimeout
+    installGlobal('setTimeout', (callback: TimerHandler, ms?: number, ...args: unknown[]) => realTimeout(callback, ms === 3000 ? 20 : ms, ...args))
+  })
+  async function fail(code: unknown = { responseStreamDisconnected: { httpStatusCode: null } }, willRetry = false) {
+    await state.send([{ type: 'text', text: 'original task' }])
+    const turn = state.activeTurn.value!, error = { message: 'failure', codexErrorInfo: code }
+    socket.emit('error', { threadId: 'a', turnId: turn.id, willRetry, error })
+    if (!willRetry) {
+      Object.assign(store.get('a')!.turns.at(-1)!, { status: 'failed', error })
+      socket.emit('turn/completed', { threadId: 'a', turn: { ...turn, status: 'failed', error } })
+    }
+    await settle(); return turn
+  }
+  const enabled = { enabled: true, delaySeconds: 3, maxAttempts: 3 }
+  test('is disabled by default and native willRetry never starts a second request', async () => {
+    await fail()
+    expect(state.autoRetryPending.value).toBe(false)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+    state.updateRetryPreferences(enabled)
+    expect(state.autoRetryPending.value).toBe(true)
+    state.cancelAutoRetry()
+    await fail('serverOverloaded', true)
+    await Bun.sleep(35)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(2)
+    expect(state.autoRetryPending.value).toBe(false)
+  })
+  test('retries a selected error once, keeps the cause metadata and sends only the continuation', async () => {
+    state.updateRetryPreferences(enabled)
+    await fail('serverOverloaded')
+    expect(state.currentTurnFailureInfo.value?.codexErrorInfo).toBe('serverOverloaded')
+    expect(state.autoRetryStatus.value).toContain('1 / 3')
+    await Bun.sleep(60); await settle()
+    const turns = requests.filter(call => call.method === 'turn/start')
+    expect(turns).toHaveLength(2)
+    expect(turns[1]!.params.input).toEqual([{ type: 'text', text: '继续', text_elements: [] }])
+    expect(state.autoRetryPending.value).toBe(false)
+    expect(state.autoRetryStarting.value).toBe(false)
+  })
+  test('an unselected policy failure stays available for manual retry and opting in schedules it', async () => {
+    state.updateRetryPreferences(enabled)
+    await fail('cyberPolicy')
+    expect(state.autoRetryPending.value).toBe(false)
+    state.updateRetryPreferences({ categories: ['policy'] })
+    expect(state.autoRetryPending.value).toBe(true)
+    state.updateRetryPreferences({ enabled: false })
+    await Bun.sleep(45)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+  })
+  test.each(['cancel', 'send', 'view', 'disconnect'])('%s cancels a pending automatic retry', async action => {
+    state.updateRetryPreferences(enabled); await fail()
+    expect(state.autoRetryPending.value).toBe(true)
+    const mark = requests.length
+    if (action === 'cancel') state.cancelAutoRetry()
+    else if (action === 'send') await state.send([{ type: 'text', text: 'manual instruction' }])
+    else if (action === 'view') await state.openThread('b')
+    else state.disconnect()
+    await Bun.sleep(45); await settle()
+    expect(requests.slice(mark).filter(call => call.method === 'turn/start')).toHaveLength(action === 'send' ? 1 : 0)
+    expect(state.autoRetryPending.value).toBe(false)
+  })
+  test('a manual interruption never schedules retry even when all error types are selected', async () => {
+    state.updateRetryPreferences({ ...enabled, categories: ['network', 'server', 'policy', 'other'] })
+    await state.send([{ type: 'text', text: 'task' }]); await state.interrupt(); await Bun.sleep(45)
+    expect(state.autoRetryPending.value).toBe(false)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+  })
+  test('limits consecutive automatic failures and stops repeating terminal notifications', async () => {
+    state.updateRetryPreferences({ ...enabled, maxAttempts: 1 })
+    const original = await fail()
+    await Bun.sleep(50); await settle()
+    const retry = state.activeTurn.value!, error = { message: 'failed again', codexErrorInfo: 'serverOverloaded' }
+    Object.assign(store.get('a')!.turns.at(-1)!, { status: 'failed', error })
+    for (let i = 0; i < 2; i++) socket.emit('turn/completed', { threadId: 'a', turn: { ...retry, status: 'failed', error } })
+    await settle(); await Bun.sleep(45)
+    expect(state.autoRetryStatus.value).toContain('上限（1 次）')
+    expect(state.autoRetryPending.value).toBe(false)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(2)
+    expect(original.id).not.toBe(retry.id)
+  })
+  test('an uncertain automatic dispatch is paused without retrying its transport', async () => {
+    state.updateRetryPreferences(enabled)
+    await fail()
+    sendFailure = true
+    await Bun.sleep(50); await settle()
+    expect(state.autoRetryStatus.value).toContain('已暂停')
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(2)
+    await Bun.sleep(45)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(2)
+  })
+  test('fresh native activity prevents a stale countdown from starting another turn', async () => {
+    state.updateRetryPreferences(enabled)
+    await fail()
+    store.get('a')!.turns.push({ id: 'other-client-work', status: 'inProgress', items: [] })
+    await Bun.sleep(50); await settle()
+    expect(state.autoRetryPending.value).toBe(false)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+  })
+  test('turning the preference off during the native preflight prevents dispatch', async () => {
+    state.updateRetryPreferences(enabled)
+    const failed = await fail()
+    let release!: () => void
+    archiveTransport = (method, params, reply) => {
+      if (method !== 'thread/turns/list' || params.limit !== 1) return false
+      release = () => reply({ data: [{ ...failed, status: 'failed' }] }); return true
+    }
+    await Bun.sleep(35); await eventually(() => !!release, 'retry should be waiting for the native preflight')
+    state.updateRetryPreferences({ enabled: false }); release(); await settle()
+    expect(state.autoRetryPending.value).toBe(false)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(1)
+  })
+  test('duplicate failure events use one timer and an existing browser claim blocks duplicate work', async () => {
+    state.updateRetryPreferences(enabled)
+    const failed = await fail()
+    for (let i = 0; i < 3; i++) socket.emit('turn/completed', { threadId: 'a', turn: { ...failed, status: 'failed' } })
+    await Bun.sleep(50); await settle()
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(2)
+    state.cancelAutoRetry()
+    const retry = state.activeTurn.value!, error = { message: 'failure', codexErrorInfo: 'serverOverloaded' }
+    Object.assign(store.get('a')!.turns.at(-1)!, { status: 'failed', error })
+    const lease = 'codex-remote.auto-retry.v1.claim.' + JSON.stringify([state.selected.value?.endpoint, 'a', retry.id])
+    localStorage.setItem(lease, JSON.stringify({ owner: 'another-tab', expires: Date.now() + 60_000 }))
+    socket.emit('turn/completed', { threadId: 'a', turn: { ...retry, status: 'failed', error } })
+    await settle(); await Bun.sleep(50)
+    expect(requests.filter(call => call.method === 'turn/start')).toHaveLength(2)
+    expect(state.autoRetryPending.value).toBe(false)
+  })
 })

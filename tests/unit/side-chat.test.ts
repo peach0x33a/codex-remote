@@ -57,7 +57,7 @@ function runtime() {
     items: computed(() => active.value?.turns.flatMap(turn => turn.items) || []),
     connected: computed(() => status.value === 'connected'), busy: computed(() => sending.value || !!activeTurn.value),
     threadLoadError: ref(''), error: ref(''), notice: ref(''), currentTurnFailure: ref(''),
-    steering: ref(false), revising: ref(false), pendingSteers: ref<{ id: string; accepted: boolean; parts: PromptPart[] }[]>([]),
+    steering: ref(false), interrupting: ref(false), revising: ref(false), currentTurnFailureInfo: ref(null), autoRetryStarting: ref(false), autoRetryPending: ref(false), autoRetryStatus: ref(''), cancelAutoRetry: mock(() => {}), pendingSteers: ref<{ id: string; accepted: boolean; parts: PromptPart[] }[]>([]),
     activeApprovals: ref<Approval[]>([]), queuePaused: ref(false), serverQueueSupported: ref(false),
     reconnectStatus: ref(''), compacting: ref(false), liveReasoning: ref(''), thinkingElapsed: ref<number>(), clockNow: ref(1),
     connectWithToken: mock(async (_profile: ConnectionProfile, _token: string) => { active.value = null; status.value = 'connected' }),
@@ -78,6 +78,7 @@ beforeAll(async () => {
   const script = compileScript(descriptor, { id: 'side-chat-test', inlineTemplate: true })
   // Run the real SFC with injected transport and child boundaries; no browser or network.
   const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
+    .replace(/import TurnFailure from ["']\.\/TurnFailure\.vue["'];?/, 'const TurnFailure = { render: () => null };')
     .replace(/import SubAgentBadge from ["']\.\/SubAgentBadge\.vue["'];?/, 'const SubAgentBadge = { render: () => null };')
     .replace(/import[^;]*from ["']\.\.\/composables\/useInputHistory["'];?/g, 'const useInputHistory = (_device, _auth, entries) => ({ entries, remember: async () => {}, refresh: async () => {} });')
     .replace(/import[^;]*from ["'](?:\.\.\/composables\/useCodex|\.\/(?:MessageItem|ApprovalIsland|PromptEditor|QueuePane|WorkspaceFilePanel)\.vue)["'];?/g, '')

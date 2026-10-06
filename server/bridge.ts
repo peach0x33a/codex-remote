@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { resolve, sep } from 'node:path'
 import Upstream from 'ws'
 import type { ServerWebSocket } from 'bun'
@@ -9,6 +9,8 @@ type Options = { host?: string; port?: number; origins: string[]; accessKey?: st
 type Ticket = { endpoint: string; token: string; expires: number; session: string }
 type Peer = { ticket: Ticket; upstream?: Upstream; queue: string[]; queuedBytes: number; closed: boolean; browserBlocked?: boolean; browserQueue?: string[]; browserQueuedBytes?: number; browserFlushing?: boolean; browserBuffered?: number; browserStall?: ReturnType<typeof setTimeout> }
 const COOKIE = 'codex_remote_session'
+const SESSION_MS = 12 * 60 * 60 * 1000
+const REMEMBERED_SESSION_SECONDS = 30 * 24 * 60 * 60
 const MAX_MESSAGE = 4 * 1024 * 1024
 const MAX_BODY = 16 * 1024
 const MAX_BROWSER_BUFFER = 16 * 1024 * 1024
@@ -43,15 +45,21 @@ export function createBridge(options: Options) {
   if (credentials.file === staticRoot || credentials.file.startsWith(staticRoot + sep)) throw new Error('凭证文件必须位于静态资源目录之外。')
   const tickets = new Map<string, Ticket>()
   const sessions = new Map<string, number>()
+  const rememberedIds = new Set<string>()
   const failures = new Map<string, { count: number; until: number }>()
   const peers = new Set<ServerWebSocket<Peer>>()
   const digest = (text: string) => createHash('sha256').update(text).digest()
   const equal = (a: string, b: string) => timingSafeEqual(digest(a), digest(b))
+  // Bind remembered tokens to the access password without persisting either secret.
+  const sessionHash = (id: string) => createHmac('sha256', options.accessKey || '').update(id).digest('hex')
+  const sessionsReady = options.accessKey ? credentials.rememberedSessions().then(saved => {
+    for (const session of saved) { sessions.set(session.id, session.expiresAt); rememberedIds.add(session.id) }
+  }).catch(() => { /* Unreadable storage cannot authenticate a remembered login. */ }) : Promise.resolve()
   // Cookie writes happen only after the request Origin passes the allowlist.
   // Use that browser-facing scheme, including behind an HTTPS reverse proxy.
-  const cookie = (request: Request, value: string, age = 43200) => COOKIE + '=' + value + '; HttpOnly; SameSite=Strict; Path=/; Max-Age=' + age + (request.headers.get('origin')?.startsWith('https://') ? '; Secure' : '')
+  const cookie = (request: Request, value: string, age?: number) => [COOKIE + '=' + value, 'HttpOnly', 'SameSite=Strict', 'Path=/', age === undefined ? '' : 'Max-Age=' + age, request.headers.get('origin')?.startsWith('https://') ? 'Secure' : ''].filter(Boolean).join('; ')
   const sessionId = (request: Request) => request.headers.get('cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith(COOKIE + '='))?.slice(COOKIE.length + 1) || ''
-  const authenticated = (request: Request) => !options.accessKey || (sessions.get(sessionId(request)) || 0) > Date.now()
+  const authenticated = (request: Request) => !options.accessKey || (sessions.get(sessionHash(sessionId(request))) || 0) > Date.now()
   const sameOrigin = (request: Request) => options.origins.includes(request.headers.get('origin') || '')
   const json = (data: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers } })
   const connectionEndpoint = (value: unknown) => {
@@ -132,12 +140,18 @@ export function createBridge(options: Options) {
     flushBrowser(peer)
     return !peer.data.closed
   }
+  const revokeSession = (id: string) => {
+    const hash = sessionHash(id)
+    sessions.delete(hash); rememberedIds.delete(hash)
+    for (const [key, ticket] of tickets) if (ticket.session === id) tickets.delete(key)
+    for (const peer of peers) if (peer.data.ticket.session === id) peer.close(4001, 'Signed out')
+  }
   const clean = setInterval(() => {
     const now = Date.now()
     for (const [key, ticket] of tickets) if (ticket.expires < now) tickets.delete(key)
-    for (const [key, expires] of sessions) if (expires < now) sessions.delete(key)
+    for (const [key, expires] of sessions) if (expires < now) { sessions.delete(key); rememberedIds.delete(key) }
     for (const [key, limit] of failures) if (limit.until < now) failures.delete(key)
-    for (const peer of peers) if (options.accessKey && (sessions.get(peer.data.ticket.session) || 0) < now) peer.close(4001, 'Session expired')
+    for (const peer of peers) if (options.accessKey && (sessions.get(sessionHash(peer.data.ticket.session)) || 0) < now) peer.close(4001, 'Session expired')
   }, 15_000)
   clean.unref()
 
@@ -148,6 +162,7 @@ export function createBridge(options: Options) {
       const url = new URL(request.url)
       const path = url.pathname
       if (path === '/api/health' && request.method === 'GET') return json({ ok: true })
+      if (path.startsWith('/api/')) await sessionsReady
       if (path === '/api/session' && request.method === 'GET') return json({ authenticated: authenticated(request), requiresKey: !!options.accessKey })
       if (path.startsWith('/api/')) {
         // LAN HTTP omits Fetch Metadata. The custom header requires a preflight
@@ -161,25 +176,40 @@ export function createBridge(options: Options) {
           const ip = server.requestIP(request)?.address || 'unknown'
           const limit = failures.get(ip)
           if (limit && limit.until > Date.now() && limit.count >= 8) return json({ error: '尝试次数过多，请一分钟后重试。' }, 429)
-          let body: { key?: string }
+          let body: { key?: string; remember?: boolean }
           try { body = await requestJson(request) } catch { return json({ error: '无效的请求。' }, 400) }
+          if (body?.remember !== undefined && typeof body.remember !== 'boolean') return json({ error: '无效的记住密码设置。' }, 400)
           if (typeof body?.key !== 'string' || (options.accessKey && !equal(body.key, options.accessKey))) {
             failures.set(ip, { count: (limit && limit.until > Date.now() ? limit.count : 0) + 1, until: Date.now() + 60_000 })
             return json({ error: '访问密码不正确，请重试。' }, 401)
           }
           failures.delete(ip)
           const key = randomBytes(32).toString('hex')
-          sessions.set(key, Date.now() + 43_200_000)
-          return json({ authenticated: true }, 200, { 'Set-Cookie': cookie(request, key) })
+          const hash = sessionHash(key), previous = sessionId(request), previousHash = sessionHash(previous)
+          const remember = body.remember === true && !!options.accessKey
+          const expiresAt = Date.now() + (remember ? REMEMBERED_SESSION_SECONDS * 1000 : SESSION_MS)
+          try {
+            if (remember) await credentials.saveRememberedSession({ id: hash, expiresAt }, previous ? previousHash : undefined)
+            else if (options.accessKey && previous && (rememberedIds.has(previousHash) || !sessions.has(previousHash))) await credentials.removeRememberedSession(previousHash)
+          } catch (error) {
+            if (error instanceof CredentialError && error.status === 429) return json({ error: error.message }, 429)
+            return json({ error: '无法保存登录状态，请检查服务器凭证存储配置后重试，或关闭“记住密码”。' }, 500)
+          }
+          if (previous) revokeSession(previous)
+          sessions.set(hash, expiresAt)
+          if (remember) rememberedIds.add(hash)
+          return json({ authenticated: true }, 200, { 'Set-Cookie': cookie(request, key, remember ? REMEMBERED_SESSION_SECONDS : undefined) })
         }
-        if (!authenticated(request)) return json({ error: '请先输入此应用的访问密码。' }, 401)
         if (path === '/api/session' && request.method === 'DELETE') {
           const id = sessionId(request)
-          sessions.delete(id)
-          for (const [key, ticket] of tickets) if (ticket.session === id) tickets.delete(key)
-          for (const peer of peers) if (peer.data.ticket.session === id) peer.close(4001, 'Signed out')
+          const hash = sessionHash(id)
+          try {
+            if (options.accessKey && id && (rememberedIds.has(hash) || !sessions.has(hash))) await credentials.removeRememberedSession(hash)
+          } catch { return json({ error: '无法清除保存的登录，请重试。' }, 500) }
+          revokeSession(id)
           return json({ ok: true }, 200, { 'Set-Cookie': cookie(request, '', 0) })
         }
+        if (!authenticated(request)) return json({ error: '请先输入此应用的访问密码。' }, 401)
         if (path === '/api/profiles') {
           try {
             if (request.method === 'GET') return json(await credentials.profiles())

@@ -256,31 +256,55 @@ test('persists multiple inputs across conversations, reloads and a fresh browser
   } finally { await context.close() }
 })
 
-test('lets stopped unconsumed steers be removed or returned to the draft without automatic sends', async ({ page, request }, testInfo) => {
+test('stopping inserts pending steers into the conversation without starting generation', async ({ page, request }, testInfo) => {
   await request.get(MOCK_URL + '/test/scenario?name=steer-not-consumed')
-  for (const restore of [false, true]) {
-    await editor(page).fill('执行长任务'); await page.getByRole('button', { name: '发送消息', exact: true }).click()
-    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
-    await editor(page).fill('尚未处理的插话'); await page.getByRole('button', { name: '发送到当前任务', exact: true }).click()
-    await expect(page.locator('.island-steer')).toContainText('待插入')
-    await expect(page.getByRole('button', { name: '撤回插话', exact: true })).toBeDisabled()
-    await page.getByRole('button', { name: '停止生成', exact: true }).click()
-    await expect(page.locator('.island-steer')).toContainText('回合已结束 · 未确认插入')
-    await expect(page.locator('.working-status')).toHaveCount(0)
-    for (const theme of process.env.COMPOSER_VISUAL_CHECK === '1' ? ['light', 'dark'] : []) {
-      if (restore) break
-      await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
-      await page.locator('.composer-island').screenshot({ path: testInfo.outputPath('ended-steer-' + theme + '.png') })
-    }
-    await page.getByRole('button', { name: restore ? '取回插话草稿' : '移除未确认插话', exact: true }).click()
-    await expect(page.locator('.island-steer')).toHaveCount(0)
-    if (restore) await expect(editor(page)).toHaveText('尚未处理的插话')
-    else await expect(editor(page)).toBeEmpty()
+  await editor(page).fill('执行长任务'); await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
+  for (const text of ['尚未处理的插话', '第二条待插话']) {
+    await editor(page).fill(text); await page.getByRole('button', { name: '发送到当前任务', exact: true }).click()
+    await expect(editor(page)).toBeEmpty()
   }
+  await expect(page.locator('.island-steer')).toHaveCount(2)
+  await page.getByRole('button', { name: '停止生成', exact: true }).click()
+  await expect(page.locator('.island-steer')).toHaveCount(0)
+  await expect(page.locator('.message-user')).toHaveCount(3)
+  await expect(page.locator('.message-user').nth(1)).toContainText('尚未处理的插话')
+  await expect(page.locator('.message-user').nth(2)).toContainText('第二条待插话')
+  await expect(page.locator('.working-status')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
+  const footer = page.locator('.turn-stopped-duration')
+  await expect(footer).toContainText('已停止')
+  expect(await footer.evaluate(element => !!(element.compareDocumentPosition(document.querySelectorAll('.message-user')[1]!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('stopped-steers-recorded.png') })
+  await page.reload(); await expect(page.getByTestId('selected-device')).toContainText('已连接')
+  await expect(page.locator('.message-user')).toHaveCount(3)
+  await expect(page.locator('.message-user').nth(1)).toContainText('尚未处理的插话')
+  await expect(page.locator('.message-user').nth(2)).toContainText('第二条待插话')
+  await expect(page.locator('.working-status')).toHaveCount(0)
+  await expect(editor(page)).toBeEmpty()
   const metrics = await (await request.get(MOCK_URL + '/test/metrics')).json()
-  expect(metrics.requests.filter((call: any) => call.method === 'turn/start')).toHaveLength(2)
+  expect(metrics.requests.filter((call: any) => call.method === 'turn/start')).toHaveLength(1)
   expect(metrics.requests.filter((call: any) => call.method === 'turn/steer')).toHaveLength(2)
-  expect(metrics.requests.some((call: any) => call.method === 'thread/revert')).toBe(false)
+  expect(metrics.requests.filter((call: any) => call.method === 'thread/inject_items')).toHaveLength(2)
+  expect(metrics.requests.some((call: any) => call.method === 'thread/revert' || call.method === 'thread/queue/start')).toBe(false)
+})
+
+test('failed stopped-steer storage retains a recoverable message without automatically sending', async ({ page, request }) => {
+  await request.get(MOCK_URL + '/test/scenario?name=steer-save-error')
+  await editor(page).fill('执行长任务'); await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible()
+  await editor(page).fill('保留未保存的插话'); await page.getByRole('button', { name: '发送到当前任务', exact: true }).click()
+  await expect(editor(page)).toBeEmpty()
+  await page.getByRole('button', { name: '停止生成', exact: true }).click()
+  await expect(page.locator('.island-steer')).toContainText('回合已结束 · 未确认插入')
+  await expect(page.locator('.error-banner')).toContainText('测试插话保存失败')
+  await expect(page.locator('.working-status')).toHaveCount(0)
+  await page.getByRole('button', { name: '取回插话草稿', exact: true }).click()
+  await expect(page.locator('.island-steer')).toHaveCount(0)
+  await expect(editor(page)).toHaveText('保留未保存的插话')
+  const metrics = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  expect(metrics.requests.filter((call: any) => call.method === 'turn/start')).toHaveLength(1)
+  expect(metrics.requests.filter((call: any) => call.method === 'thread/inject_items')).toHaveLength(1)
 })
 
 test('restores the limited-goal resume control and asks before increasing an exhausted budget', async ({ page, request }, testInfo) => {

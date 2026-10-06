@@ -16,6 +16,14 @@ test('terminal errors and failed completion use one deduplication identity', () 
   expect(error?.kind).toBe('failed'); expect(error?.id).toBe(completed?.id)
   expect(classify('error', { threadId: 't', turnId: 'turn', willRetry: true })).toBeUndefined()
 })
+test('async message questions trigger one attention notice without treating ordinary async messages as questions', () => {
+  const params = { threadId: 't', turnId: 'turn', item: { id: 'ask', type: 'agentMessage', delivery: 'async', questions: [{ title: 'Which option?', options: ['A'] }] } }
+  const first = classify('item/completed', params)
+  expect(first?.kind).toBe('attention')
+  expect(classify('item/completed', params)?.id).toBe(first?.id)
+  expect(classify('item/started', params)).toBeUndefined()
+  expect(classify('item/completed', { ...params, item: { ...params.item, questions: [] } })).toBeUndefined()
+})
 test('does not infer completion from idle, tool success, interrupted turns or history responses', () => {
   expect(classify('thread/status/changed', { threadId: 't', status: { type: 'idle' } })).toBeUndefined()
   expect(classify('item/completed', { threadId: 't', item: { type: 'commandExecution' } })).toBeUndefined()

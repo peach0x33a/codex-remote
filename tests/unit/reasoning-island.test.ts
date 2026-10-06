@@ -19,7 +19,8 @@ beforeAll(async () => {
       // and CSS animation wrappers are stubbed; the host has no browser/layout engine.
       let wrappers = ''
       const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
-        .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
+        .replace(/import InlineFile from ["']\.\/InlineFile\.vue["'];?/, 'const InlineFile = { render: () => null };')
+    .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
         .replace(/\b(TransitionGroup|Transition) as (\w+),?/g, (_match, name, alias) => {
           wrappers += name === 'Transition'
             ? `const ${alias} = { props: ['name'], setup: (_, { slots }) => () => slots.default?.() };\n`

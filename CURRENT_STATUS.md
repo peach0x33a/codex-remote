@@ -3,10 +3,20 @@
 Workspace: /home/peach0x33a/source/repos/apps/codex-remote
 Branch: master
 GitHub: https://github.com/peach0x33a/codex-remote (private; origin/master upstream)
-Published frontend: 40b7e98
-Published backend: 40b7e98
+Published frontend: validated feature delivery, 2026-10-06
+Published backend: validated feature delivery, 2026-10-06
 
 ## Latest delivery
+
+Web UI login now offers a default-on 记住密码 switch. It retains an opaque login cookie for 30 days and survives Bun restarts; logout revokes it, changing APP_ACCESS_KEY invalidates it, and opt-out uses a browser session cookie with a maximum 12-hour server lifetime. Only password-bound credential hashes persist in the private store; the access password is never saved. Details: task-history/2026-10-06-remember-web-password.md.
+
+Browser-local automatic retry is available at 网页设置 → 失败与重试, default off, with selectable failure categories, delay and finite attempt limits. Confirmed selected failures receive a cancellable continuation countdown; explicit Stop remains stopped. Mobile failure text occupies the full row with Retry at the bottom right. Details: task-history/2026-10-05-auto-retry-mobile-error-layout.md.
+
+Explicit Stop now records acknowledged pending steering messages, in order, as user messages after the stopped-turn footer. It preserves the idle state and paused queue; reopening restores saved inputs from native thread metadata. Native echoes reconcile before/after saving to prevent duplicate display. External interruption and uncertain saves retain recoverable hints. Details: task-history/2026-10-05-stop-record-pending-steers.md.
+
+File attachments now accept arbitrary types without extension/MIME filters. Selection, paste and drop work across the composer, queue editor, message revision and side chat. Uploads preserve original bytes through bounded chunks on the selected Codex connection, support cancellation, and retain drafts on failure. File chips, native queues, editing and history preserve filename/size/path identity. Details: task-history/2026-10-05-arbitrary-file-attachments.md.
+
+Codex async questions now have a pending-question entry and answer form above the composer. Shift + Left opens questions, Shift + Right returns to the draft, and mobile has touch controls with a visible Submit action. Replies use the native CLI 0.160.0 question identifiers; rejection preserves drafts and history restores unanswered questions. Blocking approval behavior is preserved. Details: task-history/2026-10-05-async-question-adaptation.md.
 
 Application updates are no longer gated on running work. The full-width banner below navigation keeps a single availability message, applies the update as an explicit user action regardless of task, revision or queue state, and disables the button only while its own request is in flight. Failure still shows the retryable error toast. Details: task-history/2026-10-04-unblocked-update-banner.md.
 
@@ -28,9 +38,21 @@ Terminal unobserved steers can be removed as hints or returned to the draft. Lon
 
 ## Verification
 
+2026-10-06 remembered login: 761 full unit/integration cases passed (6,241 assertions, 57 files), eight desktop/mobile login cases and six existing session-URL browser cases passed across focused runs, and types, Vite/PWA build and diff checks passed. Private storage, restart/expiry, password change, token rotation, durable logout, failed writes and metadata preservation were verified. Final desktop light/mobile dark captures passed independent review; the scoped mechanical UI check returned no findings. A preflight using the running service configuration preserved its existing credential/profile/history data through remembered login, restart and logout. Live health, exact HTML/entry/service-worker bytes, unchanged authentication configuration, 30-day remembered login and logout revocation passed after deployment.
+
+2026-10-05 automatic retry/mobile errors: 749 full unit/integration cases passed (6,151 assertions, 55 files), 16 focused desktop/mobile browser cases passed, and Vue/server types, Vite/PWA build and diff check passed. Captures and geometry assertions verify mobile full-width error text and trailing actions. Retry classification, persistence, count/limit/cancel, native/current-turn checks and preserved Stop behavior were verified. Scoped mechanical UI check returned no findings. Local health and served frontend bytes match the build.
+
+2026-10-05 Stop/steer insertion: 717 full unit/integration cases passed (6,061 assertions, 54 files), 8 focused desktop/mobile browser cases passed, and Vue/server typechecks, Vite/PWA build and diff check passed. A real isolated CLI 0.160.0 App Server with a fake local inference endpoint confirmed insertion without further generation and independent metadata persistence. Desktop/mobile stopped-transcript captures were inspected; the scoped mechanical UI check returned no findings. Local health and exact served index/entry bytes match the build.
+
+2026-10-05 arbitrary file attachments: 703 unit/integration cases passed (5,979 assertions, 53 files), 18 focused desktop/mobile browser cases passed, and Vue/server typechecks, Vite/PWA build and diff check passed. Binary transfer bytes and cancelled/stale uploads were verified. Composer and queue captures were inspected. Local service health and served index/entry bytes matched the new build.
+
+2026-10-05 async-question adaptation: 693 unit/integration cases passed (5,937 assertions, 52 files) and 14 focused desktop/mobile browser cases passed, including existing approval, steering and completion flows. Vue/server typechecks, Vite/PWA build and diff check passed. Desktop light/mobile dark captures were inspected. The running local service serves the exact generated index and entry asset; health passed. No backend restart or external publication was performed for this adaptation.
+
 682 full unit/integration cases passed (5,889 assertions, 51 files) with the unblocked update banner in the tree; the focused banner case asserts an enabled button during work, one call for duplicate clicks and a real retry after failure. Vue/server typechecks passed. 34 focused desktop/mobile browser cases passed against the previous staged build; this change has no browser or deployment verification yet — no Vite/PWA build, backend restart or served-hash check. Vue/server typechecks, Vite/PWA build, diff check and live asset hashes passed. Captures for portable settings, directory actions, HTML, subagent identity, colored diffs and compact Session ID were inspected. Mobile coverage is browser emulation; no physical handset check. Earlier full-browser results are historical, not a full-suite run for this release.
 
 ## Running service
+
+Local frontend/backend updated at 2026-10-06T01:26:01Z for remembered login and the related completed Remote UI changes. Bun PID 1399410 uses the existing 0.0.0.0:3000 configuration and configured access password/origin/credential path. Live health, served bytes and authentication checks passed. `.local/remember-login-deployment.json` records hashes and rollback paths; the temporary environment snapshot and credential preflight copy were removed. Source publication to origin/master is separate from this verified local rollout.
 
 Frontend and backend 40b7e98 published at 2026-10-04T03:16:20.272246+08:00. Backend restarted as Bun PID 2072024 on 127.0.0.1:3000 for the network-image and sandboxed-frame CSP. Isolated startup preflight and live health, exact HTML/service worker/entry hashes, CSP, history API and unchanged saved profiles/credentials passed. Existing requiresKey=false state preserved. .local/deployment.json records the release and both rollback locations.
 

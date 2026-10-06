@@ -2,13 +2,15 @@
 import ToggleSwitch from './ToggleSwitch.vue'
 import { useStoredChoice, oneOf } from '../composables/useStoredChoice'
 import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue'
-import { PhTextAa, PhBell, PhTextAlignLeft, PhGearSix, PhPalette, PhCpu, PhShieldCheck, PhDatabase } from '@phosphor-icons/vue'
+import { PhTextAa, PhBell, PhTextAlignLeft, PhGearSix, PhPalette, PhCpu, PhShieldCheck, PhDatabase, PhArrowClockwise } from '@phosphor-icons/vue'
 import type { BackgroundMode, ImageBackgroundSettings, ThemePreference } from '../lib/ui-preferences'
 import BackgroundSettings from './BackgroundSettings.vue'
 import AppearanceTransfer from './AppearanceTransfer.vue'
 import BaseDialog from './BaseDialog.vue'
 import CodexSettings from './CodexSettings.vue'
 import NotificationSettings from './NotificationSettings.vue'
+import AutoRetrySettings from './AutoRetrySettings.vue'
+import type { AutoRetryPreferences } from '../lib/auto-retry'
 import type { TaskNotifications } from '../composables/useTaskNotifications'
 import CustomSelect from './CustomSelect.vue'
 import ValueSlider from './ValueSlider.vue'
@@ -16,8 +18,8 @@ import TypographySettings from './TypographySettings.vue'
 import type { TypographyControls } from '../composables/useTypography'
 import type { ConfigRequest } from '../lib/codex-config'
 import type { Model } from '../../shared/protocol'
-const props = defineProps<{ typography: TypographyControls; notifications: TaskNotifications; configRequest: ConfigRequest; models: Model[]; connected: boolean; deviceKey: string; deviceName?: string; modelValue: number; theme: ThemePreference; autoConnect: boolean; autoWrap: boolean; backgroundMode: BackgroundMode; imageBackground: ImageBackgroundSettings; backgroundUrl: string; backgroundRemoteUrl: string; exportAppearance: () => Promise<Blob>; importAppearance: (file: File) => Promise<void>; backgroundName: string; backgroundBusy: boolean; backgroundError: string }>()
-const emit = defineEmits<{ 'update:modelValue': [width: number]; 'update:theme': [theme: ThemePreference]; 'update:autoConnect': [enabled: boolean]; 'update:autoWrap': [enabled: boolean]; 'update:backgroundMode': [mode: BackgroundMode]; 'update:imageBackground': [value: ImageBackgroundSettings]; previewWidth: [value: number | null]; previewImageBackground: [value: ImageBackgroundSettings | null]; uploadBackground: [file: File]; useBackgroundUrl: [url: string]; removeBackground: [] }>()
+const props = defineProps<{ retryPreferences: AutoRetryPreferences; retrySettingsError?: string; typography: TypographyControls; notifications: TaskNotifications; configRequest: ConfigRequest; models: Model[]; connected: boolean; deviceKey: string; deviceName?: string; modelValue: number; theme: ThemePreference; autoConnect: boolean; autoWrap: boolean; backgroundMode: BackgroundMode; imageBackground: ImageBackgroundSettings; backgroundUrl: string; backgroundRemoteUrl: string; exportAppearance: () => Promise<Blob>; importAppearance: (file: File) => Promise<void>; backgroundName: string; backgroundBusy: boolean; backgroundError: string }>()
+const emit = defineEmits<{ updateRetry: [patch: Partial<AutoRetryPreferences>]; 'update:modelValue': [width: number]; 'update:theme': [theme: ThemePreference]; 'update:autoConnect': [enabled: boolean]; 'update:autoWrap': [enabled: boolean]; 'update:backgroundMode': [mode: BackgroundMode]; 'update:imageBackground': [value: ImageBackgroundSettings]; previewWidth: [value: number | null]; previewImageBackground: [value: ImageBackgroundSettings | null]; uploadBackground: [file: File]; useBackgroundUrl: [url: string]; removeBackground: [] }>()
 const options = [{ value: 840, label: '紧凑' }, { value: 1080, label: '舒适' }, { value: 1280, label: '宽屏' }, { value: 0, label: '铺满窗口' }]
 const widthOptions = computed(() => {
   const items = options.map(option => ({ value: String(option.value), label: option.label }))
@@ -30,12 +32,12 @@ const dialogId = useId()
 const settingsBody = ref<HTMLElement>()
 let sectionAnimation: Animation | undefined
 onUnmounted(() => sectionAnimation?.cancel())
-const section = useStoredChoice<string>('codex-remote.settings-section.v1', 'general', oneOf(['general', 'appearance', 'typography', 'notifications', 'codex-model', 'codex-execution', 'codex-context'] as const)), codexVisited = ref(section.value.startsWith('codex-'))
+const section = useStoredChoice<string>('codex-remote.settings-section.v1', 'general', oneOf(['general', 'retry', 'appearance', 'typography', 'notifications', 'codex-model', 'codex-execution', 'codex-context'] as const)), codexVisited = ref(section.value.startsWith('codex-'))
 function clearPreviews() { props.typography.clearPreview(); emit('previewWidth', null); emit('previewImageBackground', null); props.notifications.previewVolume(null) }
 watch([open, section], clearPreviews)
 onUnmounted(clearPreviews)
 const codexSettings = ref<InstanceType<typeof CodexSettings>>()
-const localPages = [{ id: 'general', label: '常规与内容', icon: PhGearSix }, { id: 'appearance', label: '外观与背景', icon: PhPalette }, { id: 'typography', label: '字体与字号', icon: PhTextAa }, { id: 'notifications', label: '通知与音效', icon: PhBell }]
+const localPages = [{ id: 'general', label: '常规与内容', icon: PhGearSix }, { id: 'retry', label: '失败与重试', icon: PhArrowClockwise }, { id: 'appearance', label: '外观与背景', icon: PhPalette }, { id: 'typography', label: '字体与字号', icon: PhTextAa }, { id: 'notifications', label: '通知与音效', icon: PhBell }]
 const codexPages = [{ id: 'codex-model', label: '模型与回复', icon: PhCpu }, { id: 'codex-execution', label: '执行与权限', icon: PhShieldCheck }, { id: 'codex-context', label: '上下文', icon: PhDatabase }]
 const codexSection = computed(() => section.value === 'codex-execution' ? '执行' : section.value === 'codex-context' ? '上下文' : '模型')
 const codexTitle = computed(() => codexPages.find(page => page.id === section.value)?.label || '')
@@ -75,6 +77,7 @@ async function close() {
         <div ref="settingsBody" class="settings-body">
         <TypographySettings v-show="section === 'typography'" :controls="typography" />
         <NotificationSettings v-show="section === 'notifications'" :notifications="notifications" />
+        <AutoRetrySettings v-show="section === 'retry'" :preferences="retryPreferences" :error="retrySettingsError" @update="emit('updateRetry', $event)" />
         <CodexSettings v-if="open && codexVisited" ref="codexSettings" v-show="onCodexPage" :key="deviceKey" :section="codexSection" :title="codexTitle" :request="configRequest" :models="models" :connected="connected" :device-name="deviceName" />
         <section v-show="section === 'general'" class="settings-section" :aria-labelledby="dialogId + '-connection'">
           <div class="settings-heading"><h3 :id="dialogId + '-connection'">连接</h3></div>
@@ -180,7 +183,7 @@ async function close() {
   .settings-nav { flex: none; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--line-soft); overflow: visible; }
   .settings-nav-group { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
   .settings-nav-group + .settings-nav-group { margin-top: 4px; padding-top: 4px; }
-  .settings-nav-group h3 { flex: 0 0 56px; margin: 0; }
+  .settings-nav-group h3 { flex: 0 0 auto; margin: 0 var(--space-2) 0 0; white-space: nowrap; }
   .settings-nav-group button { flex: 0 0 auto; width: auto; gap: 6px; min-height: 44px; padding: 8px 10px; font-size: calc(13px * var(--ui-font-scale, 1)); white-space: nowrap; }
   .settings-section { padding: 18px 0; }
   .settings-section :deep(.background-adjustments) { grid-template-columns: 1fr; }

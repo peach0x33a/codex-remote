@@ -3,12 +3,13 @@ import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { PhX, PhPencilSimple, PhArrowCounterClockwise, PhArrowBendUpRight, PhCaretLeft, PhCaretRight, PhShieldCheck, PhSparkle } from '@phosphor-icons/vue'
 import ApprovalCard from './ApprovalCard.vue'
 import InlineImage from './InlineImage.vue'
+import InlineFile from './InlineFile.vue'
 import PastedText from './PastedText.vue'
 import type { PromptPart } from '../lib/prompt'
 import { approvalTitle, nextApprovalSelection, type ApprovalDraft } from '../lib/approvals'
 import type { Approval, RpcId } from '../../shared/protocol'
-const props = defineProps<{ approvals: Approval[]; hasQueue?: boolean; disabled?: boolean; reasoning?: string; thinkingElapsed?: number; steers?: { id: string; accepted: boolean; ended?: boolean; cancelable?: boolean; parts: PromptPart[] }[]; completionOpen?: boolean; completionTitle?: string; completionTab?: string; completionTabs?: { id: string; label: string }[] }>()
-const emit = defineEmits<{ withdrawSteer: [id: string]; restoreSteer: [id: string]; respond: [id: RpcId, result: unknown]; 'update:completionTab': [id: string]; completionHost: [host: HTMLElement | null]; completionActive: [active: boolean]; closeCompletion: [] }>()
+const props = defineProps<{ approvals: Approval[]; hasQueue?: boolean; hasQuestions?: boolean; disabled?: boolean; reasoning?: string; thinkingElapsed?: number; steers?: { id: string; accepted: boolean; ended?: boolean; cancelable?: boolean; parts: PromptPart[] }[]; completionOpen?: boolean; completionTitle?: string; completionTab?: string; completionTabs?: { id: string; label: string }[] }>()
+const emit = defineEmits<{ withdrawSteer: [id: string]; restoreSteer: [id: string]; respond: [id: RpcId, result: unknown]; openFile: [target: { path: string }]; 'update:completionTab': [id: string]; completionHost: [host: HTMLElement | null]; completionActive: [active: boolean]; closeCompletion: [] }>()
 const completionHost = ref<HTMLElement>(), completionTabsHost = ref<HTMLElement>(), page = ref('completion')
 const content = ref<HTMLElement>()
 const selected = ref<RpcId>(), drafts = reactive(new Map<RpcId, ApprovalDraft>())
@@ -16,6 +17,7 @@ const requestPage = (id: RpcId) => 'request:' + JSON.stringify(id)
 const pages = computed(() => !props.completionOpen ? [] : [
   { id: 'completion', label: props.completionTitle || '列表' },
   ...props.approvals.map(item => ({ id: requestPage(item.id), label: approvalTitle(item) })),
+  ...(props.hasQuestions ? [{ id: 'questions', label: '待回答的问题' }] : []),
   ...(props.hasQueue ? [{ id: 'queue', label: '消息队列' }] : []),
   ...(props.steers?.length ? [{ id: 'steers', label: '待插入的消息' }] : []),
   ...(props.reasoning?.trim() ? [{ id: 'reasoning', label: '思考进度' }] : []),
@@ -52,7 +54,7 @@ function islandKey(event: KeyboardEvent) {
   event.preventDefault(); event.stopPropagation(); navigate(event.key === 'ArrowLeft' ? -1 : 1)
 }
 watch(() => props.completionTab, async () => { await nextTick(); completionTabsHost.value?.querySelector?.<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }) })
-defineExpose({ navigate, movePage, showCompletion: () => { page.value = 'completion' } })
+defineExpose({ navigate, movePage, showCompletion: () => { page.value = 'completion' }, showQuestions: () => { page.value = 'questions' } })
 watch(() => props.approvals.map(item => item.id), (ids, previous = []) => {
   selected.value = nextApprovalSelection(previous, ids, selected.value)
   for (const id of drafts.keys()) if (!ids.includes(id)) drafts.delete(id)
@@ -78,9 +80,12 @@ function move(direction: number) { selected.value = props.approvals[(index.value
     <header v-if="completionOpen" class="island-page-header"><button type="button" class="icon-button small" aria-label="浮岛上一页" :disabled="pages.length < 2" @mousedown.prevent @click="movePage(-1)"><PhCaretLeft :size="17" /></button><span>{{ pages[pageIndex]?.label }}<small v-if="pages.length > 1"> {{ pageIndex + 1 }} / {{ pages.length }}</small></span><button type="button" class="icon-button small" aria-label="浮岛下一页" :disabled="pages.length < 2" @mousedown.prevent @click="movePage(1)"><PhCaretRight :size="17" /></button></header>
     <div v-if="completionOpen" v-show="page === 'completion'" ref="completionHost" class="island-completion-host" />
     <Transition name="island-reveal"><div v-if="reasoning?.trim() && (!current || completionOpen)" v-show="!completionOpen || page === 'reasoning'" class="island-thinking" aria-label="正在思考"><div class="island-thinking-inner"><div class="island-thinking-heading"><PhSparkle :size="16" aria-hidden="true" /><span>思考中<span v-if="thinkingElapsed !== undefined" class="island-thinking-time"> {{ thinkingElapsed }}秒</span></span></div><p class="island-thinking-preview" :title="reasoning">{{ reasoning }}</p></div></div></Transition>
-    <TransitionGroup name="island-reveal" tag="div" class="island-steers" v-show="!completionOpen || page === 'steers'"><div v-for="steer in steers" :key="steer.id" class="island-steer" aria-label="插话"><div class="island-steer-inner"><div class="island-thinking-heading"><PhArrowBendUpRight :size="16" aria-hidden="true" /><span>{{ steer.ended ? '回合已结束 · 未确认插入' : steer.accepted ? '待插入' : '正在发送插话…' }}</span><button v-if="steer.ended" type="button" class="icon-button small steer-restore" aria-label="取回插话草稿" title="取回草稿" @click="emit('restoreSteer', steer.id)"><PhPencilSimple :size="15" /></button><button type="button" class="icon-button small steer-withdraw" :aria-label="steer.ended ? '移除未确认插话' : '撤回插话'" :disabled="!steer.cancelable" :title="steer.ended ? '移除此提示；不修改服务端会话' : steer.cancelable ? '撤回插话' : '当前服务端不支持单独撤回已接收的插话'" @click="emit('withdrawSteer', steer.id)"><PhX v-if="steer.ended" :size="15" /><PhArrowCounterClockwise v-else :size="15" /></button></div><div class="island-steer-text"><template v-for="(part, index) in steer.parts" :key="index"><PastedText v-if="part.type === 'text' && part.pasteId" :text="part.text" /><span v-else-if="part.type === 'text'">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineImage v-else :src="part.url" :name="part.name" /></template></div></div></div></TransitionGroup>
+    <TransitionGroup name="island-reveal" tag="div" class="island-steers" v-show="!completionOpen || page === 'steers'"><div v-for="steer in steers" :key="steer.id" class="island-steer" aria-label="插话"><div class="island-steer-inner"><div class="island-thinking-heading"><PhArrowBendUpRight :size="16" aria-hidden="true" /><span>{{ steer.ended ? '回合已结束 · 未确认插入' : steer.accepted ? '待插入' : '正在发送插话…' }}</span><button v-if="steer.ended" type="button" class="icon-button small steer-restore" aria-label="取回插话草稿" :disabled="!steer.cancelable" title="取回草稿" @click="emit('restoreSteer', steer.id)"><PhPencilSimple :size="15" /></button><button type="button" class="icon-button small steer-withdraw" :aria-label="steer.ended ? '移除未确认插话' : '撤回插话'" :disabled="!steer.cancelable" :title="steer.ended ? '移除此提示；不修改服务端会话' : steer.cancelable ? '撤回插话' : '当前服务端不支持单独撤回已接收的插话'" @click="emit('withdrawSteer', steer.id)"><PhX v-if="steer.ended" :size="15" /><PhArrowCounterClockwise v-else :size="15" /></button></div><div class="island-steer-text"><template v-for="(part, index) in steer.parts" :key="index"><PastedText v-if="part.type === 'text' && part.pasteId" :text="part.text" /><span v-else-if="part.type === 'text'">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineFile v-else-if="part.type === 'file'" :file="part" @open="emit('openFile', { path: $event })" /><InlineImage v-else :src="part.url" :name="part.name" /></template></div></div></div></TransitionGroup>
     <Transition name="island-reveal"><div v-if="hasQueue" v-show="!completionOpen || page === 'queue'" class="island-queue"><div class="island-queue-inner"><slot name="queue" /></div></div></Transition>
+    <div class="island-request-viewport" :class="{ shared: hasQuestions && !!current && !completionOpen }">
+    <div v-show="!completionOpen || page === 'questions'"><slot name="questions" /></div>
     <div v-if="current" v-show="!completionOpen || page === requestPage(current.id)"><header v-if="!completionOpen" class="island-header"><h3><PhShieldCheck :size="18" />{{ approvalTitle(current) }}</h3><nav class="island-navigation" aria-label="切换待处理请求"><button type="button" class="icon-button small" aria-label="上一个请求" :disabled="approvals.length < 2" @click="move(-1)"><PhCaretLeft :size="17" /></button><span aria-live="polite">{{ index + 1 }} / {{ approvals.length }}</span><button type="button" class="icon-button small" aria-label="下一个请求" :disabled="approvals.length < 2" @click="move(1)"><PhCaretRight :size="17" /></button></nav></header><div :key="current.id" ref="content" class="island-content" tabindex="-1" role="group" :aria-label="approvalTitle(current)"><ApprovalCard :key="current.id" :approval="current" :disabled="!!disabled" :draft="drafts.get(current.id)" compact @respond="emit('respond', current.id, $event)" /></div></div>
+    </div>
     <div v-show="!current && !completionOpen" class="island-context"><div class="island-project"><slot /></div><div class="island-workspace"><slot name="workspace" /></div><div class="island-goal"><slot name="goal" /></div></div>
     <div v-if="completionOpen && page === 'completion' && completionTabs?.length" ref="completionTabsHost" class="island-completion-tabs" role="tablist" aria-label="补全分类"><button v-for="tab in completionTabs" :key="tab.id" type="button" role="tab" :aria-selected="completionTab === tab.id" @mousedown.prevent @click="emit('update:completionTab', tab.id)">{{ tab.label }}</button></div>
   </section>
@@ -149,6 +154,13 @@ function move(direction: number) { selected.value = props.approvals[(index.value
 .island-header h3 svg { color: var(--accent); }
 .island-navigation { display: flex; align-items: center; gap: 3px; flex-shrink: 0; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums; }
 .island-navigation span { min-width: 34px; text-align: center; }
+/* Coexisting native approvals and async questions share one bounded scroll area. */
+.island-request-viewport.shared { max-height: min(calc(var(--app-viewport-height, 100dvh) * .42), 420px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.shared .island-content { max-height: none; overflow: visible; }
+.shared :deep(.async-question-content form) { max-height: none; }
+.shared :deep(.question-fields) { overflow: visible; }
+.shared :deep(.question-submit) { position: sticky; bottom: 0; z-index: 1; padding-bottom: var(--space-2); background: var(--island, var(--sidebar)); }
+@media (max-width: 760px) { .island-request-viewport.shared { max-height: calc(var(--app-viewport-height, 100dvh) * .36); } }
 .island-content:focus { outline: none; }
 .island-content { animation: island-content-in 180ms var(--ease); overflow: auto; max-height: min(calc(var(--app-viewport-height, 100dvh) * .42), 360px); overscroll-behavior: contain; }
 .island-content :deep(.approval-card) { margin: 0; padding: 8px 16px 12px; border: 0; border-radius: 0; box-shadow: none; background: transparent; }

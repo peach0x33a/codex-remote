@@ -1,4 +1,5 @@
-import type { RpcMessage } from '../../shared/protocol'
+import type { Item, RpcMessage } from '../../shared/protocol'
+import { pendingAsyncQuestions } from './async-questions'
 export type NoticeKind = 'attention' | 'completed' | 'failed'
 export type NoticeTarget = { deviceId: string; threadId: string }
 export type TaskNotice = NoticeTarget & { id: string; kind: NoticeKind; deviceName: string; threadName: string }
@@ -27,6 +28,8 @@ export function taskNoticeFromMessage(message: RpcMessage, device: { id: string;
   let kind: NoticeKind, eventKey: string
   if (message.id !== undefined && ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'tool/requestUserInput'].includes(method || '')) {
     kind = 'attention'; eventKey = JSON.stringify(['attention', p.turnId, p.itemId ?? message.id, method])
+  } else if (method === 'item/completed' && p.item && pendingAsyncQuestions([p.item as Item]).length) {
+    kind = 'attention'; eventKey = JSON.stringify(['async-question', p.turnId, (p.item as Item).id])
   } else if (method === 'turn/completed') {
     const turn = p.turn as { id?: string; status?: string } | undefined
     if (!turn?.id || !['completed', 'failed'].includes(turn.status || '')) return

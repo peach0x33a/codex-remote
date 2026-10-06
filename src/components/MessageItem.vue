@@ -2,9 +2,11 @@
 import { computed, ref } from 'vue'
 import { PhArrowCounterClockwise, PhPencilSimple, PhX, PhCode, PhCopy, PhFileText, PhGlobe, PhImage, PhSparkle, PhTerminal, PhArrowsIn } from '@phosphor-icons/vue'
 import InlineImage from './InlineImage.vue'
+import InlineFile from './InlineFile.vue'
 import PastedText from './PastedText.vue'
 import FileChangeActivity from './FileChangeActivity.vue'
 import { messageParts, reasoningText } from '../lib/prompt'
+import { asyncRepliesFromItem, displayAsyncQuestionReply } from '../lib/async-questions'
 import type { Item } from '../../shared/protocol'
 import { renderMarkdown } from '../lib/markdown'
 import { codeBlockFromEvent } from '../lib/markdown-code'
@@ -23,7 +25,8 @@ function onMarkdownClick(event: MouseEvent) {
 }
 const expanded = ref(false)
 const workDurationLabel = computed(() => isWorkDurationCandidate(props.item) ? formatWorkDuration(props.workDurationSeconds) : undefined)
-const parts = computed(() => messageParts(props.item.content))
+const parts = computed(() => messageParts(props.item.content).map(part => part.type === 'text' ? { ...part, text: displayAsyncQuestionReply(part.text) } : part))
+const questionAnswerText = computed(() => asyncRepliesFromItem(props.item).map(reply => reply.question + '\n\n' + reply.answer).join('\n\n'))
 const reasoning = computed(() => reasoningText(props.item).trim())
 const singleLineReasoning = computed(() => !/[\r\n]/.test(reasoning.value))
 const reasoningElapsed = computed(() => {
@@ -51,7 +54,8 @@ const activityError = computed(() => toolActivityError(props.item))
 </script>
 
 <template>
-  <article v-if="item.type === 'userMessage'" class="message message-user" aria-label="你的消息"><div class="user-bubble"><template v-for="(part, index) in parts" :key="index"><PastedText v-if="part.type === 'text' && part.pasteId" :text="part.text" /><span v-else-if="part.type === 'text'" class="user-text">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineImage v-else :src="part.url" :name="part.name" /></template></div><div class="user-message-actions"><button type="button" class="icon-button small" aria-label="编辑消息" :title="actionHint || '编辑消息'" :disabled="actionsDisabled || editDisabled" @click="emit('edit', item.id)"><PhPencilSimple :size="16" /></button><button type="button" class="icon-button small" aria-label="撤回消息" title="撤回消息" :disabled="actionsDisabled" @click="emit('withdraw', item.id)"><PhArrowCounterClockwise :size="16" /></button></div></article>
+  <article v-if="item.type === 'userMessage'" class="message message-user" aria-label="你的消息"><div class="user-bubble"><template v-for="(part, index) in parts" :key="index"><PastedText v-if="part.type === 'text' && part.pasteId" :text="part.text" /><span v-else-if="part.type === 'text'" class="user-text">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineFile v-else-if="part.type === 'file'" :file="part" @open="emit('openFile', { path: $event })" /><InlineImage v-else :src="part.url" :name="part.name" /></template></div><div v-if="!item.stoppedInput" class="user-message-actions"><button type="button" class="icon-button small" aria-label="编辑消息" :title="actionHint || '编辑消息'" :disabled="actionsDisabled || editDisabled" @click="emit('edit', item.id)"><PhPencilSimple :size="16" /></button><button type="button" class="icon-button small" aria-label="撤回消息" title="撤回消息" :disabled="actionsDisabled" @click="emit('withdraw', item.id)"><PhArrowCounterClockwise :size="16" /></button></div></article>
+  <article v-else-if="item.type === 'functionCallOutput' && questionAnswerText" class="message message-user" aria-label="你的回答"><div class="user-bubble"><span class="user-text">{{ questionAnswerText }}</span></div></article>
   <article v-else-if="item.type === 'agentMessage' || item.type === 'plan'" class="message message-agent" aria-label="Codex 回复">
     <div class="agent-avatar"><PhTerminal :size="18" weight="bold" /></div>
     <div class="agent-content"><div class="message-author">Codex <span v-if="item.type === 'plan'">计划</span><span v-else-if="item.phase === 'commentary'">进展</span></div><div class="markdown" @click="onMarkdownClick" v-html="html" /><div v-if="item.text" class="agent-message-actions"><button type="button" class="icon-button copy-button" aria-label="复制回复" @click="emit('copy', item.text || '')"><PhCopy :size="16" /></button><span v-if="workDurationLabel" class="work-duration">{{ workDurationLabel }}</span></div></div>

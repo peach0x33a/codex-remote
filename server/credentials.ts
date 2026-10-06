@@ -8,10 +8,12 @@ import type { ConnectionProfile } from '../shared/protocol'
 import { parseProfile, parseProfileSnapshot, profileFields, profileId, record, type ProfileSnapshot } from '../shared/profiles'
 import { INPUT_HISTORY_LIMIT, INPUT_HISTORY_STORAGE_LIMIT, parseHistoryEntries, parseHistoryInput, type InputHistoryEntry } from '../shared/input-history'
 
-type StoreData = { version: 1 | 2; credentials: Credentials; profiles?: ConnectionProfile[]; selectedId?: string; inputHistory?: InputHistoryEntry[] }
+export type RememberedSession = { id: string; expiresAt: number }
+type StoreData = { version: 1 | 2; credentials: Credentials; profiles?: ConnectionProfile[]; selectedId?: string; inputHistory?: InputHistoryEntry[]; rememberedSessions?: RememberedSession[] }
 type Credential = { endpoint: string; token: string }
 type Credentials = Record<string, Credential>
 const pending = new Map<string, Promise<void>>()
+const REMEMBERED_SESSION_LIMIT = 1024
 
 export class CredentialError extends Error {
   constructor(message: string, readonly status = 400) { super(message) }
@@ -40,6 +42,17 @@ export function credentialToken(value: unknown, required = false): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseRememberedSessions(value: unknown): RememberedSession[] {
+  if (!Array.isArray(value) || value.length > REMEMBERED_SESSION_LIMIT) throw unavailable()
+  const ids = new Set<string>()
+  return value.map(session => {
+    if (!isRecord(session) || typeof session.id !== 'string' || !/^[a-f0-9]{64}$/.test(session.id) ||
+      typeof session.expiresAt !== 'number' || !Number.isSafeInteger(session.expiresAt) || session.expiresAt <= 0 || ids.has(session.id)) throw unavailable()
+    ids.add(session.id)
+    return { id: session.id, expiresAt: session.expiresAt }
+  })
 }
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT'
@@ -105,6 +118,7 @@ export class CredentialStore {
       }
       if (data.version === 2 || data.profiles !== undefined) parseProfileSnapshot(data)
       if (data.inputHistory !== undefined) parseHistoryEntries(data.inputHistory)
+      if (data.rememberedSessions !== undefined) parseRememberedSessions(data.rememberedSessions)
       return data as StoreData
     } catch { throw unavailable() }
   }
@@ -170,6 +184,35 @@ export class CredentialStore {
       if (!Object.hasOwn(credentials, id)) return
       if (data.profiles?.some(profile => profile.credentialId === id)) throw new CredentialError('请在设备配置中清除已保存的令牌。', 409)
       delete credentials[id]
+      await this.write(data)
+    })
+  }
+
+  async rememberedSessions(): Promise<RememberedSession[]> {
+    return this.serialized(async () => {
+      const data = await this.read()
+      return (data.rememberedSessions ?? []).filter(session => session.expiresAt > Date.now()).map(session => ({ ...session }))
+    })
+  }
+
+  async saveRememberedSession(session: RememberedSession, previousId?: string): Promise<void> {
+    const validated = parseRememberedSessions([session])[0]!
+    if (previousId !== undefined) credentialId(previousId)
+    return this.serialized(async () => {
+      const data = await this.read()
+      const sessions = (data.rememberedSessions ?? []).filter(entry => entry.expiresAt > Date.now() && entry.id !== previousId && entry.id !== validated.id)
+      if (sessions.length >= REMEMBERED_SESSION_LIMIT) throw new CredentialError('记住登录的设备数量已达上限，请关闭“记住密码”后登录。', 429)
+      data.rememberedSessions = [...sessions, validated]
+      await this.write(data)
+    })
+  }
+
+  async removeRememberedSession(id: string): Promise<void> {
+    credentialId(id)
+    return this.serialized(async () => {
+      const data = await this.read()
+      if (!data.rememberedSessions?.some(session => session.id === id)) return
+      data.rememberedSessions = data.rememberedSessions.filter(session => session.id !== id && session.expiresAt > Date.now())
       await this.write(data)
     })
   }

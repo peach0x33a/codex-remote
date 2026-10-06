@@ -3,6 +3,12 @@ import type { ServerWebSocket } from 'bun'
 import type { Item, MessageContent, RpcMessage, Thread, Turn } from '../shared/protocol'
 import { MOCK_PORT } from './config'
 import { codeMarkdown } from './markdown-fixture'
+import { ATTACHMENT_UPLOAD_SCRIPT } from '../src/lib/file-attachments'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+const uploadRoot = mkdtempSync(join(tmpdir(), 'codex-remote-e2e-uploads-'))
+const uploadedFiles = new Set<string>()
 type Peer = { initialized: boolean; acknowledged: boolean; threadId: string; threadIds: string[] }
 const clients = new Set<ServerWebSocket<Peer>>()
 let threads = new Map<string, Thread>()
@@ -15,6 +21,7 @@ let userConfig: Record<string, unknown> = {}
 type NativeSubmission = { id: string; clientUserMessageId: string; input: MessageContent[] }
 const nativeQueues = new Map<string, NativeSubmission[]>()
 const nativeSettings = new Map<string, Record<string, unknown>>()
+const threadAttachments = new Map<string, { id: string; attachmentType: string; identityKey: string; payload: unknown; createdAt: number }[]>()
 const goals = new Map<string, { threadId: string; objective: string; status: string; tokenBudget: number | null; tokensUsed: number; timeUsedSeconds: number; createdAt: number; updatedAt: number }>()
 function queueFor(threadId: string) {
   if (!nativeQueues.has(threadId)) nativeQueues.set(threadId, [])
@@ -26,6 +33,7 @@ let pending = new Map<number, { thread: Thread; turn: Turn; kind: string }>()
 const timers = new Map<string, ReturnType<typeof setInterval>>()
 let requestId = 10000
 const fileFixtureBytes = (path: string) => {
+  if (uploadedFiles.has(path)) return new Uint8Array(readFileSync(path))
   if (createdEntries.get(path) === 'file') return new Uint8Array()
   if (path === '/test/files/build.AppImage') return Uint8Array.from({ length: 600123 }, (_, i) => i % 256)
   if (path === '/test/files/pixel.gif') return Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
@@ -71,10 +79,12 @@ function fileFixtureReport(command: string[]) {
   return { ok: true, file: { path, name, kind: 'file', size: bytes.length, fingerprint: '1:1:' + bytes.length + ':1:1', preview: path.endsWith('.AppImage') ? { kind: 'binary' } : path.endsWith('.gif') ? { kind: 'image', mime: 'image/gif' } : { kind: 'text', text: new TextDecoder().decode(bytes), mime: 'text/plain', truncated: false } } }
 }
 function reset() {
+  uploadedFiles.clear(); rmSync(uploadRoot, { recursive: true, force: true }); mkdirSync(uploadRoot, { mode: 0o700 })
   createdEntries.clear()
   configVersion = 1; userConfig = { approvals_reviewer: 'user', model: 'test-model', model_reasoning_effort: 'medium', approval_policy: 'on-request', sandbox_mode: 'workspace-write', web_search: 'cached', model_verbosity: 'medium' }
   for (const timer of timers.values()) clearInterval(timer)
   timers.clear(); pending.clear(); nativeQueues.clear(); nativeSettings.clear(); goals.clear(); received = []; approved = 0; scenario = ''; requests = []; resumed = []
+  threadAttachments.clear()
   const recent = Math.floor(Date.now() / 1000)
   archived = new Map([['archived-thread', { id: 'archived-thread', name: '归档历史会话', preview: '归档内容保留', cwd: '/test/archived-project', createdAt: recent - 604800, updatedAt: recent - 604800, status: { type: 'idle' }, turns: [{ id: 'archived-turn', status: 'completed', items: [{ id: 'archived-reply', type: 'agentMessage', text: '归档前保存的会话内容。' }] }] }]])
   threads = new Map([['existing-thread', { id: 'existing-thread', name: '已有项目分析', preview: '梳理项目结构', cwd: '/test/project', createdAt: recent - 120, updatedAt: recent - 60, status: { type: 'idle' }, turns: [{ id: 'existing-turn', status: 'completed', items: [{ id: 'existing-user', type: 'userMessage', content: [{ type: 'text', text: '梳理项目结构' }] }, { id: 'existing-agent', type: 'agentMessage', text: '这是保存在远端的会话。' }] }] }]])
@@ -140,6 +150,10 @@ const server = Bun.serve<Peer>({
       return Response.json({ ok: true })
     }
     if (path === '/test/metrics') return Response.json({ received, approved, requests, resumed, forks: [...threads.values()].filter(thread => 'forkedFromId' in thread), nativeQueues: Object.fromEntries(nativeQueues), nativeSettings: Object.fromEntries(nativeSettings) })
+    if (path === '/test/uploaded-file') {
+      const file = new URL(request.url).searchParams.get('path') || ''
+      return uploadedFiles.has(file) ? Response.json({ dataBase64: readFileSync(file).toString('base64') }) : new Response('Not found', { status: 404 })
+    }
     if (path === '/test/native-queue' || path === '/test/native-settings') {
       if (scenario !== 'native-queue' || request.method !== 'POST') return Response.json({ error: 'Native queue scenario required' }, { status: 409 })
       const body = await request.json() as { threadId: string; action?: string; id?: string; text?: string; threadSettings?: Record<string, unknown> }
@@ -210,7 +224,35 @@ const server = Bun.serve<Peer>({
       if (method === 'initialize') { if (ws.data.initialized) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Already initialized' } })); return }; ws.data.initialized = true; respond({ userAgent: 'codex-test/0.159.0', platformFamily: 'unix', platformOs: 'linux' }); return }
       if (method === 'initialized') { ws.data.acknowledged = true; return }
       if (!ws.data.initialized || !ws.data.acknowledged) { ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'Not initialized' } })); return }
+      if (method.startsWith('thread/attachment/')) {
+        const threadId = String(p.threadId)
+        if (!threadAttachments.has(threadId)) threadAttachments.set(threadId, [])
+        const rows = threadAttachments.get(threadId)!
+        if (method === 'thread/attachment/list') { respond({ data: rows, nextCursor: null }); return }
+        if (method === 'thread/attachment/remove') { threadAttachments.set(threadId, rows.filter(row => row.attachmentType !== p.attachmentType || row.identityKey !== p.identityKey)); respond({}); return }
+        const old = rows.find(row => row.attachmentType === p.attachmentType && row.identityKey === p.identityKey)
+        const attachment = old || { id: crypto.randomUUID(), attachmentType: String(p.attachmentType), identityKey: String(p.identityKey), payload: p.payload, createdAt: Date.now() }
+        if (!old) rows.push(attachment)
+        respond({ outcome: old ? 'existing' : 'created', attachment }); return
+      }
+      if (method === 'thread/inject_items') {
+        if (scenario === 'steer-save-error') { fail(-32603, '测试插话保存失败'); return }
+        respond({}); return
+      }
       if (method === 'fs/createDirectory') { if (scenario === 'directory-denied') fail(-32603, 'Permission denied: default directory'); else respond({}); return }
+      if (method === 'command/exec' && Array.isArray(p.command) && typeof p.command[4] === 'string' && p.command[4].startsWith(ATTACHMENT_UPLOAD_SCRIPT.split('\n')[0]!)) {
+        const command = p.command as string[]
+        if (scenario === 'file-upload-error' && command[5] === 'chunk') { fail(-32603, '测试文件上传失败，请重试'); return }
+        void (async () => {
+          const process = Bun.spawn(command, { cwd: uploadRoot, env: { ...globalThis.process.env, TMPDIR: uploadRoot }, stdout: 'pipe', stderr: 'pipe' })
+          const [stdout, stderr, exitCode] = await Promise.all([new Response(process.stdout).text(), new Response(process.stderr).text(), process.exited])
+          if (command[5] === 'finish') { const report = JSON.parse(stdout); if (report.ok && typeof report.path === 'string') uploadedFiles.add(report.path) }
+          const send = () => respond({ stdout, stderr, exitCode })
+          if (scenario === 'file-upload-slow' && command[5] === 'chunk') setTimeout(send, 800)
+          else send()
+        })().catch(cause => fail(-32603, String(cause)))
+        return
+      }
       if (method === 'command/exec' && Array.isArray(p.command) && p.command[3] === 'codex-remote-directory') { respond({ exitCode: 0, stdout: '/mock-home/' + String(p.command[4]).replace(/^~\/?/, ''), stderr: '' }); return }
       if (method === 'command/exec' && ['file-links', 'tool-previews'].includes(scenario)) {
         const command = Array.isArray(p.command) ? p.command as string[] : []
@@ -241,7 +283,8 @@ const server = Bun.serve<Peer>({
       if (method === 'turn/steer') {
         const thread = threads.get(String(p.threadId)), turn = thread?.turns.find(turn => turn.id === p.expectedTurnId && turn.status === 'inProgress')
         if (!thread || !turn) { fail(-32600, 'no active turn to steer'); return }
-        if (scenario === 'steer-not-consumed') { respond({ turnId: turn.id }); return }
+        if (scenario === 'async-question-rejected') { scenario = 'async-question'; fail(-32603, '测试回答发送失败，请重试'); return }
+        if (scenario === 'steer-not-consumed' || scenario === 'steer-save-error') { respond({ turnId: turn.id }); return }
         const user: Item = { id: crypto.randomUUID(), clientId: p.clientUserMessageId as string | undefined, type: 'userMessage', content: p.input as Item['content'] }
         turn.items.push(user); emit(thread.id, 'item/completed', { turnId: turn.id, item: user }); respond({ turnId: turn.id }); return
       }
@@ -425,11 +468,38 @@ const server = Bun.serve<Peer>({
         thread.preview ||= text; thread.turns.push(turn); thread.status = { type: 'active' }
         emit(thread.id, 'turn/started', { turn }); emit(thread.id, 'item/completed', { turnId: turn.id, item: user }); respond({ turn })
         emit(thread.id, 'thread/tokenUsage/updated', { turnId: turn.id, tokenUsage: { total: { totalTokens: 45000, inputTokens: 42000, cachedInputTokens: 21000, cacheWriteInputTokens: 100, outputTokens: 3000, reasoningOutputTokens: 1000 }, last: { totalTokens: 19100, inputTokens: 19000, cachedInputTokens: 13330, cacheWriteInputTokens: 100, outputTokens: 100, reasoningOutputTokens: 40 }, modelContextWindow: 1000000 } })
+        if (scenario.startsWith('async-question')) {
+          if (text.startsWith('<send_user_message_question_reply>')) { finish(thread, turn, '回答已收到。'); return }
+          const item: Item = { id: 'async-question-' + turn.id, type: 'agentMessage', delivery: 'async', phase: 'commentary', text: '这两个新命令的权限如何设置？修改服务器代号属于管理操作；插队会影响其他服务器的等待顺序。', questions: [
+            { title: '这两个新命令的权限如何设置？修改服务器代号属于管理操作；插队会影响其他服务器的等待顺序。', options: ['修改代号、插队均仅 Bot 管理员（推荐）', '修改代号仅管理员，插队允许主控群所有成员'] },
+            { title: '还有哪些需要补充的要求？', options: null },
+          ] }
+          turn.items.push(item); emit(thread.id, 'item/completed', { turnId: turn.id, item })
+          if (scenario === 'async-question-with-approval') {
+            const id = ++requestId
+            pending.set(id, { thread, turn, kind: 'approval' })
+            emit(thread.id, 'item/commandExecution/requestApproval', { turnId: turn.id, itemId: 'parallel-approval', command: 'printf pending', reason: '另一个操作正在等待审批。', availableDecisions: ['accept', 'decline', 'cancel'] }, id)
+          }
+          if (scenario === 'async-question-idle') finish(thread, turn, '独立检查已经完成，你可以继续回答问题。')
+          return
+        }
         if (scenario === 'terminal-error') {
           turn.status = 'failed'; thread.status = { type: 'idle' }
           turn.error = { message: 'exceeded retry limit, last status: 429 Too Many Requests, request id: test-terminal-429' }
           emit(thread.id, 'error', { turnId: turn.id, error: turn.error, willRetry: false })
           emit(thread.id, 'turn/completed', { turn }); return
+        }
+        if (scenario.startsWith('auto-retry-')) {
+          const category = scenario.split('-')[2] || 'network'
+          const codes: Record<string, unknown> = { network: { responseStreamDisconnected: { httpStatusCode: null } }, server: 'serverOverloaded', rate: 'rateLimitExceeded', policy: 'cyberPolicy' }
+          if (scenario.endsWith('-always') || !thread.turns.slice(0, -1).some(turn => turn.status === 'failed')) {
+            const message = category === 'policy'
+              ? 'This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. If you’re doing authorized security work that requires more cyber permissive safeguards, apply for Daybreak access via https://platform.openai.com/settings/organization/status-and-access before retrying.'
+              : category === 'rate' ? '429 Too Many Requests' : category === 'server' ? 'The server is temporarily overloaded.' : 'Response stream disconnected before completion.'
+            turn.status = 'failed'; thread.status = { type: 'idle' }; turn.error = { message, codexErrorInfo: codes[category] || 'other' }
+            emit(thread.id, 'error', { turnId: turn.id, error: turn.error, willRetry: false }); emit(thread.id, 'turn/completed', { turn }); return
+          }
+          finish(thread, turn, '自动重试后的任务已完成。'); return
         }
         if (scenario === 'inspector') {
           const read = (id: string, path: string): Item => ({ id, type: 'commandExecution', status: 'completed', command: 'cat ' + path, commandActions: [{ type: 'read', command: 'cat ' + path, path, name: path.split('/').at(-1)! }] })
@@ -476,3 +546,4 @@ const server = Bun.serve<Peer>({
   },
 })
 console.log('Test daemon listening on ' + server.port)
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { server.stop(true); rmSync(uploadRoot, { recursive: true, force: true }); process.exit(0) })

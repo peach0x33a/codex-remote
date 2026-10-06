@@ -6,6 +6,7 @@ import { PhArchive, PhAt, PhBrain, PhChatCircle, PhCopy, PhCpu, PhCube, PhFile, 
 import ImagePreview from './ImagePreview.vue'
 import { captureComposerTrigger, composerSuggestionInsertion, type CapturedComposerToken, type ComposerTrigger } from '../lib/composer-trigger'
 import { isLongPaste, pastedTextLabel, type PromptPart } from '../lib/prompt'
+import { formatFileSize, type AttachmentPart, type FileAttachment } from '../lib/file-attachments'
 import { atEditorBoundary, createInputHistory } from '../lib/input-history'
 type ImagePart = Extract<PromptPart, { type: 'image' }>
 type SkillPart = Extract<PromptPart, { type: 'skill' }>
@@ -25,10 +26,11 @@ function resetHistory() { inputHistory.reset(); recalledFingerprint = '' }
 watch(() => props.historyScope, resetHistory, { flush: 'sync' })
 watch(() => props.modelValue, parts => { if (recalledFingerprint && fingerprint(parts) !== recalledFingerprint) resetHistory() })
 const images = new Map<string, ImagePart>()
+const attachments = new Map<string, FileAttachment>()
 const skills = new Map<string, SkillPart | MentionPart>()
 const pastedTexts = new Map<string, TextPart>()
 const preview = ref<{ image: ImagePart; anchor: DOMRect; pinned: boolean }>()
-const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? JSON.stringify(['text', p.text, p.pasteId]) : p.type === 'image' ? 'i:' + p.id : JSON.stringify([p.type, p.id, p.name, p.path])).join('\0')
+const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? JSON.stringify(['text', p.text, p.pasteId]) : p.type === 'image' ? 'i:' + p.id : p.type === 'file' ? JSON.stringify([p.type, p.id, p.path, p.name, p.size, p.deviceId]) : JSON.stringify([p.type, p.id, p.name, p.path])).join('\0')
 const trigger = shallowRef<CapturedComposerToken | null>(null)
 const menu = ref<HTMLDivElement>(), highlighted = ref(0), composing = ref(false)
 const menuId = fallbackId + '-suggestions'
@@ -117,7 +119,10 @@ watch(() => props.suggestions?.map(item => item.id), (ids, previous) => {
   if (menuOpen.value) void revealHighlighted()
 })
 watch(highlighted, () => { if (menuOpen.value) void revealHighlighted() })
-watch(() => props.disabled, disabled => { if (disabled) { dismissedToken = ''; closeSuggestions() } })
+watch(() => props.disabled, disabled => {
+  editor.value?.querySelectorAll<HTMLButtonElement>('.editor-file-chip [data-image-remove]').forEach(button => { button.disabled = !!disabled })
+  if (disabled) { dismissedToken = ''; closeSuggestions() }
+})
 onMounted(() => {
   menuObserver = new ResizeObserver(placeMenu)
   document.addEventListener('selectionchange', selectionChanged)
@@ -169,15 +174,17 @@ function restoreSelection() {
   if (!savedRange || !root.contains(range.commonAncestorContainer)) { range.selectNodeContents(root); range.collapse(false) }
   selection?.removeAllRanges(); selection?.addRange(range); return range
 }
-function makeSkillChip(skill: SkillPart | MentionPart) {
-  const chip = document.createElement('span'); chip.className = 'inline-skill editor-skill-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = skill.id; chip.dataset.skillId = skill.id; chip.title = skill.path
+function makeSkillChip(skill: SkillPart | MentionPart | FileAttachment) {
+  const chip = document.createElement('span'); chip.className = skill.type === 'file' ? 'inline-file editor-file-chip' : 'inline-skill editor-skill-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = skill.id; chip.dataset.skillId = skill.id; chip.title = skill.path
   const label = document.createElement('span'); label.textContent = skill.name
   const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('width', '16'); icon.setAttribute('height', '16'); icon.setAttribute('aria-hidden', 'true')
-  const outline = document.createElementNS('http://www.w3.org/2000/svg', 'path'); outline.setAttribute('d', 'M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z'); outline.setAttribute('fill', 'none'); outline.setAttribute('stroke', 'currentColor'); outline.setAttribute('stroke-width', '1.5'); outline.setAttribute('stroke-linejoin', 'round'); icon.append(outline)
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'image-chip-remove'; remove.dataset.imageRemove = skill.id; remove.tabIndex = -1; remove.setAttribute('aria-label', '移除技能 ' + skill.name)
+  const outline = document.createElementNS('http://www.w3.org/2000/svg', 'path'); outline.setAttribute('d', skill.type === 'file' ? 'M5 3h9l5 5v13H5Z M14 3v6h5 M8 13h8 M8 17h8' : 'M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z'); outline.setAttribute('fill', 'none'); outline.setAttribute('stroke', 'currentColor'); outline.setAttribute('stroke-width', '1.5'); outline.setAttribute('stroke-linejoin', 'round'); icon.append(outline)
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'image-chip-remove'; remove.dataset.imageRemove = skill.id; remove.tabIndex = skill.type === 'file' ? 0 : -1; remove.disabled = !!props.disabled; remove.setAttribute('aria-label', (skill.type === 'file' ? '移除文件 ' : '移除技能 ') + skill.name)
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('aria-hidden', 'true')
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M6 6l12 12M18 6L6 18'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-linecap', 'round'); svg.append(path); remove.append(svg)
-  chip.append(icon, label, remove); return chip
+  chip.append(icon, label)
+  if (skill.type === 'file') { const size = document.createElement('small'); size.textContent = formatFileSize(skill.size); chip.append(size) }
+  chip.append(remove); return chip
 }
 function makeChip(image: ImagePart) {
   const chip = document.createElement('span'); chip.className = 'inline-image editor-image-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = image.id; chip.tabIndex = 0; chip.setAttribute('role', 'button'); chip.setAttribute('aria-label', '预览图片 ' + image.name)
@@ -224,7 +231,7 @@ function read(): PromptPart[] {
       text(value); return
     }
     if (!(node instanceof HTMLElement)) return
-    if (node.dataset.attachmentId) { const part = images.get(node.dataset.attachmentId) || skills.get(node.dataset.attachmentId) || pastedTexts.get(node.dataset.attachmentId); if (part) parts.push(part); return }
+    if (node.dataset.attachmentId) { const part = images.get(node.dataset.attachmentId) || attachments.get(node.dataset.attachmentId) || skills.get(node.dataset.attachmentId) || pastedTexts.get(node.dataset.attachmentId); if (part) parts.push(part); return }
     if (node.tagName === 'BR') { text('\n'); return }
     const block = ['DIV', 'P'].includes(node.tagName) && node !== editor.value
     const last = parts.at(-1)
@@ -241,14 +248,14 @@ function input(event: Event) { if ((event as InputEvent).isComposing && !composi
 function render(parts: PromptPart[]) {
   if (!editor.value) return
   dismissedToken = ''; closeSuggestions()
-  images.clear(); skills.clear(); pastedTexts.clear(); editor.value.replaceChildren(); savedRange = undefined
+  images.clear(); attachments.clear(); skills.clear(); pastedTexts.clear(); editor.value.replaceChildren(); savedRange = undefined
   for (const part of parts) {
     if (part.type === 'text') {
       if (part.pasteId) { pastedTexts.set(part.pasteId, part); const chip = makeTextChip(part); editor.value.append(chip); ensureImageCarets(chip) }
       else editor.value.append(document.createTextNode(part.text))
     }
     else {
-      if (part.type === 'image') images.set(part.id, part); else skills.set(part.id, part)
+      if (part.type === 'image') images.set(part.id, part); else if (part.type === 'file') attachments.set(part.id, part); else skills.set(part.id, part)
       const chip = part.type === 'image' ? makeChip(part) : makeSkillChip(part); editor.value.append(chip); ensureImageCarets(chip)
     }
   }
@@ -282,6 +289,12 @@ function insertLineBreak() {
   publish()
 }
 function insertImage(image: ImagePart, insertion?: Range) { if (insertion && editor.value?.contains(insertion.commonAncestorContainer)) savedRange = insertion.cloneRange(); images.set(image.id, image); insertNode(makeChip(image)) }
+function insertAttachment(part: AttachmentPart, insertion?: Range) {
+  if (props.disabled) return
+  if (part.type === 'image') { insertImage(part, insertion); return }
+  if (insertion && editor.value?.contains(insertion.commonAncestorContainer)) savedRange = insertion.cloneRange()
+  attachments.set(part.id, part); insertNode(makeSkillChip(part))
+}
 function insertSkill(skill: { name: string; path: string }, replaceToken = false) {
   if (props.disabled || replaceToken && !applySuggestion('')) return false
   const part: SkillPart = { type: 'skill', id: 'skill-' + randomId(), name: skill.name, path: skill.path }
@@ -360,6 +373,7 @@ function openChip(chip: HTMLElement) {
 }
 function click(event: MouseEvent) {
   const remove = (event.target as HTMLElement).closest<HTMLElement>('[data-image-remove]')
+  if (remove && props.disabled) return
   if (remove) { event.preventDefault(); chipAt(event)?.remove(); preview.value = undefined; publish(); void focus(); return }
   const chip = chipAt(event); if (chip) { event.preventDefault(); openChip(chip) }
 }
@@ -381,6 +395,7 @@ function deleteAdjacentImage(event: KeyboardEvent) {
   event.preventDefault(); adjacent.remove(); preview.value = undefined; publish(); return true
 }
 function key(event: KeyboardEvent) {
+  if ((event.target as HTMLElement).closest('.editor-file-chip [data-image-remove]')) return
   if (composing.value || compositionCommitPending || event.isComposing || event.keyCode === 229) { event.stopPropagation(); return }
   if (event.key === 'Enter' && event.shiftKey && !props.disabled) { event.preventDefault(); event.stopPropagation(); insertLineBreak(); return }
   refreshTrigger()
@@ -437,7 +452,7 @@ function suggestionIcon(suggestion: Suggestion) {
   if (command.startsWith('service-tier:')) return PhLightning
   return ({ rename: PhPencilSimple, archive: PhArchive, new: PhPlus, model: PhCpu, effort: PhBrain, permissions: PhShieldCheck, skills: PhCube, goal: PhTarget, agents: PhRobot, tasks: PhRobot, resume: PhMagnifyingGlass, diff: PhGitDiff, mention: PhAt, project: PhFolder, cd: PhFolder, pwd: PhFolder, settings: PhGearSix, help: PhQuestion, copy: PhCopy } as Record<string, unknown>)[command] || PhTerminal
 }
-defineExpose({ focus, captureSelection, reserveInsertion, insertImage, insertSkill, insertMention, insertText, applySuggestion, dismissSuggestions })
+defineExpose({ focus, captureSelection, reserveInsertion, insertImage, insertAttachment, insertSkill, insertMention, insertText, applySuggestion, dismissSuggestions })
 </script>
 <template>
   <div :id="id || fallbackId" ref="editor" class="prompt-editor" :class="{ empty }" role="textbox" :aria-label="label || '发送给 Codex 的消息'" aria-multiline="true" :aria-disabled="disabled" :aria-autocomplete="suggestions !== undefined ? 'list' : undefined" :aria-controls="menuOpen ? menuId : undefined" :aria-expanded="suggestions !== undefined ? menuOpen && suggestionsActive !== false : undefined" :aria-activedescendant="activeOption" :contenteditable="!disabled" :data-placeholder="placeholder || '向 Codex 提问，或描述你想完成的任务'" spellcheck="false" @input="input" @keyup="keyup" @mouseup="selectionChanged" @focus="focused" @blur="blur" @compositionstart="compositionStart" @compositionend="compositionEnd" @keydown="key" @paste="paste" @dragover.prevent @drop="drop" @click="click" @pointerover="hover" @pointerout="leave" @pointerdown="($event.target as HTMLElement).closest('[data-image-remove]') && $event.preventDefault()" />

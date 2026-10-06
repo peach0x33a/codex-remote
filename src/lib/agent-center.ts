@@ -1,4 +1,5 @@
 import type { Item, Thread, Turn } from '../../shared/protocol'
+import { attachmentPreview } from './file-attachments'
 
 export type AgentState = 'needsYou' | 'working' | 'ready' | 'inactive' | 'unknown'
 export type AgentFilter = 'all' | Exclude<AgentState, 'unknown'>
@@ -93,7 +94,7 @@ export function groupAgentRows(rows: AgentRow[], grouping: AgentGrouping): Agent
 }
 
 function itemText(item: Item): string {
-  const text = item.text ?? item.content?.map(part => typeof part === 'string' ? part : part.text ?? (part.type === 'image' || part.type === 'localImage' ? '[图片]' : '')).filter(Boolean).join('\n') ?? ''
+  const text = attachmentPreview(item.text ?? item.content?.map(part => typeof part === 'string' ? part : part.text ?? (part.type === 'image' || part.type === 'localImage' ? '[图片]' : '')).filter(Boolean).join('\n') ?? '')
   return text.length > 4000 ? text.slice(0, 4000) + '…' : text
 }
 export function recentAgentMessages(turns: Turn[]): { user?: string; agent?: string } {

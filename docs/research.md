@@ -1,5 +1,33 @@
 # Implementation research
 
+## Automatic retry and mobile failure controls (2026-10-05)
+
+- Official error/lifecycle guidance: https://learn.chatgpt.com/docs/app-server . Native `willRetry` indicates server-managed retry; terminal turn failures carry `codexErrorInfo` and optional `additionalDetails`. The locally generated 0.160.0 `CodexErrorInfo` union supplies the category names, including transport failures with HTTP status, rate/usage/context limits, server errors, cyber/misalignment policy, auth and request errors.
+- Remote retains structured failure metadata and schedules browser-local continuation only after a confirmed `failed` turn. The opt-in setting chooses categories, delay and a finite consecutive attempt limit. Missing older metadata uses message classification. Explicitly interrupted turns and ambiguous transport submissions do not enter automatic retries.
+- Countdown and dispatch are bound to the visible runtime, device, connection and failed turn. A native latest-turn read rejects stale activity before sending `继续`; browser lease checks reduce duplicate work across tabs. The feature does not modify model, permissions or the original server explanation. Disabling/cancelling, manual input, view/device switching and disconnect cancel future retries. Historical failures on reload remain manual unless the user changes the setting for the selected failed turn.
+- Mobile failure controls move into a trailing action row so the message uses full width. Browser assertions measure that the retry button lies below the description and aligns with the right edge.
+
+## Stop and record pending steering (2026-10-05)
+
+- Official App Server: https://learn.chatgpt.com/docs/app-server . `thread/inject_items` appends raw Responses items to the model-visible history without starting a user turn. The 0.160.0 generated schema also provides `thread/attachment/add/list/remove`, with independently persisted JSON payloads and stable type/identity keys.
+- An isolated real 0.160.0 App Server with a loopback fake Responses endpoint confirmed that interruption can drop an acknowledged pending steer. Raw injected user messages do not project into `thread/items/list`; native thread attachments do persist the structured original input. The probe made one fake model request before interruption and no further model request after injection. All probe threads were test-owned; no real model generation was used.
+- Remote waits for stop completion and pending steer acknowledgements, checks native user items for each source turn, then reserves a stable thread attachment before each raw insertion. A separate commit receipt makes confirmed messages restorable; an uncertain reservation is never automatically injected again. Each input is injected separately to keep WebSocket messages bounded. A fresh current-turn check prevents appending during a later turn.
+- The display uses completed local projections anchored after the explicitly stopped turn, retaining original `UserInput` ordering and UI placeholders. These are not in-progress turns. Inline image inputs remain image content in the injected context; local files/images and skills keep their paths accessible to subsequent Codex work. External interruptions and natural completions keep the prior recoverable-hint behavior.
+
+## Arbitrary file attachments (2026-10-05)
+
+- Official App Server documentation: https://learn.chatgpt.com/docs/app-server . Local CLI 0.160.0 `UserInput` bindings expose text, images/local images, audio, skills and mentions, with no general-purpose file union member. General files therefore use text references with native `text_elements` placeholders; raster images too large for an inline message also carry a native `localImage` path.
+- The host upload uses the existing `command/exec` interface with fixed Python source, isolated Python startup, and separate argv. Byte chunks are 256 KiB; Base64 argv segments are at most 64 KiB. Transfers do not depend on a new project's working directory already existing and stay on the RPC connection captured at the start of the batch.
+- The helper creates a private, unique temporary directory, uses exclusive/no-follow creation and exact offsets, and publishes a file only after the expected length is written. It treats uploaded contents as bytes and does not execute them. Rejected or uncertain chunk writes are not automatically retried. History contains file references and UI labels, excluding uploaded binary contents.
+- Unit verification executes the real upload helper and compares resulting bytes. Browser fixtures also execute the source actually sent by the production bundle; the test fixture identifies it by its fixed marker, because bundler Unicode escaping can change the literal source representation while retaining Python behavior.
+
+## Async question adaptation (2026-10-05)
+
+- Official App Server documentation: https://learn.chatgpt.com/docs/app-server . Active-turn replies use `turn/steer` with `expectedTurnId`; an idle thread uses `turn/start`.
+- Installed CLI 0.160.0 experimental bindings were generated into `/tmp/codex-remote-user-input-schema.q0cBPR`. `ThreadItem.agentMessage` carries `delivery: "async"` and `questions: AsyncUserInputQuestion[] | null`; each question has a `title` and optional/null string `options`. These are distinct from blocking `item/tool/requestUserInput` server requests.
+- A real CLI TUI connected to an isolated loopback WebSocket fixture displayed `shift+← to answer` and `shift+→ main prompt`. Captured answer input used `<send_user_message_question_reply>` around a JSON array of `{ answer, question, questionItemId }`. The ID is JSON-encoded `["request_user_input_async", messageId, originalQuestionIndex]`. The literal captured payload is preserved in `tests/unit/async-questions.test.ts`.
+- Remote sends the native tagged answer through its existing steer/start pipeline, waits for acknowledgement before dismissing a pending question, and reads matching native reply records during history hydration. Ordinary untagged steering does not resolve an async question. Question reply display hides the transport wrapper and question IDs.
+
 Sources checked before implementation on 2026-09-30 (Asia/Singapore). Local installed Codex CLI: 0.159.0.
 
 ## Codex protocol and daemon

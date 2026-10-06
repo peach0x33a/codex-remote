@@ -49,7 +49,7 @@ describe('authenticated connection bridge', () => {
       expect(login.status).toBe(200)
       const setCookie = login.headers.get('set-cookie')!
       expect(setCookie.includes('; Secure')).toBe(from === secureOrigin)
-      expect(setCookie).toContain('; HttpOnly; SameSite=Strict; Path=/;')
+      expect(setCookie).toContain('; HttpOnly; SameSite=Strict; Path=/')
       const cookie = setCookie.split(';')[0]!
       const connection = await post('/api/connect', { endpoint: 'ws://127.0.0.1:' + mock.port }, cookie, from)
       expect(connection.status).toBe(200)

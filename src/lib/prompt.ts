@@ -1,17 +1,25 @@
 import { randomId } from './random-id'
 import type { Item, MessageContent } from '../../shared/protocol'
 import { THREAD_REFERENCE_MARKER, threadReferenceContext, threadReferenceLink } from './mentions'
-export type PromptPart = { type: 'text'; text: string; pasteId?: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
+import { asyncRepliesFromItem } from './async-questions'
+import { fileReference, parseFileReference, type FileAttachment } from './file-attachments'
+export type PromptPart = { type: 'text'; text: string; pasteId?: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | FileAttachment | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
 export const pastedTextLabel = (text: string) => '粘贴的文本 (' + Array.from(text).length + '字符)'
 export const isLongPaste = (text: string) => text.length >= 1000 || text.split('\n').length >= 12
 export const promptText = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? p.text : p.type === 'skill' ? '$' + p.name : '[' + p.name + ']').join('')
 export const hasPrompt = (parts: PromptPart[]) => parts.some(p => p.type !== 'text' || !!p.text.trim())
-export function toInputs(parts: PromptPart[]): MessageContent[] {
+export function toInputs(parts: PromptPart[], deviceId?: string): MessageContent[] {
   const input: MessageContent[] = []
   const markedText = (text: string, placeholder: string): MessageContent => ({ type: 'text', text, text_elements: [{ byteRange: { start: 0, end: new TextEncoder().encode(text).length }, placeholder }] })
   const context = threadReferenceContext(parts.filter((part): part is Extract<PromptPart, { type: 'mention' }> => part.type === 'mention' && part.path.startsWith('thread://')).map(part => part.path))
   if (context) input.push(markedText(context, THREAD_REFERENCE_MARKER))
   for (const part of parts) {
+    if (part.type === 'file') {
+      if (deviceId !== undefined && part.deviceId !== deviceId) throw new Error('文件“' + part.name + '”属于另一台设备，请在当前设备重新添加。')
+      input.push(markedText(fileReference(part), part.name))
+      if (part.image) input.push({ type: 'localImage', path: part.path })
+      continue
+    }
     if (part.type === 'mention') {
       if (part.path.startsWith('thread://')) input.push(markedText(threadReferenceLink(part.name, part.path), part.name))
       else input.push(markedText('@' + part.name, part.name), { type: 'mention', name: part.name, path: part.path })
@@ -36,6 +44,8 @@ export function messageParts(content: Item['content']): PromptPart[] {
     if (part.type === 'text') {
       const element = part.text_elements?.[0]
       if (part.text_elements?.length === 1 && element?.byteRange.start === 0 && element.byteRange.end === new TextEncoder().encode(part.text || '').length) {
+        const file = parseFileReference(part.text || '', element.placeholder)
+        if (file) { result.push(file); if (file.image && typeof next === 'object' && next?.type === 'localImage' && next.path === file.path) i++; continue }
         if (/^粘贴的文本 \(\d+字符\)$/.test(element.placeholder || '')) { result.push({ type: 'text', text: part.text || '', pasteId: 'paste-' + randomId() }); continue }
         if (element.placeholder === THREAD_REFERENCE_MARKER && part.text?.startsWith('## Referenced chats with Codex:')) continue
         if (next && typeof next === 'object' && ['skill', 'mention'].includes(next.type) && next.name === element.placeholder) continue
@@ -85,18 +95,10 @@ export function mergeItem(previous: Item | undefined, incoming: Item): Item {
   return item
 }
 
-export async function readImages(files: File[], existing: PromptPart[]): Promise<Extract<PromptPart, { type: 'image' }>[]> {
-  const current = existing.filter((part): part is Extract<PromptPart, { type: 'image' }> => part.type === 'image')
-  if (files.some(file => !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type))) throw new Error('支持 PNG、JPEG、WebP 和 GIF 图片。')
-  if (current.length + files.length > 4 || files.some(file => file.size > 5 * 1024 * 1024) || [...current, ...files].reduce((sum, image) => sum + image.size, 0) > 10 * 1024 * 1024) throw new Error('最多添加 4 张图片，每张不超过 5 MB，总计不超过 10 MB。')
-  return Promise.all(files.map(async file => {
-    const url = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('无法读取图片，请重试。')); reader.readAsDataURL(file) })
-    return { type: 'image' as const, id: randomId(), name: file.name || '粘贴的图片', url, size: file.size }
-  }))
-}
 
 export function messageEditError(item: Item): string | undefined {
   if (item.type !== 'userMessage') return '只能编辑自己的消息。'
+  if (asyncRepliesFromItem(item).length) return '这条问题回答暂不支持编辑，请通过新消息补充。'
   for (const part of item.content || []) {
     if (typeof part === 'string' || part.type === 'text') continue
     if (part.type === 'skill' && part.name && part.path) continue

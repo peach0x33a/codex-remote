@@ -248,7 +248,7 @@ test('sends text-image-text in order with inline filenames and hover/click previ
   const editor = page.locator('#message-input')
   await editor.fill('前文 后文')
   await editor.evaluate(el => { const range = document.createRange(); range.setStart(el.firstChild!, 3); range.collapse(true); window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range); el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true })) })
-  await page.getByLabel('选择图片', { exact: true }).setInputFiles({ name: '示意图.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6dwAAAABJRU5ErkJggg==', 'base64') })
+  await page.getByLabel('选择附件', { exact: true }).setInputFiles({ name: '示意图.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6dwAAAABJRU5ErkJggg==', 'base64') })
   await expect(editor.locator('.editor-image-chip')).toHaveCount(1)
   await page.getByRole('button', { name: '发送消息', exact: true }).click()
   const bubble = page.locator('.message-user .user-bubble')

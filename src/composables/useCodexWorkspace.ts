@@ -40,7 +40,7 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
     if (existing) return existing
     const scope = effectScope(true)
     const runtime = scope.run(() => {
-      const child = useCodex({ autoConnect: false, persistConnection: false, deferLifecycle: true })
+      const child = useCodex({ autoConnect: false, persistConnection: false, deferLifecycle: true, autoRetryVisible: () => metadata.selectedId.value === profile.id })
       child.profiles.value = [profile]; child.selectedId.value = profile.id
       child.authenticated.value = metadata.authenticated.value
       onScopeDispose(child.onTaskNotice(emitNotice))
@@ -129,9 +129,9 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
       if (selectionDirty) { selectionDirty = false; persistSelection() }
     }
   }
-  async function login(key: string) {
+  async function login(key: string, remember = false) {
     if (disposed || loggingOut.value) return
-    await metadata.login(key)
+    await metadata.login(key, remember)
     if (!disposed) maybeConnectOnStartup()
   }
   async function logout() {
@@ -205,7 +205,7 @@ export function useCodexWorkspace(options: { autoConnect?: boolean; deferLifecyc
     }]
   })) as Runtime
   function deviceBusy(runtime: Runtime) {
-    return runtime.busy.value || runtime.sending.value || runtime.steering.value || runtime.revising.value || runtime.goalSaving.value || runtime.pendingSteers.value.some(steer => !steer.ended)
+    return runtime.interrupting.value || runtime.busy.value || runtime.sending.value || runtime.steering.value || runtime.revising.value || runtime.goalSaving.value || runtime.pendingSteers.value.some(steer => !steer.ended)
       || runtime.threads.value.some(thread => thread.status?.type === 'active') || runtime.projectThreads.value.some(thread => thread.status?.type === 'active')
   }
   const connectionStates = computed<Record<string, DeviceConnectionState>>(() => {

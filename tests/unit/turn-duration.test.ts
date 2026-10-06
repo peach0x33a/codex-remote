@@ -104,6 +104,7 @@ beforeAll(async () => {
   const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
   const compiled = compileScript(descriptor, { id: 'turn-duration-test', inlineTemplate: true })
   const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(compiled.content)
+    .replace(/import InlineFile from ["']\.\/InlineFile\.vue["'];?/, 'const InlineFile = { render: () => null };')
     .replace(/import PastedText from ["']\.\/PastedText\.vue["'];?/, 'const PastedText = { render: () => null };')
     .replace(/import FileChangeActivity from ["']\.\/FileChangeActivity\.vue["'];?/, 'const FileChangeActivity = { render: () => null };')
     .replace(/import[^;]*from ["'](?:\.\/InlineImage\.vue|\.\.\/lib\/(?:markdown|details-motion))["'];?/g, '')

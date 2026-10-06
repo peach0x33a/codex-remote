@@ -63,6 +63,15 @@
 @layer components {
   .inline-skill { display: inline-flex; align-items: center; vertical-align: middle; gap: 6px; max-width: 100%; min-height: 30px; margin: 0 4px; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink-soft); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 24px; }
   .inline-skill > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inline-file { display: inline-flex; align-items: center; vertical-align: middle; gap: var(--space-2); max-width: min(320px, 100%); min-height: 34px; margin: 0 var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink-soft); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(24px * var(--ui-font-scale, 1)); }
+  .inline-file > svg { flex-shrink: 0; color: var(--muted); }
+  .inline-file > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inline-file > small { flex-shrink: 0; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+  button.inline-file:hover { background: var(--accent-soft); border-color: var(--accent-line); }
+  button.inline-file:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  @media (pointer: coarse) { .inline-file { min-height: 44px; }.editor-file-chip .image-chip-remove { min-width: 44px; min-height: 44px; } }
+  .attachment-progress { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); overflow-wrap: anywhere; }
+  .attachment-progress .icon-button { margin-left: auto; flex-shrink: 0; }
   /* Shell and compact desktop project navigation */
   .app-shell { position: fixed; inset: var(--app-viewport-top, 0px) 0 auto; display: grid; grid-template-columns: 280px minmax(0, 1fr); height: var(--app-viewport-height, 100dvh); transition: grid-template-columns .2s var(--ease); }
   .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
@@ -307,7 +316,8 @@
   .queue-item { display: flex; align-items: center; gap: 4px; padding: 6px 0; border-top: 1px solid var(--line-soft); }
   .queue-text { min-width: 0; flex: 1; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); }
   .queue-text > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .queue-text small { display: block; color: var(--danger); font-size: calc(12px * var(--ui-font-scale, 1)); }
+  .queue-text > .queue-parts.has-attachments { overflow: visible; text-overflow: clip; white-space: normal; }
+  .queue-text > small { display: block; color: var(--danger); font-size: calc(12px * var(--ui-font-scale, 1)); }
   .queue-editor { width: 100%; }.queue-editor .prompt-editor { min-height: 56px; max-height: 130px; background: var(--canvas); border-radius: var(--radius-md); font-size: calc(14px * var(--ui-font-scale, 1)); }
   .queue-edit-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
   .queue-badge { margin-left: auto; flex-shrink: 0; padding: 0 5px; min-width: 18px; border-radius: var(--radius-xs); background: var(--fill-2); color: var(--muted); text-align: center; font-size: calc(12px * var(--ui-font-scale, 1)); }
@@ -491,6 +501,9 @@
   .install-illustration { display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; min-height: 142px; background: linear-gradient(180deg, #e3ecf8, #f7f7f8); border-radius: var(--radius-lg); font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 500; color: var(--accent); }
   .install-illustration .brand-icon { width: 60px; height: 60px; border-radius: var(--radius-lg); }
   .login-form .button { width: 100%; margin: 8px 0 14px; }
+  .login-remember { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 8px; }
+  .login-remember span { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 500; }
+  .login-remember p { margin-top: 4px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.7; }
   .toast { position: fixed; left: 50%; bottom: max(32px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 15; background: #43454a; color: #fff; padding: 10px 18px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 8px; font-size: calc(14px * var(--ui-font-scale, 1)); line-height: 1.6; max-width: calc(100vw - 30px); box-shadow: 0 8px 24px rgba(0, 0, 0, .16); }
   .toast-enter-active, .toast-leave-active { transition: opacity .18s, translate .18s; }
   .toast-enter-from, .toast-leave-to { opacity: 0; translate: 0 6px; }

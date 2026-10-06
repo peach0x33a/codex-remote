@@ -1,5 +1,7 @@
 import { randomId } from '../lib/random-id'
-import { computed, getCurrentInstance, getCurrentScope, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { useAutoRetryPreferences } from './useAutoRetryPreferences'
+import { shouldAutoRetry, retryCategory, AUTO_RETRY_KEY, type AutoRetryPreferences, type RetryCategory } from '../lib/auto-retry'
+import { computed, getCurrentInstance, getCurrentScope, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import type { Approval, ConnectionProfile, Item, MessageContent, Model, RpcId, RpcMessage, Thread, ThreadItemsPage, ThreadResult, ThreadTokenUsage, Turn } from '../../shared/protocol'
 import { normalizeEndpoint } from '../../shared/endpoint'
 import { loadProfiles, STORAGE_KEY } from '../lib/profiles'
@@ -9,7 +11,10 @@ import { deviceDirectory, prepareDeviceDirectory } from '../lib/working-director
 import { turnDurationSeconds } from '../lib/turn-duration'
 import { readUiPreferences } from '../lib/ui-preferences'
 import { RpcClient, RpcError } from '../lib/rpc'
-import { retryStatusMessage } from '../lib/turn-failure'
+import { readStoppedInputs, STOPPED_INPUT_TYPE, STOPPED_INPUT_COMMIT_TYPE, stoppedResponseItem, stoppedInputUnavailable, type StoppedInput } from '../lib/stopped-inputs'
+import { attachmentPreview, readAttachments as prepareAttachments, uploadAttachment, type AttachmentPart } from '../lib/file-attachments'
+import { displayAsyncQuestionReply, encodeAsyncQuestionReply, pendingAsyncQuestions, type AsyncAnswerResult } from '../lib/async-questions'
+import { retryStatusMessage, type TurnFailureInfo } from '../lib/turn-failure'
 import { parseSkills, type SkillCatalog } from '../lib/skills'
 import { parsePluginMentions, type MentionReference } from '../lib/mentions'
 import { taskNoticeFromMessage, type TaskNotice } from '../lib/task-notifications'
@@ -23,7 +28,7 @@ export type FuzzyFileSearchResult = { root: string; path: string; match_type: 'f
 
 export type ComposerSettings = { model: string; effort: string; permission: PermissionMode; serviceTier?: string | null }
 export type QueuedMessage = { id: string; deviceId: string; threadId: string; parts: PromptPart[]; settings: ComposerSettings; state: 'queued' | 'sending' | 'failed'; source?: 'server'; editError?: string; error?: string }
-type PendingUserMessage = { id: string; clientId: string; threadId: string; turnId?: string; ended?: boolean; input: MessageContent[]; priorUserIds: string[]; placement: 'conversation' | 'island'; accepted: boolean; cancelable: boolean }
+type PendingUserMessage = { id: string; clientId: string; threadId: string; turnId?: string; ended?: boolean; storedStop?: boolean; input: MessageContent[]; priorUserIds: string[]; placement: 'conversation' | 'island'; accepted: boolean; cancelable: boolean }
 const isLiveTurn = (turn: Turn | undefined): turn is Turn => !!turn && turn.status === 'inProgress' && turn.completedAt == null
 
 function isThreadSummary(value: unknown): value is Thread {
@@ -34,7 +39,9 @@ function isThreadSummary(value: unknown): value is Thread {
     && typeof thread.updatedAt === 'number' && Number.isFinite(thread.updatedAt) && Array.isArray(thread.turns)
 }
 
-export function useCodex(options: { autoConnect?: boolean; persistConnection?: boolean; deferLifecycle?: boolean } = {}) {
+export function useCodex(options: { autoConnect?: boolean; persistConnection?: boolean; deferLifecycle?: boolean; autoRetryVisible?: () => boolean } = {}) {
+  const autoRetryPreferences = useAutoRetryPreferences()
+  const retryPreferences = autoRetryPreferences.preferences, retrySettingsError = autoRetryPreferences.error
   const skillsRevision = ref(0)
   const noticeListeners = new Set<(notice: TaskNotice) => void>()
   function onTaskNotice(listener: (notice: TaskNotice) => void) { noticeListeners.add(listener); return () => { noticeListeners.delete(listener) } }
@@ -77,7 +84,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     const thread = active.value, turn = thread?.turns.at(-1)
     return thread && turn ? turnDiffs.value.get(turnDiffKey(thread.id, turn.id)) ?? '' : ''
   })
-  const turnFailures = ref(new Map<string, { message: string }>())
+  const turnFailures = ref(new Map<string, TurnFailureInfo>())
   const submissionFailures = ref(new Map<string, { turnId: string | null; message: string }>())
   const currentTurnFailure = computed(() => {
     const thread = active.value, turn = thread?.turns.at(-1)
@@ -86,6 +93,13 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (!thread || !turn) return ''
     return turnFailures.value.get(turnDiffKey(thread.id, turn.id))?.message
       || (turn.status === 'failed' ? turn.error?.message || '本轮任务失败。' : '')
+  })
+  const currentTurnFailureInfo = computed<TurnFailureInfo | null>(() => {
+    if (!currentTurnFailure.value) return null
+    const thread = active.value, turn = thread?.turns.at(-1)
+    const submission = submissionFailures.value.get(turnDiffKey(thread?.id || '', ''))
+    if (submission?.turnId === (turn?.id ?? null)) return { message: submission.message }
+    return thread && turn ? turnFailures.value.get(turnDiffKey(thread.id, turn.id)) || turn.error || { message: currentTurnFailure.value } : { message: currentTurnFailure.value }
   })
   function rememberTurnFailure(threadId: string, turnId: string, failure: unknown) {
     if (!threadId || !turnId || !isRecord(failure) || typeof failure.message !== 'string' || !failure.message.trim()) return
@@ -138,6 +152,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     return result
   })
   const approvals = ref<Approval[]>([])
+  const acceptedAsyncAnswers = ref(new Map<string, Set<string>>())
+  const answeringQuestions = new Set<string>()
   const loading = ref(false)
   const loadingThread = ref(false)
   const pendingThreadId = ref(''), threadLoadError = ref(''), loadingEarlier = ref(false)
@@ -149,9 +165,23 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   const queuedMessages = ref<QueuedMessage[]>([])
   const pendingUserMessages = ref<PendingUserMessage[]>([])
   const steerWithdrawals = new Map<string, () => void>()
+  const pendingSteerAcks = new Map<string, Promise<void>>()
+  const stoppingThreads = ref(new Set<string>())
+  const stoppedInputs = ref(new Map<string, StoppedInput[]>())
+  const stoppedInputVersions = new Map<string, number>()
+  function removeStoppedHint(message: PendingUserMessage) {
+    if (!message.storedStop || !client || !connected.value) return
+    const rpc = client, epoch = generation
+    void rpc.request('thread/attachment/remove', { threadId: message.threadId, attachmentType: STOPPED_INPUT_TYPE, identityKey: message.clientId }).catch(cause => {
+      if (rpc === client && epoch === generation) {
+        if (!pendingUserMessages.value.some(item => item.clientId === message.clientId)) pendingUserMessages.value.push(message)
+        error.value = '移除插话提示失败：' + messageOf(cause)
+      }
+    })
+  }
   function withdrawPendingSteer(id: string) {
     const pending = pendingUserMessages.value.find(message => message.id === id && message.placement === 'island')
-    if (pending?.ended) { removePendingUserMessage(id); return true }
+    if (pending?.ended) { removeStoppedHint(pending); removePendingUserMessage(id); return true }
     const withdraw = steerWithdrawals.get(id)
     if (!withdraw) { toast('当前服务端不支持撤回已提交的插话。'); return false }
     steerWithdrawals.delete(id); withdraw(); return true
@@ -159,7 +189,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   function takePendingSteer(id: string): PromptPart[] | undefined {
     const pending = pendingUserMessages.value.find(message => message.id === id && message.placement === 'island' && message.ended)
     if (!pending) return
-    const parts = messageParts(pending.input)
+    const parts = messageParts(pending.input).map(part => part.type === 'text' ? { ...part, text: displayAsyncQuestionReply(part.text) } : part)
+    removeStoppedHint(pending)
     removePendingUserMessage(id); return parts
   }
   function settlePendingSteers(threadId: string, turnId: string) {
@@ -173,6 +204,78 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   const pausedQueues = ref(new Set<string>()), runningTurns = ref(new Map<string, string>())
   const drainingQueues = new Set<string>(), terminalTurns = new Set<string>()
   const pendingTurnStarts = new Set<string>()
+  type RetryPlan = { threadId: string; turnId: string; category: RetryCategory; attempt: number; dueAt: number }
+  const autoRetryPlan = shallowRef<RetryPlan | null>(null), autoRetryStarting = ref(false), autoRetryNote = ref(''), autoRetryNow = ref(Date.now())
+  const autoRetryAttempts = new Map<string, number>(), autoRetryHandled = new Set<string>()
+  const observedFailedTurns = new Set<string>()
+  let autoRetryTimer: ReturnType<typeof setTimeout> | undefined, autoRetryClock: ReturnType<typeof setInterval> | undefined
+  let autoRetryDispatch: { threadId: string; attempt: number } | undefined
+  const autoRetryStatus = computed(() => {
+    const plan = autoRetryPlan.value
+    return plan ? Math.max(0, Math.ceil((plan.dueAt - autoRetryNow.value) / 1000)) + ' 秒后自动重试 · ' + plan.attempt + ' / ' + retryPreferences.value.maxAttempts : autoRetryNote.value
+  })
+  function cancelAutoRetry(clearNote = true) {
+    clearTimeout(autoRetryTimer); clearInterval(autoRetryClock); autoRetryTimer = undefined; autoRetryClock = undefined; autoRetryPlan.value = null
+    if (clearNote) autoRetryNote.value = ''
+  }
+  function canRetryTurn(threadId: string, turnId: string) {
+    return !!client && connected.value && online.value && !disposed && (options.autoRetryVisible?.() ?? true)
+      && active.value?.id === threadId && active.value.turns.at(-1)?.id === turnId && active.value.turns.at(-1)?.status === 'failed'
+      && !busy.value && !loadingThread.value && !threadLoadError.value && !revising.value && !interrupting.value && !steering.value && !goalSaving.value
+      && !activeApprovals.value.length && !currentQueue.value.length && !pendingSteers.value.length && !permissionUnavailable.value[permission.value]
+  }
+  function scheduleAutoRetry(threadId: string, turn: Turn, explicit = false) {
+    if (turn.status !== 'failed' || active.value?.id !== threadId || active.value.turns.at(-1)?.id !== turn.id) return
+    const failure = turnFailures.value.get(turnDiffKey(threadId, turn.id)) || turn.error
+    const attempts = autoRetryAttempts.get(turn.id) || 0, key = turnDiffKey(threadId, turn.id)
+    if (autoRetryHandled.has(key) && !explicit) return
+    if (!shouldAutoRetry(retryPreferences.value, failure, attempts)) {
+      if (retryPreferences.value.enabled && attempts >= retryPreferences.value.maxAttempts) autoRetryNote.value = '已达到自动重试上限（' + retryPreferences.value.maxAttempts + ' 次）'
+      return
+    }
+    if (!canRetryTurn(threadId, turn.id) || autoRetryStarting.value) return
+    cancelAutoRetry()
+    autoRetryHandled.add(key)
+    if (autoRetryHandled.size > 500) autoRetryHandled.delete(autoRetryHandled.values().next().value!)
+    const plan: RetryPlan = { threadId, turnId: turn.id, category: retryCategory(failure)!, attempt: attempts + 1, dueAt: Date.now() + retryPreferences.value.delaySeconds * 1000 }
+    autoRetryPlan.value = plan; autoRetryNow.value = Date.now()
+    autoRetryClock = setInterval(() => { autoRetryNow.value = Date.now() }, 1000)
+    autoRetryTimer = setTimeout(() => { void runAutoRetry(plan) }, retryPreferences.value.delaySeconds * 1000)
+  }
+  async function runAutoRetry(plan: RetryPlan) {
+    if (autoRetryPlan.value !== plan || !canRetryTurn(plan.threadId, plan.turnId) || !shouldAutoRetry(retryPreferences.value, currentTurnFailureInfo.value, plan.attempt - 1)) { cancelAutoRetry(); return }
+    const rpc = client!, epoch = generation, view = threadGeneration, device = selectedId.value
+    const current = () => rpc === client && epoch === generation && view === threadGeneration && device === selectedId.value && autoRetryPlan.value === plan && canRetryTurn(plan.threadId, plan.turnId)
+    // A browser lease, checked again after the native read, avoids duplicate retries in other tabs.
+    const leaseKey = AUTO_RETRY_KEY + '.claim.' + JSON.stringify([selected.value?.endpoint, plan.threadId, plan.turnId]), owner = randomId()
+    let claimed = false
+    try {
+      try {
+        const prior = JSON.parse(localStorage.getItem(leaseKey) || 'null')
+        if (prior && prior.expires > Date.now()) { cancelAutoRetry(); return }
+        localStorage.setItem(leaseKey, JSON.stringify({ owner, expires: Date.now() + 60_000 })); claimed = true
+      } catch { /* Private browsing can still retry the current runtime once. */ }
+      const page = await rpc.request<{ data: Turn[] }>('thread/turns/list', { threadId: plan.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, { timeoutMs: 10_000 })
+      if (!current() || !Array.isArray(page.data) || page.data[0]?.id !== plan.turnId || page.data[0]?.status !== 'failed') { cancelAutoRetry(); return }
+      if (claimed && JSON.parse(localStorage.getItem(leaseKey) || 'null')?.owner !== owner) { cancelAutoRetry(); return }
+      cancelAutoRetry(); autoRetryStarting.value = true
+      autoRetryDispatch = { threadId: plan.threadId, attempt: plan.attempt }
+      await dispatchInput([{ type: 'text', text: '继续' }], settingsSnapshot(), plan.threadId, plan.attempt)
+    } catch (cause) {
+      if (rpc === client && epoch === generation && view === threadGeneration) {
+        cancelAutoRetry(); autoRetryNote.value = '自动重试未确认，已暂停；请查看会话后手动重试。'
+        submissionFailed(plan.threadId, messageOf(cause))
+      }
+    } finally {
+      if (epoch === generation) { autoRetryStarting.value = false; autoRetryDispatch = undefined }
+    }
+  }
+  function updateRetryPreferences(patch: Partial<AutoRetryPreferences>) {
+    cancelAutoRetry(); autoRetryPreferences.update(patch)
+    const thread = active.value, turn = thread?.turns.at(-1)
+    if (thread && turn) scheduleAutoRetry(thread.id, turn, true)
+  }
+  watch(retryPreferences, () => { cancelAutoRetry() }, { deep: true, flush: 'sync' })
   const settingsByThread = new Map<string, ComposerSettings>()
   const settingsVersions = new Map<string, number>()
   const unsavedSettings = new Map<string, ComposerSettings>()
@@ -212,6 +315,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     }
   }, { flush: 'sync' })
   const connected = computed(() => status.value === 'connected')
+  const interrupting = computed(() => !!active.value && stoppingThreads.value.has(active.value.id))
   // History can retain unfinished older turns. Only the current runtime turn
   // may drive the clock, Stop, steering and queue dispatch.
   const activeTurn = computed(() => {
@@ -225,6 +329,17 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       type: part.type, text: part.text, url: part.url, path: part.path, fileId: part.fileId, name: part.name,
       text_elements: part.text_elements,
     }))
+  }
+  function hasNativeStoppedInput(turns: Turn[], input: StoppedInput) {
+    return turns.some(turn => turn.items.some(item => item.type === 'userMessage' && (
+      item.clientId === input.clientId || item.id === 'msg_' + input.clientId || turn.id === input.sourceTurnId && !input.priorUserIds.includes(item.id) && inputFingerprint(item.content || []) === inputFingerprint(input.input)
+    )))
+  }
+  function rememberStoppedInput(threadId: string, input: StoppedInput) {
+    const key = queueKey(threadId), saved = stoppedInputs.value.get(key) || []
+    if (!saved.some(item => item.clientId === input.clientId)) stoppedInputs.value.set(key, [...saved, input])
+    stoppedInputVersions.set(key, (stoppedInputVersions.get(key) || 0) + 1)
+    pendingUserMessages.value = pendingUserMessages.value.filter(item => item.threadId !== threadId || item.clientId !== input.clientId)
   }
   function addPendingUserMessage(threadId: string, input: MessageContent[], placement: PendingUserMessage['placement'] = 'conversation') {
     const priorUserIds = active.value?.id === threadId ? active.value.turns.flatMap(turn => turn.items.filter(item => item.type === 'userMessage').map(item => item.id)) : []
@@ -245,11 +360,15 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       for (const message of pendingUserMessages.value) if (message.threadId === threadId && !message.priorUserIds.includes(itemId)) message.priorUserIds.push(itemId)
     }
   }
-  const pendingSteers = computed(() => pendingUserMessages.value.filter(message => message.threadId === active.value?.id && message.placement === 'island').map(message => ({ id: message.id, accepted: message.accepted, ended: !!message.ended, cancelable: message.cancelable || !!message.ended, parts: messageParts(message.input) })))
+  const pendingSteers = computed(() => pendingUserMessages.value.filter(message => message.threadId === active.value?.id && message.placement === 'island').map(message => ({ id: message.id, accepted: message.accepted, ended: !!message.ended, cancelable: !stoppingThreads.value.has(message.threadId) && (message.cancelable || !!message.ended), parts: messageParts(message.input).map(part => part.type === 'text' ? { ...part, text: displayAsyncQuestionReply(part.text) } : part) })))
   const displayTurns = computed(() => {
     const thread = active.value
     if (!thread) return [] as Turn[]
-    const turns = thread.turns.map(turn => ({ ...turn, items: [...turn.items] }))
+    const saved = stoppedInputs.value.get(queueKey(thread.id)) || []
+    const turns: Turn[] = thread.turns.flatMap(turn => [
+      { ...turn, items: [...turn.items] },
+      ...saved.filter(input => input.turnId === turn.id && !hasNativeStoppedInput(thread.turns, input)).map(input => ({ id: 'stopped-input-' + input.clientId, status: 'completed', items: [{ id: 'saved-steer-' + input.clientId, clientId: input.clientId, type: 'userMessage', content: input.input, stoppedInput: true }] })),
+    ])
     const pending = pendingUserMessages.value
       .filter(message => message.threadId === thread.id && message.placement === 'conversation')
       .map(message => ({ id: message.id, type: 'userMessage', content: message.input } as Item))
@@ -261,6 +380,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     return turns
   })
   const items = computed(() => displayTurns.value.flatMap(turn => turn.items))
+  const asyncQuestions = computed(() => pendingAsyncQuestions(active.value?.turns.flatMap(turn => turn.items) || [], active.value ? acceptedAsyncAnswers.value.get(queueKey(active.value.id)) : undefined))
   const compacting = computed(() => !!activeTurn.value?.items.some(item => item.type === 'contextCompaction' && item.status === 'inProgress' && item.completedAtMs == null))
   const liveThinking = computed(() => activeTurn.value?.items.findLast(i => i.type === 'reasoning' && i.status === 'inProgress' && i.completedAtMs == null))
   const liveReasoning = computed(() => busy.value ? reasoningPreview(liveThinking.value) : '')
@@ -320,6 +440,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
   function rememberProjects(incoming: Thread[], discovery = false) {
     const all = new Map(projectThreads.value.map(thread => [thread.id, thread]))
     for (const thread of incoming) {
+      thread.preview = attachmentPreview(thread.preview)
       if (archivedThreads.has(thread.id)) continue
       const update = projectUpdates.get(thread.id)
       if (update === null) continue
@@ -333,6 +454,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     filterRecentThreads()
   }
   function updateThreadMetadata(id: string, patch: Partial<Thread>) {
+    if (typeof patch.preview === 'string') patch = { ...patch, preview: attachmentPreview(patch.preview) }
     if (projectsLoading.value && projectUpdates.get(id) !== null) projectUpdates.set(id, { ...projectUpdates.get(id), ...patch })
     for (const collection of [threads.value, projectThreads.value]) {
       const thread = collection.find(thread => thread.id === id)
@@ -481,8 +603,8 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       connectOnStartup()
     } catch { if (!disposed) bridgeReachable.value = false }
   }
-  async function login(key: string) {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) })
+  async function login(key: string, remember = false) {
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, remember }) })
     const result = await response.json()
     if (!response.ok) throw new Error(result.error || '登录失败。')
     authenticated.value = true; error.value = ''
@@ -496,6 +618,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     tokens.clear(); authenticated.value = false; profileGeneration++; profiles.value = []; selectedId.value = ''; profilesLoaded.value = false
   }
   function disconnect(keepThread = false) {
+    cancelAutoRetry(); autoRetryStarting.value = false; autoRetryDispatch = undefined; autoRetryAttempts.clear(); autoRetryHandled.clear()
     startupConnectionPending = false
     resetGoals()
     archiveRevisions.clear()
@@ -505,6 +628,9 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     for (const job of queuedMessages.value) if (job.deviceId === selectedId.value) { pausedQueues.value.add(queueKey(job.threadId)); if (job.state === 'sending') { job.state = 'failed'; job.error = '连接中断，发送结果未确认。请查看会话后重试。' } }
     observedTurnStarts.clear()
     runningTurns.value.clear(); pendingTurnStarts.clear(); terminalTurns.clear(); turnDiffs.value.clear(); turnFailures.value.clear(); submissionFailures.value.clear(); steering.value = false
+    acceptedAsyncAnswers.value.clear(); answeringQuestions.clear()
+    observedFailedTurns.clear()
+    stoppingThreads.value.clear(); stoppedInputs.value.clear(); stoppedInputVersions.clear(); pendingSteerAcks.clear()
     retries.value.clear()
     clearInterval(clockTimer); clockTimer = undefined
     generation++; threadGeneration++; listGeneration++
@@ -659,6 +785,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     }
   }
   async function openThread(id: string, duringRevision = false) {
+    cancelAutoRetry()
     if (revising.value && !duringRevision) return
     if (!client || !connected.value) return
     threadLoadController?.abort()
@@ -666,6 +793,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     threadLoadController = controller
     const epoch = generation, requestId = ++threadGeneration
     const settingsKey = queueKey(id), settingsVersion = settingsVersions.get(settingsKey) || 0
+    const stoppedVersion = stoppedInputVersions.get(settingsKey) || 0
     const rpc = client, options = { signal: controller.signal, timeoutMs: 15_000 }
     loadingThread.value = true; pendingThreadId.value = id; threadLoadError.value = ''; loadingEarlier.value = false
     openingThread = id; bufferedEvents = []; error.value = ''
@@ -673,6 +801,10 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     void refreshThreadGoal(id)
     try {
       const result = await rpc.request<ThreadResult>('thread/resume', { threadId: id, excludeTurns: true }, options)
+      const savedRead = readStoppedInputs(rpc, id, controller.signal).catch(cause => {
+        if (!(cause instanceof RpcError && cause.code === -32601) && !controller.signal.aborted && epoch === generation) toast('已保存插话暂未恢复：' + messageOf(cause))
+        return null
+      })
       let resumedSettings = result
       let turns: Turn[], latestTurn: Turn | undefined, cursor: string | null = null
       try {
@@ -695,6 +827,15 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       }
       if (epoch !== generation || requestId !== threadGeneration) return
       active.value = { ...result.thread, turns }; historyCursor.value = cursor
+      const saved = await savedRead
+      if (epoch !== generation || requestId !== threadGeneration) return
+      if (saved && stoppedVersion === (stoppedInputVersions.get(settingsKey) || 0)) {
+        stoppedInputs.value.set(settingsKey, saved.committed)
+        for (const input of saved.unconfirmed) {
+          if (hasNativeStoppedInput(turns, input) || pendingUserMessages.value.some(item => item.clientId === input.clientId)) continue
+          pendingUserMessages.value.push({ id: 'pending-' + input.clientId, clientId: input.clientId, turnId: input.turnId, threadId: id, input: input.input, priorUserIds: input.priorUserIds, placement: 'island', accepted: true, ended: true, cancelable: true, storedStop: true })
+        }
+      }
       for (const turn of turns) for (const item of turn.items) if (item.type === 'userMessage') reconcilePendingUserMessage(id, item.id, item.content, item.clientId)
       workingDirectory.value = result.thread.cwd
       rememberProjects([active.value])
@@ -906,9 +1047,9 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       return { root: file.root, path: file.path, match_type: file.match_type, file_name: file.file_name, score: file.score, indices: file.indices } as FuzzyFileSearchResult
     })
   }
-  async function dispatchInput(parts: PromptPart[], settings: ComposerSettings, targetId?: string) {
+  async function dispatchInput(parts: PromptPart[], settings: ComposerSettings, targetId?: string, retryAttempt?: number) {
     if (!client || !connected.value) throw new Error('设备未连接。')
-    const input = toInputs(parts)
+    const input = toInputs(parts, selectedId.value)
     const rpc = client, epoch = generation, viewEpoch = threadGeneration
     const foreground = !targetId || targetId === active.value?.id
     if (foreground) sending.value = true
@@ -943,6 +1084,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       const result = await rpc.request<{ turn: Turn }>('turn/start', { threadId, input, ...wireSettings(settings) })
       startConfirmed = true
       if (epoch !== generation) throw new Error('连接已变化，发送结果未确认。请查看会话后重试。')
+      if (retryAttempt !== undefined) autoRetryAttempts.set(result.turn.id, retryAttempt)
       // This submission already applied the selected settings. Do not replay an
       // older debounce later; edits made after dispatch must still be synced.
       if (settingsByThread.get(settingsKey) === settings) pendingSettings.delete(threadId)
@@ -1000,6 +1142,9 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     return write
   }
   async function send(parts: PromptPart[]) {
+    if (autoRetryStarting.value) return false
+    cancelAutoRetry()
+    if (interrupting.value) return false
     if (!active.value && goalSaving.value) return false
     if (queueAdding || (sending.value && !active.value) || revising.value || !connected.value || loadingThread.value || threadLoadError.value || !hasPrompt(parts)) return false
     if (permissionUnavailable.value[permission.value]) { error.value = permissionUnavailable.value[permission.value]!; return false }
@@ -1015,7 +1160,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
           await persistServerSettings(rpc, threadId, settings)
           if (rpc !== client) throw new Error('连接已变化，消息未排队。')
           submitted = true
-          await queue.add(threadId, toInputs(parts), randomId())
+          await queue.add(threadId, toInputs(parts, selectedId.value), randomId())
           return true
         }
         if (epoch !== generation) return false
@@ -1036,6 +1181,9 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     catch (e) { if (epoch === generation && viewEpoch === threadGeneration) submissionFailed(active.value?.id || '', messageOf(e)); return false }
   }
   async function steer(parts: PromptPart[]): Promise<boolean> {
+    if (autoRetryStarting.value) return false
+    cancelAutoRetry()
+    if (interrupting.value) return false
     const threadId = active.value?.id, turnId = activeTurn.value?.id || (threadId ? runningTurns.value.get(threadId) : undefined)
     if (!threadId || !turnId || !client || !connected.value || !hasPrompt(parts) || steering.value || sending.value || queueAdding || revising.value || loadingThread.value || threadLoadError.value) return false
     const rpc = client, epoch = generation, viewEpoch = threadGeneration, device = selectedId.value
@@ -1044,7 +1192,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     const key = queueKey(threadId)
     if (permissionUnavailable.value[permission.value]) { submissionFailed(threadId, permissionUnavailable.value[permission.value]!); return false }
     let input: MessageContent[]
-    try { input = toInputs(parts) }
+    try { input = toInputs(parts, selectedId.value) }
     catch (cause) { submissionFailed(threadId, messageOf(cause)); return false }
     steering.value = true
     submissionFailures.value.delete(turnDiffKey(threadId, ''))
@@ -1068,7 +1216,11 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (running !== turnId || terminalTurns.has(turnId)) { submissionFailed(threadId, '当前回合已变化，请重新发送。'); return false }
       attempted = true
       local.cancelable = false; steerWithdrawals.delete(pending.id)
-      const response = await rpc.request<{ turnId: string }>('turn/steer', { threadId, expectedTurnId: turnId, input, clientUserMessageId: pending.clientId })
+      let settled!: () => void
+      pendingSteerAcks.set(pending.id, new Promise<void>(resolve => { settled = resolve }))
+      let response: { turnId: string }
+      try { response = await rpc.request<{ turnId: string }>('turn/steer', { threadId, expectedTurnId: turnId, input, clientUserMessageId: pending.clientId }) }
+      finally { settled(); pendingSteerAcks.delete(pending.id) }
       if (!currentView()) return false
       if (!isRecord(response) || response.turnId !== turnId) throw new RpcError('插话响应无效，发送结果尚未确认。')
       accepted = true
@@ -1095,9 +1247,35 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (epoch === generation) steering.value = false
     }
   }
+  async function answerAsyncQuestion(id: string, answer: string): Promise<AsyncAnswerResult> {
+    const question = asyncQuestions.value.find(question => question.id === id), threadId = active.value?.id
+    if (!question || !threadId) return { ok: false, error: '这个问题已不在待回答列表中，请查看会话。' }
+    if (!client || !connected.value) return { ok: false, error: '请重新连接后提交回答。' }
+    if (revising.value || loadingThread.value || sending.value || steering.value || queueAdding || answeringQuestions.has(id)) return { ok: false, error: '正在处理其他消息，请稍后提交回答。' }
+    if (permissionUnavailable.value[permission.value]) return { ok: false, error: permissionUnavailable.value[permission.value] }
+    const epoch = generation, view = threadGeneration, key = queueKey(threadId)
+    answeringQuestions.add(id)
+    try {
+      const parts: PromptPart[] = [{ type: 'text', text: encodeAsyncQuestionReply(question, answer) }]
+      if (activeTurn.value || runningTurns.value.has(threadId)) {
+        if (!await steer(parts)) return { ok: false, error: currentTurnFailure.value || '回答未发送，请查看会话后重试。' }
+      } else {
+        // An async question survives turn completion. Answer it before the ordinary queue.
+        await dispatchInput(parts, settingsSnapshot())
+      }
+      if (epoch !== generation || view !== threadGeneration || active.value?.id !== threadId) return { ok: false, error: '会话或连接已变化，请查看原会话确认回答是否送达。' }
+      if (!acceptedAsyncAnswers.value.has(key)) acceptedAsyncAnswers.value.set(key, new Set())
+      acceptedAsyncAnswers.value.get(key)!.add(id)
+      toast('回答已提交。')
+      return { ok: true }
+    } catch (cause) {
+      if (epoch === generation && view === threadGeneration) submissionFailed(threadId, messageOf(cause))
+      return { ok: false, error: messageOf(cause) }
+    } finally { if (epoch === generation) answeringQuestions.delete(id) }
+  }
   async function drainQueue(threadId: string) {
     const key = queueKey(threadId)
-    if (revisionThreadId.value === threadId) return
+    if (revisionThreadId.value === threadId || stoppingThreads.value.has(threadId)) return
     if (!connected.value || drainingQueues.has(key) || pendingTurnStarts.has(key) || pausedQueues.value.has(key) || runningTurns.value.has(threadId)) return
     const thread = active.value?.id === threadId ? active.value : threads.value.find(thread => thread.id === threadId)
     if (thread?.status?.type === 'active' || approvals.value.some(approval => approval.params.threadId === threadId)) return
@@ -1112,7 +1290,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
         const queue = serverQueue, rpc = client
         await persistServerSettings(rpc, threadId, job.settings)
         if (epoch !== generation || rpc !== client || queue !== serverQueue) throw new Error('连接已变化，消息未排队。')
-        await queue.add(threadId, toInputs(job.parts), randomId())
+        await queue.add(threadId, toInputs(job.parts, selectedId.value), randomId())
       } else await dispatchInput(job.parts, job.settings, job.threadId)
       queuedMessages.value = queuedMessages.value.filter(message => message.id !== job.id)
     }
@@ -1134,7 +1312,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (job.source === 'server') {
       if (!serverQueue || !connected.value) return false
       const epoch = generation
-      try { await serverQueue.update(job.threadId, id, toInputs(parts)); return true }
+      try { await serverQueue.update(job.threadId, id, toInputs(parts, selectedId.value)); return true }
       catch (cause) { if (epoch === generation) error.value = '修改队列消息失败：' + messageOf(cause); return false }
     }
     job.parts = parts.map(part => ({ ...part })); job.error = undefined; job.state = 'queued'; return true
@@ -1174,7 +1352,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (!client || !connected.value || !target || !threadId || revising.value || loadingThread.value || sending.value) return { ok: false, reverted: false, error: '会话当前无法修改，请稍后重试。' }
     if (replacement && (!hasPrompt(replacement) || messageEditError(target.item))) return { ok: false, reverted: false, error: messageEditError(target.item) || '消息不能为空。' }
     if (replacement) {
-      try { toInputs(replacement) }
+      try { toInputs(replacement, selectedId.value) }
       catch (cause) { return { ok: false, reverted: false, error: messageOf(cause) } }
     }
     const rpc = client, epoch = generation, settings = settingsSnapshot(), key = queueKey(threadId)
@@ -1212,6 +1390,7 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       const index = active.value!.turns.findIndex(turn => turn.id === target.turnId)
       const retained = index < 0 ? [] : active.value!.turns.slice(0, index)
       active.value = { ...result.thread, turns: retained }; historyCursor.value = null
+      acceptedAsyncAnswers.value.delete(key)
       runningTurns.value.delete(threadId); retries.value.delete(key); tokenUsageByThread.value.delete(key)
       approvals.value = approvals.value.filter(approval => approval.params.threadId !== threadId)
       updateThreadMetadata(threadId, { ...result.thread, turns: retained })
@@ -1274,6 +1453,22 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (rpc !== client || epoch !== generation || device !== selectedId.value || !connected.value || disposed) throw new RpcError('设备连接已变化，命令结果未确认。')
     return result
   }
+  async function readAttachments(files: File[], existing: PromptPart[], progress?: (text: string) => void, signal?: AbortSignal): Promise<AttachmentPart[]> {
+    const rpc = client, epoch = generation, device = selectedId.value, view = threadGeneration
+    const current = () => rpc === client && epoch === generation && device === selectedId.value && view === threadGeneration && !disposed
+    const run = async (params: Record<string, unknown>, options: { signal?: AbortSignal; timeoutMs?: number } = {}) => {
+      const cleanup = Array.isArray(params.command) && params.command[5] === 'discard'
+      if (!rpc || rpc !== client || epoch !== generation || device !== selectedId.value || !connected.value || disposed) throw new RpcError('请连接原设备后重新添加文件。')
+      if (!cleanup && !current()) throw new RpcError('设备或会话已变化，请重新添加文件。')
+      if (!cleanup && signal?.aborted) throw new Error('已取消添加文件。')
+      const result = await rpc.request('command/exec', params, { ...options, ...(!cleanup && signal ? { signal } : {}) })
+      if (!cleanup && (!current() || signal?.aborted) || !connected.value) throw new RpcError('设备或会话已变化，请重新添加文件。')
+      return result
+    }
+    const parts = await prepareAttachments(files, existing, file => uploadAttachment(file, device, run, text => { if (current()) progress?.(text) }))
+    if (!current() || signal?.aborted) throw new RpcError('设备或会话已变化或已取消，请重新添加文件。')
+    return parts
+  }
   async function requestConfig<T>(method: string, params: Record<string, unknown>): Promise<T> {
     if (!['config/read', 'configRequirements/read', 'config/batchWrite'].includes(method)) throw new RpcError('不支持的配置操作。')
     if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
@@ -1298,10 +1493,86 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     } finally { if (epoch === generation) sending.value = false }
   }
   async function interrupt() {
-    if (!client || !active.value || !activeTurn.value) return
+    cancelAutoRetry()
+    if (!client || !connected.value || !active.value || !activeTurn.value || stoppingThreads.value.has(active.value.id)) return
+    const rpc = client, epoch = generation, device = selectedId.value, threadId = active.value.id, turnId = activeTurn.value.id
+    const current = () => rpc === client && epoch === generation && device === selectedId.value && connected.value && !disposed
+    const captured = pendingUserMessages.value.filter(item => item.threadId === threadId && item.placement === 'island')
+    const acks = captured.flatMap(item => pendingSteerAcks.get(item.id) ? [pendingSteerAcks.get(item.id)!] : [])
+    stoppingThreads.value.add(threadId)
     pauseQueue()
-    try { await client.request('turn/interrupt', { threadId: active.value.id, turnId: activeTurn.value.id }) }
-    catch (e) { error.value = messageOf(e) }
+    let stopConfirmed = false
+    try {
+      await rpc.request('turn/interrupt', { threadId, turnId })
+      if (!current()) return
+      await Promise.all(acks)
+      if (!current() || !captured.some(item => item.accepted)) return
+      // The interrupt acknowledgement precedes completion on some servers.
+      for (let attempt = 0; ; attempt++) {
+        const page = await rpc.request<{ data: Turn[] }>('thread/turns/list', { threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, { timeoutMs: 10_000 })
+        if (!current()) return
+        if (!Array.isArray(page.data) || !page.data.length || page.data[0].id !== turnId) throw new Error('会话的当前回合已变化，待插话已保留。')
+        if (!isLiveTurn(page.data[0])) { stopConfirmed = true; break }
+        if (attempt >= 20) throw new Error('任务仍在停止中，待插话已保留。')
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      const observed: Turn[] = []
+      for (const sourceTurnId of new Set(captured.filter(item => item.accepted).map(item => item.turnId!))) {
+        const turn: Turn = { id: sourceTurnId, status: 'completed', items: [] }, cursors = new Set<string>()
+        let cursor: string | null = null
+        for (let count = 0; ; count++) {
+          const page: ThreadItemsPage = await rpc.request<ThreadItemsPage>('thread/items/list', { threadId, turnId: sourceTurnId, limit: 100, sortDirection: 'desc', ...(cursor ? { cursor } : {}) }, { timeoutMs: 10_000 })
+          if (!current()) return
+          if (!Array.isArray(page.data) || page.data.length > 100 || !(page.nextCursor === null || typeof page.nextCursor === 'string' && !!page.nextCursor)) throw new Error('会话消息未确认，待插话已保留。')
+          for (const { item } of page.data) if (item.type === 'userMessage') turn.items.push(item)
+          cursor = page.nextCursor
+          if (!cursor) break
+          if (count >= 19 || cursors.has(cursor)) throw new Error('会话消息尚未完整核对，待插话已保留。')
+          cursors.add(cursor)
+        }
+        turn.items.reverse()
+        for (const item of turn.items) {
+          reconcilePendingUserMessage(threadId, item.id, item.content, item.clientId)
+          const source = active.value?.id === threadId ? active.value.turns.find(turn => turn.id === sourceTurnId) : undefined
+          if (source && !source.items.some(existing => existing.id === item.id)) source.items.push(item)
+        }
+        observed.push(turn)
+      }
+      const pending = captured.filter(message => message.accepted && !hasNativeStoppedInput(observed, { clientId: message.clientId, turnId, sourceTurnId: message.turnId!, savedAtMs: 0, input: message.input, priorUserIds: message.priorUserIds }))
+      if (!pending.length) return
+      const saved = await readStoppedInputs(rpc, threadId)
+      if (!current()) return
+      for (const input of saved.committed) rememberStoppedInput(threadId, input)
+      const inputs: StoppedInput[] = []
+      const savedAt = Date.now()
+      for (const [index, message] of pending.entries()) {
+        if (saved.committed.some(input => input.clientId === message.clientId)) continue
+        const input: StoppedInput = { clientId: message.clientId, turnId, sourceTurnId: message.turnId!, savedAtMs: savedAt + index / 1000, input: message.input, priorUserIds: message.priorUserIds.slice(-4096) }
+        stoppedResponseItem(input) // Validate before creating the reservation.
+        const result = await rpc.request<{ outcome: string }>('thread/attachment/add', { threadId, attachmentType: STOPPED_INPUT_TYPE, identityKey: input.clientId, payload: input })
+        if (!current()) return
+        message.storedStop = true
+        if (result.outcome !== 'created') throw new Error('这条插话已尝试保存，结果未确认；不会重复追加。')
+        inputs.push(input)
+      }
+      if (!inputs.length || !current()) return
+      for (const input of inputs) {
+        const latest = await rpc.request<{ data: Turn[] }>('thread/turns/list', { threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, { timeoutMs: 10_000 })
+        if (!current()) return
+        if (!Array.isArray(latest.data) || latest.data[0]?.id !== turnId || isLiveTurn(latest.data[0])) throw new Error('会话已有新活动，待插话已保留。')
+        await rpc.request('thread/inject_items', { threadId, items: [stoppedResponseItem(input)] })
+        if (!current()) return
+        const result = await rpc.request<{ outcome: string }>('thread/attachment/add', { threadId, attachmentType: STOPPED_INPUT_COMMIT_TYPE, identityKey: input.clientId, payload: { version: 1 } })
+        if (!current()) return
+        if (!['created', 'existing'].includes(result?.outcome)) throw new Error('插话保存结果未确认。')
+        rememberStoppedInput(threadId, input)
+      }
+    } catch (cause) { if (current()) {
+      const stopped = stopConfirmed || terminalTurns.has(turnId)
+      if (stopped) for (const message of captured) if (message.accepted) message.ended = true
+      error.value = stopped ? stoppedInputUnavailable(cause) : messageOf(cause)
+    } }
+    finally { if (epoch === generation) stoppingThreads.value.delete(threadId) }
   }
   async function readArchivedThreads(params: { cursor?: string | null; searchTerm?: string } = {}, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<{ data: Thread[]; nextCursor: string | null }> {
     if (!client || !connected.value || disposed) throw new RpcError('请先连接设备。')
@@ -1452,6 +1723,9 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       if (method === 'turn/completed' && turn.status === 'failed') rememberTurnFailure(id, turn.id, turn.error)
       updateThreadPreview(id, turn.items?.find(item => item.type === 'userMessage'))
       if (method === 'turn/started') {
+        cancelAutoRetry()
+        if (autoRetryDispatch?.threadId === id) autoRetryAttempts.set(turn.id, autoRetryDispatch.attempt)
+        if (autoRetryAttempts.size > 500) autoRetryAttempts.delete(autoRetryAttempts.keys().next().value!)
         const activity = timestamp(turn.startedAt) ?? Math.floor(Date.now() / 1000)
         updateThreadMetadata(id, { updatedAt: activity, recencyAt: activity })
         const key = queueKey(id) + '/' + turn.id
@@ -1533,6 +1807,12 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
       mergeTurn(turn)
       if (method === 'turn/completed') {
         approvals.value = approvals.value.filter(a => a.params.turnId !== turn.id)
+        if (turn.status === 'failed') {
+          observedFailedTurns.add(turnDiffKey(String(p.threadId), turn.id))
+          if (observedFailedTurns.size > 500) observedFailedTurns.delete(observedFailedTurns.values().next().value!)
+          const epoch = generation
+          queueMicrotask(() => { if (epoch === generation) scheduleAutoRetry(String(p.threadId), turn) })
+        } else if (autoRetryPlan.value?.turnId === turn.id) cancelAutoRetry()
       }
       return
     }
@@ -1596,10 +1876,16 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     disconnect(); clearInterval(clockTimer); clearTimeout(noticeTimer); noticeListeners.clear()
     window.removeEventListener('offline', wentOffline); window.removeEventListener('online', wentOnline)
   }
+  watch([() => active.value?.id, selectedId, connected], () => { cancelAutoRetry() }, { flush: 'sync' })
+  if (options.autoRetryVisible) watch(options.autoRetryVisible, value => { if (!value) cancelAutoRetry() }, { flush: 'sync' })
+  watch([busy, loadingThread, autoRetryStarting, () => active.value?.turns.at(-1)?.status], () => {
+    const thread = active.value, turn = thread?.turns.at(-1)
+    if (thread && turn && observedFailedTurns.has(turnDiffKey(thread.id, turn.id))) scheduleAutoRetry(thread.id, turn)
+  }, { flush: 'post' })
   if (getCurrentScope()) onScopeDispose(dispose)
   if (!options.deferLifecycle) {
     if (getCurrentInstance()) onMounted(() => { void start() })
     else void start()
   }
-  return { compactContext, profilesLoaded, refreshProfiles, persistSelection, defaultWorkingDirectory, start, dispose, connectWithToken, forkThread, withdrawPendingSteer, takePendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
+  return { retryPreferences, retrySettingsError, updateRetryPreferences, autoRetryStatus, autoRetryStarting, autoRetryPending: computed(() => !!autoRetryPlan.value), cancelAutoRetry, currentTurnFailureInfo, interrupting, readAttachments, asyncQuestions, answerAsyncQuestion, compactContext, profilesLoaded, refreshProfiles, persistSelection, defaultWorkingDirectory, start, dispose, connectWithToken, forkThread, withdrawPendingSteer, takePendingSteer, listMentionPlugins, searchMentionThreads, renameThread, listSkills, skillsRevision, pendingSteers, onTaskNotice, requestConfig, steer, steering, currentTurnFailure, runWorkspaceCommand, currentTurnDiff, goal, currentGoal: goal, goalLoading, goalSaving, goalError, goalSupported, refreshGoal, setGoal, clearGoal, searchFiles, profiles, selectedId, selected, status, error, notice, online, bridgeReachable, authenticated, requiresKey, threads, projectThreads, workingDirectory, projectFilter, projectPaths, projectsLoading, threadCursor, active, models, model, effort, serviceTier, permission, permissionUnavailable, approvals, loading, loadingThread, pendingThreadId, threadLoadError, loadingEarlier, historyCursor, sending, connected, activeTurn, busy, items, displayTurns, contextUsage, compacting, liveReasoning, reconnectStatus, thinkingElapsed, workingElapsed, clockNow, activeApprovals, modelInfo, tokenFor, saveProfile, removeProfile, connect, disconnect, refreshThreads, readArchivedThreads, unarchive, openThread, loadEarlier, cancelThreadLoad, newThread, send, queuedMessages, currentQueue, queuePaused, serverQueueSupported, removeQueued, updateQueued, resumeQueue, pauseQueue, interrupt, archive, respond, revising, readAgentCenter, messageTarget, withdrawMessage, editMessage, login, logout, toast }
 }

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch
 import { PhArrowUp, PhListNumbers, PhSquare, PhX } from '@phosphor-icons/vue'
 import { useCodex } from '../composables/useCodex'
 import MessageItem from './MessageItem.vue'
+import TurnFailure from './TurnFailure.vue'
 import WorkspaceFilePanel from './WorkspaceFilePanel.vue'
 import SubAgentBadge from './SubAgentBadge.vue'
 import { subAgentIdentity } from '../lib/thread-insights'
@@ -10,7 +11,7 @@ import type { FileLinkTarget } from '../lib/file-links'
 import ApprovalIsland from './ApprovalIsland.vue'
 import PromptEditor from './PromptEditor.vue'
 import QueuePane from './QueuePane.vue'
-import { hasPrompt, readImages, type PromptPart } from '../lib/prompt'
+import { hasPrompt, type PromptPart } from '../lib/prompt'
 import type { ConnectionProfile } from '../../shared/protocol'
 import { conversationInputs } from '../lib/input-history'
 import { useInputHistory } from '../composables/useInputHistory'
@@ -39,10 +40,10 @@ const transcript = computed(() => withStoppedTurnFooters(visibleTurns.value, tur
 const workDurations = computed(() => completedTurnDurations(codex.displayTurns.value))
 const inputHistory = computed(() => conversationInputs([{ id: props.threadId, status: 'inProgress', items: visible.value }]))
 const history = useInputHistory(computed(() => props.profile.id), codex.authenticated, inputHistory, codex.toast)
-const blocked = computed(() => !ready.value || opening.value || !codex.connected.value || codex.active.value?.id !== props.threadId || codex.loadingThread.value || !!codex.threadLoadError.value || codex.revising.value || codex.sending.value || codex.steering.value || submitting.value || attaching.value)
+const blocked = computed(() => codex.interrupting.value || !ready.value || opening.value || !codex.connected.value || codex.active.value?.id !== props.threadId || codex.loadingThread.value || !!codex.threadLoadError.value || codex.revising.value || codex.sending.value || codex.steering.value || submitting.value || attaching.value)
 const hasQueue = computed(() => !!codex.currentQueue.value.length || queueEditing.value)
 const serverManaged = computed(() => (codex.serverQueueSupported.value || codex.currentQueue.value.some(job => job.source === 'server')) && !codex.currentQueue.value.some(job => job.source !== 'server'))
-const updateBusy = computed(() => hasPrompt(draft.value) || opening.value || submitting.value || attaching.value || codex.busy.value || !!codex.activeTurn.value || codex.sending.value || codex.steering.value || codex.pendingSteers.value.some(steer => !steer.ended) || hasQueue.value || codex.revising.value)
+const updateBusy = computed(() => codex.interrupting.value || hasPrompt(draft.value) || opening.value || submitting.value || attaching.value || codex.busy.value || !!codex.activeTurn.value || codex.sending.value || codex.steering.value || codex.pendingSteers.value.some(steer => !steer.ended) || hasQueue.value || codex.revising.value)
 watch(updateBusy, value => emit('busy', value), { immediate: true, flush: 'sync' })
 const connectionError = computed(() => openError.value || codex.threadLoadError.value || codex.error.value)
 const statusMessage = computed(() => {
@@ -97,13 +98,18 @@ function restoreDraft(parts: PromptPart[]) {
   void nextTick(() => { if (!disposed) editor.value?.focus(true) })
 }
 function restoreSteer(id: string) { const parts = codex.takePendingSteer(id); if (parts) restoreDraft(parts) }
+async function retryFailure() {
+  if (blocked.value || codex.busy.value || codex.active.value?.turns.at(-1)?.status !== 'failed') return
+  codex.cancelAutoRetry(); submitting.value = true
+  try { await codex.send([{ type: 'text', text: '继续' }]) } finally { if (!disposed) submitting.value = false }
+}
 async function attach(files: File[]) {
   if (disposed || attaching.value || submitting.value) return
   attaching.value = true; draftError.value = ''
   const insertion = editor.value?.reserveInsertion()
   try {
-    const images = await readImages(files, draft.value)
-    if (!disposed) images.forEach((image, index) => editor.value?.insertImage(image, index === 0 ? insertion : undefined))
+    const images = await codex.readAttachments(files, draft.value)
+    if (!disposed) images.forEach((image, index) => editor.value?.insertAttachment(image, index === 0 ? insertion : undefined))
   } catch (cause) { if (!disposed) draftError.value = cause instanceof Error ? cause.message : String(cause) }
   finally { if (!disposed) attaching.value = false }
 }
@@ -123,22 +129,22 @@ watch([visible, statusMessage, connectionError, codex.currentTurnFailure], async
     <header><div><strong>侧边聊天</strong><small>{{ profile.name }}</small></div><SubAgentBadge v-if="agentIdentity" :name="agentIdentity.name" :role="agentIdentity.role" /><button type="button" class="icon-button" aria-label="关闭侧边聊天" @click="emit('close')"><PhX :size="18" /></button></header>
     <div ref="messages" class="side-chat-messages" @scroll.passive="onScroll">
       <template v-for="row in transcript" :key="row.key"><p v-if="'stoppedLabel' in row" class="turn-stopped-duration" :data-turn-id="row.turnId">{{ row.stoppedLabel }}</p><MessageItem v-else @open-file="fileTarget = $event" :work-duration-seconds="workDurations.get(row.item.id)" :item="row.item" :now="codex.clockNow.value" actions-disabled @copy="emit('copy', $event)" /></template>
-      <p v-if="codex.currentTurnFailure.value" class="side-chat-error" role="alert">{{ codex.currentTurnFailure.value }}</p>
+      <TurnFailure class="side-chat-error" :failure="codex.currentTurnFailureInfo.value" :retryable="codex.active.value?.turns.at(-1)?.status === 'failed'" :loading="submitting || codex.autoRetryStarting.value" :disabled="blocked || codex.busy.value" :auto-retry-status="codex.autoRetryStatus.value" :auto-retry-pending="codex.autoRetryPending.value" @retry="retryFailure" @cancel-auto-retry="codex.cancelAutoRetry()" />
       <p v-if="connectionError" class="side-chat-error" role="alert">{{ connectionError }}</p>
       <p v-if="statusMessage" role="status" aria-live="polite" aria-atomic="true">{{ statusMessage }}</p>
       <button v-if="!opening && (!codex.connected.value || codex.threadLoadError.value || !ready)" class="text-button" type="button" :disabled="codex.loadingThread.value || codex.revising.value" @click="open">{{ codex.connected.value ? '重新加载侧边聊天' : '重新连接侧边聊天' }}</button>
       <p v-if="codex.notice.value" role="status">{{ codex.notice.value }}</p>
     </div>
     <div class="side-chat-input">
-      <ApprovalIsland :approvals="codex.activeApprovals.value" :steers="codex.pendingSteers.value" :has-queue="hasQueue" :reasoning="codex.reconnectStatus.value || codex.compacting.value ? '' : codex.liveReasoning.value" :thinking-elapsed="codex.thinkingElapsed.value" :disabled="!codex.connected.value || codex.revising.value" @respond="codex.respond" @withdraw-steer="codex.withdrawPendingSteer" @restore-steer="restoreSteer">
-        <template #queue><QueuePane :messages="codex.currentQueue.value" :working="codex.busy.value" :paused="codex.queuePaused.value" :server-managed="serverManaged" :save="codex.updateQueued" :disabled="!codex.connected.value || codex.loadingThread.value || opening || codex.revising.value" @editing="queueEditing = $event" @remove="codex.removeQueued" @restore="restoreDraft" @resume="codex.resumeQueue" @pause="codex.pauseQueue" /></template>
+      <ApprovalIsland @open-file="fileTarget = $event" :approvals="codex.activeApprovals.value" :steers="codex.pendingSteers.value" :has-queue="hasQueue" :reasoning="codex.reconnectStatus.value || codex.compacting.value ? '' : codex.liveReasoning.value" :thinking-elapsed="codex.thinkingElapsed.value" :disabled="!codex.connected.value || codex.revising.value" @respond="codex.respond" @withdraw-steer="codex.withdrawPendingSteer" @restore-steer="restoreSteer">
+        <template #queue><QueuePane @open-file="fileTarget = $event" :messages="codex.currentQueue.value" :working="codex.busy.value" :paused="codex.queuePaused.value" :server-managed="serverManaged" :save="codex.updateQueued" :read-attachments="codex.readAttachments" :disabled="!codex.connected.value || codex.loadingThread.value || opening || codex.revising.value" @editing="queueEditing = $event" @remove="codex.removeQueued" @restore="restoreDraft" @resume="codex.resumeQueue" @pause="codex.pauseQueue" /></template>
       </ApprovalIsland>
       <form @submit.prevent="send()">
         <PromptEditor :input-history="history.entries.value" @refresh-history="history.refresh()" :history-scope="profile.id + '/' + threadId" ref="editor" v-model="draft" label="侧边聊天消息" placeholder="继续讨论…" :disabled="codex.revising.value" @files="attach" @keydown="onKey" />
         <p v-if="draftError" class="side-chat-error" role="alert">{{ draftError }}</p>
         <div class="side-chat-actions">
           <button v-if="(codex.busy.value || hasQueue) && hasPrompt(draft)" type="button" class="icon-button" aria-label="加入侧边聊天队列" :disabled="blocked" @click="send(true)"><PhListNumbers :size="18" /></button>
-          <button v-if="codex.activeTurn.value && !hasPrompt(draft)" type="button" class="icon-button" aria-label="停止侧边聊天生成" :disabled="!codex.connected.value || codex.revising.value" @click="codex.interrupt()"><PhSquare :size="16" /></button>
+          <button v-if="codex.activeTurn.value && !hasPrompt(draft)" type="button" class="icon-button" aria-label="停止侧边聊天生成" :disabled="!codex.connected.value || codex.revising.value || codex.interrupting.value" @click="codex.interrupt()"><PhSquare :size="16" /></button>
           <button v-else class="send-button" type="submit" aria-label="发送侧边聊天消息" :disabled="blocked || !hasPrompt(draft)"><PhArrowUp :size="20" /></button>
         </div>
       </form>

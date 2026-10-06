@@ -1,0 +1,115 @@
+import { expect, test, type Page } from '../fixtures'
+import { MOCK_ENDPOINT, MOCK_URL } from '../config'
+
+async function connect(page: Page) {
+  await page.getByRole('button', { name: '选择设备', exact: true }).click()
+  await page.getByRole('menuitem', { name: '添加设备', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '连接你的设备' })
+  await dialog.getByLabel('设备名称').fill('重试测试设备')
+  await dialog.getByLabel('App Server 地址').fill(MOCK_ENDPOINT)
+  await dialog.getByPlaceholder('留空使用 ~/codex-remote').fill('/test/project')
+  await dialog.getByRole('button', { name: '保存并连接', exact: true }).click()
+  await expect(page.getByTestId('selected-device')).toContainText('已连接')
+}
+async function settings(page: Page) {
+  const trigger = page.getByRole('button', { name: '设置', exact: true })
+  const opener = page.getByRole('button', { name: /打开导航|展开侧栏/ })
+  if (await opener.isVisible() && await opener.getAttribute('aria-expanded') !== 'true') await opener.click()
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+  const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+  await dialog.getByRole('button', { name: '失败与重试', exact: true }).click()
+  return dialog
+}
+async function enable(page: Page, max = '3 次') {
+  const dialog = await settings(page)
+  await dialog.getByRole('button', { name: '重试间隔', exact: true }).click()
+  await dialog.getByRole('option', { name: '3 秒', exact: true }).click()
+  await dialog.getByRole('button', { name: '最多自动重试', exact: true }).click()
+  await dialog.getByRole('option', { name: max, exact: true }).click()
+  await dialog.getByRole('switch', { name: '自动重试', exact: true }).click()
+  await expect(dialog.getByRole('switch', { name: '自动重试', exact: true })).toHaveAttribute('aria-checked', 'true')
+  await page.keyboard.press('Escape')
+  const nav = page.locator('.sidebar').getByRole('button', { name: '关闭导航', exact: true })
+  if (await nav.isVisible()) await nav.click()
+}
+async function send(page: Page, text = '执行任务') {
+  await page.getByRole('textbox', { name: '发送给 Codex 的消息' }).fill(text)
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+}
+test.beforeEach(async ({ page, request }) => { await request.get(MOCK_URL + '/test/reset'); await page.goto('/'); await connect(page) })
+
+test('stores the enable switch, selected errors, delay and limit in frontend settings', async ({ page }, info) => {
+  if (info.project.name === 'mobile') await page.emulateMedia({ colorScheme: 'dark' })
+  let dialog = await settings(page)
+  await expect(dialog.getByRole('switch', { name: '自动重试', exact: true })).toHaveAttribute('aria-checked', 'false')
+  await dialog.getByRole('switch', { name: '自动重试：安全策略拦截', exact: true }).click()
+  await dialog.getByRole('switch', { name: '自动重试：网络与连接中断', exact: true }).click()
+  await dialog.getByRole('button', { name: '最多自动重试', exact: true }).click()
+  await dialog.getByRole('option', { name: '5 次', exact: true }).click()
+  await dialog.getByRole('switch', { name: '自动重试', exact: true }).click()
+  await expect(dialog.getByRole('switch', { name: '自动重试', exact: true })).toHaveAttribute('aria-checked', 'true')
+  if (info.project.name === 'mobile') await expect(dialog.getByRole('heading', { name: 'Codex 设置', exact: true })).toHaveCSS('white-space', 'nowrap')
+  await dialog.locator('.settings-body').evaluate(element => { element.scrollTop = 0 })
+  await page.screenshot({ path: info.outputPath('auto-retry-settings.png'), animations: 'disabled' })
+  await page.keyboard.press('Escape'); await page.reload()
+  await expect(page.getByTestId('selected-device')).toContainText('已连接')
+  dialog = await settings(page)
+  await expect(dialog.getByRole('switch', { name: '自动重试', exact: true })).toHaveAttribute('aria-checked', 'true')
+  await expect(dialog.getByRole('switch', { name: '自动重试：安全策略拦截', exact: true })).toHaveAttribute('aria-checked', 'true')
+  await expect(dialog.getByRole('switch', { name: '自动重试：网络与连接中断', exact: true })).toHaveAttribute('aria-checked', 'false')
+  await expect(dialog.getByRole('button', { name: '最多自动重试', exact: true })).toContainText('5 次')
+})
+
+test('automatically continues selected terminal failures, preserves drafts and leaves manual stops stopped', async ({ page, request }) => {
+  await request.get(MOCK_URL + '/test/scenario?name=auto-retry-network-once')
+  await enable(page); await send(page)
+  await expect(page.locator('.turn-failure-auto')).toContainText('1 / 3')
+  await page.getByRole('textbox', { name: '发送给 Codex 的消息' }).fill('尚未发送的草稿')
+  await expect(page.getByText('自动重试后的任务已完成。', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('textbox', { name: '发送给 Codex 的消息' })).toHaveText('尚未发送的草稿')
+  const metrics = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  const starts = metrics.requests.filter((entry: { method: string }) => entry.method === 'turn/start')
+  expect(starts).toHaveLength(2); expect(starts[1].params.input[0].text).toBe('继续')
+  await request.get(MOCK_URL + '/test/scenario?name=steer-not-consumed')
+  await send(page, '执行长任务')
+  await page.getByRole('button', { name: '停止生成', exact: true }).click()
+  await expect(page.locator('.turn-failure-auto')).toHaveCount(0)
+  await expect(page.locator('.working-status')).toHaveCount(0)
+})
+
+test('keeps unselected policy errors manual and puts the mobile retry action below the full-width message', async ({ page, request }, info) => {
+  await request.get(MOCK_URL + '/test/scenario?name=auto-retry-policy-once')
+  await enable(page); await send(page)
+  const failure = page.locator('.turn-failure')
+  await expect(failure).toContainText('possible cybersecurity risk')
+  await expect(failure.locator('.turn-failure-auto')).toHaveCount(0)
+  if (info.project.name === 'mobile') {
+    const description = await failure.locator('.turn-failure-description').boundingBox(), button = await failure.getByRole('button', { name: '重试', exact: true }).boundingBox(), box = await failure.boundingBox()
+    expect(button!.y).toBeGreaterThanOrEqual(description!.y + description!.height - 1)
+    expect(description!.width).toBeGreaterThan(box!.width * .95)
+    expect(button!.x + button!.width).toBeGreaterThan(box!.x + box!.width - 5)
+  }
+  await page.screenshot({ path: info.outputPath('mobile-failure-retry-layout.png') })
+  await failure.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(page.getByText('自动重试后的任务已完成。', { exact: true })).toBeVisible()
+})
+
+test('a selected policy error can auto retry, countdowns cancel, and attempts stop at the chosen limit', async ({ page, request }) => {
+  await request.get(MOCK_URL + '/test/scenario?name=auto-retry-policy-always')
+  await enable(page, '1 次')
+  const dialog = await settings(page)
+  await dialog.getByRole('switch', { name: '自动重试：安全策略拦截', exact: true }).click()
+  await page.keyboard.press('Escape')
+  const nav = page.locator('.sidebar').getByRole('button', { name: '关闭导航', exact: true }); if (await nav.isVisible()) await nav.click()
+  await send(page)
+  await page.getByRole('button', { name: '取消自动重试', exact: true }).click()
+  await expect(page.locator('.turn-failure-auto')).toHaveCount(0)
+  let metrics = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  expect(metrics.requests.filter((entry: { method: string }) => entry.method === 'turn/start')).toHaveLength(1)
+  await send(page, '明确继续这个任务')
+  await expect(page.locator('.turn-failure-auto')).toContainText('上限（1 次）', { timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '取消自动重试', exact: true })).toHaveCount(0)
+  metrics = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  expect(metrics.requests.filter((entry: { method: string }) => entry.method === 'turn/start')).toHaveLength(3)
+})
