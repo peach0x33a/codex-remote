@@ -9,9 +9,10 @@ export function activityTime(thread: RecentActivity): number | undefined {
 }
 
 /** Two calendar dates in the viewer's local timezone, anchored to actual activity. */
-export function recentWindow(latest: number): RecentWindow {
+export function recentWindow(latest: number, days = 2): RecentWindow {
+  if (!Number.isSafeInteger(days) || days < 1) throw new Error('无效的日期范围')
   const start = new Date(latest * 1000), end = new Date(latest * 1000)
-  start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - 1)
+  start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - days + 1)
   end.setHours(0, 0, 0, 0); end.setDate(end.getDate() + 1)
   return { latest, start: start.getTime() / 1000, end: end.getTime() / 1000 }
 }
@@ -28,7 +29,7 @@ function unsupportedRecency(reason: unknown) {
 /** Stop requesting older pages as soon as the ordered list crosses the date window. */
 export async function fetchRecentThreads<T extends RecentActivity>(request: RecentThreadRequest, options: {
   params?: Record<string, unknown>; signal?: AbortSignal; window?: RecentWindow | null
-  cursor?: string | null; sortKey?: 'recency_at' | 'updated_at'; maxPages?: number
+  cursor?: string | null; sortKey?: 'recency_at' | 'updated_at'; maxPages?: number; allTime?: boolean
   onPage?: (snapshot: RecentSnapshot<T>) => void
 } = {}): Promise<RecentSnapshot<T>> {
   let cursor = options.cursor || null, window = options.window || null, sortKey = options.sortKey || 'recency_at'
@@ -45,9 +46,9 @@ export async function fetchRecentThreads<T extends RecentActivity>(request: Rece
     }
     if (!page || !Array.isArray(page.data) || page.data.some(thread => !thread || typeof thread.id !== 'string')) throw new Error('会话列表格式无效')
     const times = page.data.map(activityTime).filter((time): time is number => time !== undefined)
-    if (!window && times.length) window = recentWindow(Math.max(...times))
-    for (const thread of page.data) if (withinRecentWindow(thread, window)) all.set(thread.id, thread)
-    const crossed = window !== null && times.some(time => time < window!.start)
+    if (!options.allTime && !window && times.length) window = recentWindow(Math.max(...times))
+    for (const thread of page.data) if (options.allTime || withinRecentWindow(thread, window)) all.set(thread.id, thread)
+    const crossed = !options.allTime && window !== null && times.some(time => time < window!.start)
     const next = page.nextCursor
     if (next != null && typeof next !== 'string') throw new Error('会话列表分页格式无效')
     cursor = crossed || !page.data.length ? null : next || null

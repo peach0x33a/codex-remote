@@ -3,6 +3,7 @@ import { effectScope, nextTick, ref, type EffectScope } from 'vue'
 import { AGENT_CENTER_REFRESH_MS, useAgentCenter, type AgentCenterRequest } from '../../src/composables/useAgentCenter'
 import { agentState, buildAgentRows, filterAgentRows, groupAgentRows, type AgentThread } from '../../src/lib/agent-center'
 import { activityTime } from '../../src/lib/recent-window'
+import type { ThreadTimeRange } from '../../src/lib/thread-time-range'
 
 const thread = (id: string, fields: Partial<AgentThread> = {}): AgentThread => ({ id, name: id, preview: '', cwd: '/work/api', model: 'model-a', createdAt: 1, updatedAt: 2, turns: [], status: { type: 'idle' }, ...fields })
 const activityDate = (day: number) => new Date(2026, 8, day, 12).getTime() / 1000
@@ -42,15 +43,16 @@ const restores: (() => void)[] = []
 afterEach(() => { for (const scope of scopes.splice(0)) scope.stop(); for (const restore of restores.splice(0)) restore() })
 async function settle() { for (let i = 0; i < 35; i++) await Promise.resolve(); await nextTick() }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
-function createCenter(handle: (call: Call) => unknown | Promise<unknown>) {
+function createCenter(handle: (call: Call) => unknown | Promise<unknown>, initialRange: ThreadTimeRange = { kind: 'recent', days: 2 }) {
   const open = ref(false), connected = ref(true), device = ref('device-a'), calls: Call[] = []
+  const range = ref<ThreadTimeRange>(initialRange)
   const request: AgentCenterRequest = async <T>(method: string, params = {}, options: { signal?: AbortSignal } = {}) => {
     const call = { method, params, signal: options.signal }; calls.push(call)
     return await handle(call) as T
   }
   const scope = effectScope(); scopes.push(scope)
-  const center = scope.run(() => useAgentCenter({ request, isVisible: () => open.value, isConnected: () => connected.value, deviceKey: () => device.value }))!
-  return { center, calls, open, connected, device, scope }
+  const center = scope.run(() => useAgentCenter({ request, isVisible: () => open.value, isConnected: () => connected.value, deviceKey: () => device.value, timeRange: () => range.value }))!
+  return { center, calls, open, connected, device, scope, range }
 }
 function response(call: Call, data = [thread('a'), thread('b')]) {
   if (call.method === 'thread/loaded/list') return { data: data.map(item => item.id), nextCursor: null }
@@ -99,6 +101,55 @@ describe('read-only agent center controller without network listeners', () => {
     expect(state.calls.filter(call => call.method === 'thread/list')).toHaveLength(3)
     expect(state.center.notice.value).toContain('部分任务')
     expect(state.center.loading.value).toBe(false)
+  })
+
+  test('changing the range reads older pages and a custom date can skip newer pages', async () => {
+    const data = [thread('latest', { source: 'cli', updatedAt: activityDate(29) }), thread('previous', { source: 'cli', updatedAt: activityDate(28) }), thread('week', { source: 'cli', updatedAt: activityDate(25) }), thread('month', { source: 'cli', updatedAt: activityDate(10) })]
+    const state = createCenter(call => sourceFilteredResponse(call, data, 1))
+    state.open.value = true; await settle()
+    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['latest', 'previous'])
+    state.range.value = { kind: 'recent', days: 7 }; await settle()
+    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['latest', 'previous', 'week'])
+    state.range.value = { kind: 'custom', start: '2026-09-10', end: '2026-09-10' }; await settle()
+    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['month'])
+    expect(state.center.details.value?.thread.id).toBe('month')
+    state.range.value = { kind: 'all' }; await settle()
+    expect(state.center.rows.value).toHaveLength(4)
+    expect(state.center.dateWindow.value).toBeNull()
+    expect(state.calls.some(call => /resume|start|queue/.test(call.method))).toBe(false)
+  })
+
+  test('an empty older range keeps a continuation and resumes without restarting its scan', async () => {
+    const data = Array.from({ length: 25 }, (_, i) => thread('row-' + i, { source: 'cli', updatedAt: activityDate(29 - i) }))
+    const state = createCenter(call => sourceFilteredResponse(call, data, 1), { kind: 'custom', start: '2026-09-05', end: '2026-09-05' })
+    state.open.value = true
+    for (let i = 0; i < 8; i++) await settle()
+    expect(state.center.rows.value).toEqual([]); expect(state.center.hasMore.value).toBe(true)
+    expect(state.calls.filter(call => call.method === 'thread/list' && !(call.params.sourceKinds as string[]).length)).toHaveLength(20)
+    const mark = state.calls.length
+    await state.center.loadMore(); await settle()
+    expect(state.center.rows.value.map(row => row.thread.id)).toEqual(['row-24'])
+    expect(state.center.hasMore.value).toBe(false)
+    expect(state.calls.slice(mark).filter(call => call.method === 'thread/list')[0]?.params.cursor).toBe('20')
+  })
+
+  test('all-time continuation deduplicates rows, keeps selection and pauses automatic scan resets', async () => {
+    const interval = spyOn(globalThis, 'setInterval'); restores.push(() => interval.mockRestore())
+    const data = Array.from({ length: 24 }, (_, i) => thread('row-' + i, { source: 'cli', updatedAt: activityDate(29 - i) }))
+    const state = createCenter(call => sourceFilteredResponse(call, data, 1), { kind: 'all' })
+    state.open.value = true
+    for (let i = 0; i < 8; i++) await settle()
+    expect(state.center.rows.value).toHaveLength(20); expect(state.center.hasMore.value).toBe(true)
+    const before = state.calls.length, tick = interval.mock.calls.at(-1)![0]
+    if (typeof tick === 'function') tick()
+    await settle(); expect(state.calls).toHaveLength(before)
+    await state.center.loadMore(); await settle()
+    expect(state.center.rows.value).toHaveLength(24); expect(state.center.hasMore.value).toBe(false)
+    expect(state.center.selectedId.value).toBe('row-0')
+    expect(state.center.details.value?.thread.id).toBe('row-0')
+    await state.center.refresh(); await settle()
+    expect(state.center.rows.value).toHaveLength(24)
+    expect(state.center.hasMore.value).toBe(false)
   })
 
   test.each(['interactive', 'subAgent'] as const)('includes spawn children through actual source filtering with the latest anchor from %s', async newestSource => {
@@ -156,7 +207,8 @@ describe('read-only agent center controller without network listeners', () => {
 
   test.each([
     'refresh',
-    'device'
+    'device',
+    'range'
   ] as const)('%s prevents late recent pages from merging into another snapshot', async action => {
     const late = deferred<unknown>()
     let fresh = false
@@ -170,7 +222,8 @@ describe('read-only agent center controller without network listeners', () => {
     const pending = state.calls.find(call => call.method === 'thread/list' && call.params.cursor === 'late')!
     fresh = true
     if (action === 'refresh') void state.center.refresh()
-    else state.device.value = 'device-b'
+    else if (action === 'device') state.device.value = 'device-b'
+    else state.range.value = { kind: 'all' }
     await settle()
     expect(pending.signal?.aborted).toBe(true)
     late.resolve({ data: [thread('late')], nextCursor: null }); await settle()

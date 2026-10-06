@@ -1,0 +1,82 @@
+import { expect, test, type Page } from '../fixtures'
+import { MOCK_ENDPOINT, MOCK_URL } from '../config'
+
+async function connect(page: Page) {
+  await page.getByRole('button', { name: '选择设备', exact: true }).click()
+  await page.getByRole('menuitem', { name: '添加设备', exact: true }).click()
+  await page.getByLabel('设备名称').fill('时间范围测试设备')
+  await page.getByLabel('App Server 地址').fill(MOCK_ENDPOINT)
+  await page.getByRole('button', { name: '保存并连接', exact: true }).click()
+  await expect(page.getByTestId('selected-device')).toContainText('已连接')
+}
+async function openCenter(page: Page) {
+  await page.getByRole('button', { name: '任务中心', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '任务中心', exact: true })
+  await expect(dialog).toBeVisible()
+  return dialog
+}
+async function choose(page: Page, label: string) {
+  await page.getByRole('button', { name: '对话时间范围', exact: true }).click()
+  await page.getByRole('option', { name: label, exact: true }).click()
+}
+test.beforeEach(async ({ page, request }) => {
+  await request.get(MOCK_URL + '/test/reset')
+  await request.get(MOCK_URL + '/test/scenario?name=task-time-range')
+  await page.goto('/'); await connect(page)
+})
+
+test('time ranges read older conversations, combine with filters and persist across reload', async ({ page, request }) => {
+  let dialog = await openCenter(page)
+  await expect(dialog.locator('.agent-center-row')).toHaveCount(2)
+  await expect(dialog.locator('.agent-center-range-caption')).toContainText('2026-09-28 至 2026-09-29')
+  await choose(page, '最近 7 天'); await expect(dialog.locator('.agent-center-row')).toHaveCount(3)
+  await choose(page, '最近 30 天'); await expect(dialog.locator('.agent-center-row')).toHaveCount(4)
+  await choose(page, '全部时间'); await expect(dialog.locator('.agent-center-row')).toHaveCount(5)
+  await dialog.getByRole('searchbox', { name: '搜索任务、目录或模型' }).fill('上月')
+  await expect(dialog.locator('.agent-center-row')).toHaveCount(1)
+  await expect(dialog.locator('.agent-center-row')).toContainText('上月项目会话')
+  await dialog.getByRole('searchbox').clear()
+  await dialog.getByRole('button', { name: '任务分组方式', exact: true }).click()
+  await dialog.getByRole('option', { name: '状态', exact: true }).click()
+  await page.keyboard.press('Escape'); await page.reload()
+  await expect(page.getByTestId('selected-device')).toContainText('已连接')
+  dialog = await openCenter(page)
+  await expect(dialog.getByRole('button', { name: '对话时间范围', exact: true })).toContainText('全部时间')
+  await expect(dialog.locator('.agent-center-row')).toHaveCount(5)
+  const metrics = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  expect(metrics.received.filter((method: string) => /^(thread\/resume|turn\/start|thread\/queue\/)/.test(method))).toEqual([])
+  await dialog.locator('.agent-center-row').filter({ hasText: '上月项目会话' }).click()
+  await dialog.getByRole('button', { name: '打开会话', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page).toHaveURL(/thread=ancient-thread/)
+})
+
+test('custom dates include both endpoints, validate before reading and restore after reopen', async ({ page, request }, info) => {
+  if (info.project.name === 'mobile') await page.emulateMedia({ colorScheme: 'dark' })
+  let dialog = await openCenter(page)
+  await expect(dialog.locator('.agent-center-row')).toHaveCount(2)
+  await choose(page, '自定义日期')
+  await dialog.getByLabel('开始日期').fill('2026-09-28')
+  await dialog.getByLabel('结束日期').fill('2026-09-25')
+  await dialog.getByRole('button', { name: '应用日期', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toHaveText('结束日期不能早于开始日期。')
+  await expect(dialog.locator('.agent-center-row')).toHaveCount(2)
+  await dialog.getByLabel('开始日期').fill('2026-09-25')
+  await dialog.getByLabel('结束日期').fill('2026-09-28')
+  await dialog.getByRole('button', { name: '应用日期', exact: true }).click()
+  await expect(dialog.locator('.agent-center-row')).toHaveCount(2)
+  await expect(dialog.locator('.agent-center-row').getByText('更早的项目会话', { exact: true })).toBeVisible()
+  await expect(dialog.locator('.agent-center-row').getByText('已有项目分析', { exact: true })).toHaveCount(0)
+  await expect(dialog.locator('.agent-center-range-caption')).toContainText('2026-09-25 至 2026-09-28')
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+  await page.screenshot({ path: info.outputPath('task-time-range.png'), animations: 'disabled' })
+  await page.keyboard.press('Escape'); dialog = await openCenter(page)
+  await expect(dialog.getByLabel('开始日期')).toHaveValue('2026-09-25')
+  await expect(dialog.getByLabel('结束日期')).toHaveValue('2026-09-28')
+  await dialog.getByLabel('开始日期').fill('2026-01-01')
+  await dialog.getByLabel('结束日期').fill('2026-01-01')
+  await dialog.getByRole('button', { name: '应用日期', exact: true }).click()
+  await expect(dialog.getByRole('heading', { name: '当前时间范围内暂无对话', exact: true })).toBeVisible()
+  const metrics = await (await request.get(MOCK_URL + '/test/metrics')).json()
+  expect(metrics.received.filter((method: string) => /^(thread\/resume|turn\/start|thread\/queue\/)/.test(method))).toEqual([])
+})

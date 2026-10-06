@@ -51,6 +51,53 @@ test('centers the manual history control and keeps the visible message anchored'
   await expect.poll(async () => Math.abs((await anchor.boundingBox())!.y - y)).toBeLessThan(2)
 })
 
+test('opens restored conversations at their latest messages after history rendering', async ({ page }) => {
+  const distanceFromBottom = () => transcript(page).evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)
+  await expect.poll(distanceFromBottom).toBeLessThan(2)
+  await expect(page.getByText('历史回答 94', { exact: true })).toBeInViewport()
+  await top(page)
+  const navigation = page.getByRole('button', { name: '打开导航', exact: true })
+  if (await navigation.isVisible()) await navigation.click()
+  await page.locator('.sidebar').getByRole('button', { name: '已有项目分析', exact: true }).click()
+  await expect(page.locator('.message-user')).toHaveCount(30)
+  await expect.poll(distanceFromBottom).toBeLessThan(2)
+  await page.reload()
+  await expect(page.locator('.message-user')).toHaveCount(30)
+  await expect.poll(distanceFromBottom).toBeLessThan(2)
+  await transcript(page).screenshot({ path: test.info().outputPath('latest-history-position.png'), animations: 'disabled' })
+})
+
+test('continuous trackpad input at the top loads history without requiring a quiet gap', async ({ page, request }) => {
+  await top(page)
+  await transcript(page).evaluate(async host => {
+    for (let i = 0; i < 34; i++) {
+      host.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -24 }))
+      // Trackpad strokes remain in one burst: each gap is below 180ms.
+      host.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 0 }))
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+  })
+  await expect(page.locator('.message-user')).toHaveCount(60)
+  expect(await historyCalls(request)).toHaveLength(1)
+  await expect.poll(() => transcript(page).evaluate(node => node.scrollTop)).toBeGreaterThan(100)
+})
+
+test('decaying trackpad momentum stays one gesture and a renewed finger stroke can load', async ({ page, request }) => {
+  await top(page)
+  await transcript(page).evaluate(async host => {
+    for (const delta of [100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20, 15, 10, 5, 3, 2]) {
+      host.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -delta }))
+      await new Promise(resolve => setTimeout(resolve, 30))
+    }
+  })
+  expect(await historyCalls(request)).toHaveLength(0)
+  await transcript(page).evaluate(host => {
+    for (const delta of [12, 24, 32]) host.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -delta }))
+  })
+  await expect(page.locator('.message-user')).toHaveCount(60)
+  expect(await historyCalls(request)).toHaveLength(1)
+})
+
 test('two wheel gestures load one page without an inertia chain or duplicate request', async ({ page, request, isMobile }) => {
   await top(page)
   await wheel(page, isMobile)

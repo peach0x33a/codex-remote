@@ -6,12 +6,33 @@ import BaseDialog from './BaseDialog.vue'
 import CustomSelect from './CustomSelect.vue'
 import { useAgentCenter, type AgentCenterRequest } from '../composables/useAgentCenter'
 import { AGENT_FILTERS, AGENT_STATE_LABELS, agentState, agentTitle, agentTokenTotals, filterAgentRows, groupAgentRows, type AgentFilter, type AgentGrouping } from '../lib/agent-center'
+import { THREAD_TIME_RANGES, customRangeError, isThreadTimeRange, localDate, timeRangeCaption, timeRangeChoice, type ThreadTimeRange, type ThreadTimeRangeChoice } from '../lib/thread-time-range'
 
 const props = defineProps<{ open: boolean; connected: boolean; deviceKey: string; request: AgentCenterRequest }>()
 const emit = defineEmits<{ close: []; select: [threadId: string] }>()
+const timeRange = useStoredChoice<ThreadTimeRange>(() => 'codex-remote.tasks-time-range.' + props.deviceKey, { kind: 'recent', days: 2 }, isThreadTimeRange)
+const rangeChoice = ref<ThreadTimeRangeChoice>(timeRangeChoice(timeRange.value))
+const startDate = ref(''), endDate = ref(''), rangeError = ref('')
 const request: AgentCenterRequest = (method, params, options) => props.request(method, params, options)
-const center = useAgentCenter({ request, isConnected: () => props.connected, isVisible: () => props.open, deviceKey: () => props.deviceKey })
-const { rows, selectedId, details, loading, detailLoading, error, detailError, notice, updatedAt } = center
+const center = useAgentCenter({ request, isConnected: () => props.connected, isVisible: () => props.open, deviceKey: () => props.deviceKey, timeRange: () => timeRange.value })
+const { rows, selectedId, details, loading, detailLoading, error, detailError, notice, updatedAt, dateWindow, hasMore } = center
+const rangeCaption = computed(() => timeRangeCaption(timeRange.value, dateWindow.value))
+const customPending = computed(() => rangeChoice.value === 'custom' && (timeRange.value.kind !== 'custom' || timeRange.value.start !== startDate.value || timeRange.value.end !== endDate.value))
+function chooseRange(value: ThreadTimeRangeChoice) {
+  rangeChoice.value = value; rangeError.value = ''
+  if (value === 'custom') {
+    startDate.value = timeRange.value.kind === 'custom' ? timeRange.value.start : localDate(new Date((dateWindow.value?.start ?? Date.now() / 1000) * 1000))
+    endDate.value = timeRange.value.kind === 'custom' ? timeRange.value.end : localDate(new Date((dateWindow.value?.end ?? Date.now() / 1000) * 1000 - 1))
+  } else timeRange.value = value === 'all' ? { kind: 'all' } : { kind: 'recent', days: Number(value) as 2 | 7 | 30 }
+}
+function applyCustomRange() {
+  rangeError.value = customRangeError(startDate.value, endDate.value)
+  if (!rangeError.value) timeRange.value = { kind: 'custom', start: startDate.value, end: endDate.value }
+}
+watch(timeRange, range => {
+  rangeChoice.value = timeRangeChoice(range); rangeError.value = ''
+  if (range.kind === 'custom') { startDate.value = range.start; endDate.value = range.end }
+}, { immediate: true, flush: 'sync' })
 const groupingOptions: { value: AgentGrouping; label: string }[] = [{ value: 'project', label: '项目' }, { value: 'status', label: '状态' }, { value: 'model', label: '模型' }]
 const query = ref('')
 const status = useStoredChoice<AgentFilter>(() => 'codex-remote.tasks-filter.' + props.deviceKey, 'all', oneOf(AGENT_FILTERS.map(filter => filter.value)))
@@ -37,16 +58,24 @@ watch(visibleRows, visible => {
     <div class="agent-center">
       <div class="agent-center-toolbar">
         <label class="agent-center-search"><PhMagnifyingGlass :size="18" aria-hidden="true" /><input v-model="query" type="search" aria-label="搜索任务、目录或模型" placeholder="搜索任务、目录或模型" /></label>
+        <div class="agent-center-range"><span>时间范围</span><CustomSelect :model-value="rangeChoice" :options="THREAD_TIME_RANGES" label="对话时间范围" @update:model-value="chooseRange" /></div>
         <div class="agent-center-grouping"><span>分组</span><CustomSelect v-model="grouping" :options="groupingOptions" label="任务分组方式" /></div>
         <button type="button" class="text-button agent-center-refresh" :disabled="!connected || loading" @click="center.refresh()"><PhArrowsClockwise :size="17" :class="{ spinning: loading }" aria-hidden="true" />{{ loading ? '刷新中' : '刷新' }}</button>
       </div>
+      <form v-if="rangeChoice === 'custom'" class="agent-center-dates" novalidate @submit.prevent="applyCustomRange">
+        <label>开始日期<input v-model="startDate" type="date" min="1970-01-01" :aria-invalid="!!rangeError" /></label>
+        <label>结束日期<input v-model="endDate" type="date" min="1970-01-01" :aria-invalid="!!rangeError" /></label>
+        <button type="submit" class="button secondary">应用日期</button>
+        <p v-if="rangeError" class="agent-center-error" role="alert">{{ rangeError }}</p>
+      </form>
+      <p class="agent-center-note agent-center-range-caption">{{ rangeCaption }}<template v-if="customPending"> · 点击“应用日期”后生效</template></p>
       <div class="agent-center-filters" role="group" aria-label="筛选任务状态">
         <button v-for="filter in AGENT_FILTERS" :key="filter.value" type="button" :aria-pressed="status === filter.value" @click="status = filter.value">{{ filter.label }}<span>{{ count(filter.value) }}</span></button>
       </div>
       <p v-if="error" class="agent-center-error" role="alert">{{ error }}<span v-if="rows.length"> 当前保留上次读取的列表。</span></p>
       <p v-if="notice" class="agent-center-note" role="status">{{ notice }}</p>
       <div v-if="!connected" class="agent-center-empty"><h3>设备未连接</h3></div>
-      <div v-else-if="!rows.length" class="agent-center-empty" :aria-busy="loading"><h3>{{ loading ? '正在读取任务…' : error ? '任务读取失败' : '暂无任务' }}</h3></div>
+      <div v-else-if="!rows.length" class="agent-center-empty" :aria-busy="loading"><h3>{{ loading ? '正在读取任务…' : error ? '任务读取失败' : '当前时间范围内暂无对话' }}</h3></div>
       <div v-else class="agent-center-body">
         <nav class="agent-center-list" aria-label="任务列表" :aria-busy="loading">
           <p v-if="!visibleRows.length" class="agent-center-note">没有匹配的任务</p>
@@ -83,7 +112,7 @@ watch(visibleRows, visible => {
           <p v-else class="agent-center-note">选择任务查看详情</p>
         </section>
       </div>
-      <footer class="agent-center-footer"><span>{{ visibleRows.length }}<template v-if="visibleRows.length !== rows.length"> / {{ rows.length }}</template> 个任务</span><span v-if="lastUpdated">更新于 {{ lastUpdated }}</span></footer>
+      <footer class="agent-center-footer"><span>{{ visibleRows.length }}<template v-if="visibleRows.length !== rows.length"> / {{ rows.length }}</template> 个任务</span><button v-if="hasMore" type="button" class="text-button" :disabled="loading || !connected" @click="center.loadMore()">{{ loading ? '读取中…' : '继续读取对话' }}</button><span v-if="lastUpdated">更新于 {{ lastUpdated }}</span></footer>
     </div>
   </BaseDialog>
 </template>
@@ -100,6 +129,15 @@ watch(visibleRows, visible => {
 .agent-center-search input { width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; border-radius: 0; outline: none; background: transparent; color: var(--ink); font-size: calc(14px * var(--ui-font-scale, 1)); }
 .agent-center-search input::placeholder { color: var(--muted); }
 .agent-center-grouping { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.agent-center-range { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); white-space: nowrap; }
+.agent-center-range :deep(.custom-select-trigger) { font-size: calc(13px * var(--ui-font-scale, 1)); }
+.agent-center-range-caption { padding-top: var(--space-2); }
+.agent-center-dates { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-3); padding-top: var(--space-3); }
+.agent-center-dates label { display: grid; flex: 1 1 144px; min-width: 0; gap: var(--space-1); color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.agent-center-dates input { width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); padding: var(--space-2) var(--space-3); font-size: calc(14px * var(--ui-font-scale, 1)); color-scheme: inherit; }
+.agent-center-dates input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agent-center-dates input[aria-invalid="true"] { border-color: var(--danger); }
+.agent-center-dates > .agent-center-error { flex-basis: 100%; }
 .agent-center-grouping :deep(.custom-select-trigger) { min-width: 88px; min-height: 36px; padding: 0 var(--space-3); border-radius: var(--radius-round); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: calc(20px * var(--ui-font-scale, 1)); color: var(--ink-soft); }
 .agent-center-grouping :deep(.custom-select-trigger:hover:not(:disabled)), .agent-center-grouping :deep(.custom-select-trigger[aria-expanded="true"]) { background: var(--nav-hover); }
 .agent-center-grouping :deep(.custom-select-menu) { min-width: max(140px, 100%); }
@@ -160,6 +198,7 @@ watch(visibleRows, visible => {
   .agent-center-dialog { width: calc(100vw - 24px); max-width: calc(100vw - 24px); }
   .agent-center-search { flex-basis: 100%; }
   .agent-center-search input { font-size: calc(16px * var(--ui-font-scale, 1)); }
+  .agent-center-dates input { font-size: calc(16px * var(--ui-font-scale, 1)); }
   .agent-center-refresh { margin-left: auto; }
   .agent-center-body { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .agent-center-list { max-height: 28dvh; padding-right: 0; }

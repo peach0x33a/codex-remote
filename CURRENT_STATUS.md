@@ -8,6 +8,10 @@ Published backend: validated feature delivery, 2026-10-06
 
 ## Latest delivery
 
+Task center conversation range is now explicit: 2/7/30 calendar days anchored to latest activity, all time, or custom inclusive dates. The toolbar shows the actual interval, remembers the choice per device, reads matching older pages and exposes continuation for incomplete scans. Details: task-history/2026-10-06-task-center-time-range.md.
+
+Restored conversations now scroll to their latest messages after the transcript replaces the loading placeholder, including same-thread reopen and URL restoration. Sustained upward trackpad motion can load earlier history without an idle gap; decaying momentum alone remains a single gesture. Details: task-history/2026-10-06-history-opening-trackpad.md.
+
 Web UI login now offers a default-on 记住密码 switch. It retains an opaque login cookie for 30 days and survives Bun restarts; logout revokes it, changing APP_ACCESS_KEY invalidates it, and opt-out uses a browser session cookie with a maximum 12-hour server lifetime. Only password-bound credential hashes persist in the private store; the access password is never saved. Details: task-history/2026-10-06-remember-web-password.md.
 
 Browser-local automatic retry is available at 网页设置 → 失败与重试, default off, with selectable failure categories, delay and finite attempt limits. Confirmed selected failures receive a cancellable continuation countdown; explicit Stop remains stopped. Mobile failure text occupies the full row with Retry at the bottom right. Details: task-history/2026-10-05-auto-retry-mobile-error-layout.md.
@@ -38,6 +42,8 @@ Terminal unobserved steers can be removed as hints or returned to the draft. Lon
 
 ## Verification
 
+2026-10-06 task range/history scrolling: 769 full unit/integration cases passed (6,288 assertions, 58 files), 28 desktop/mobile browser cases passed, and types, Vite/PWA build and diff checks passed. Browser coverage verifies older date ranges, custom validation/endpoints, persisted choices, explicit conversation opening, newest-position restoration after hydration/reload, continuous trackpad input, inertia rejection, history anchors and stale-response isolation. Scoped UI detection and independent desktop/mobile capture reviews required no material fixes. Live health and exact HTML, entry, task-center and service-worker bytes match the tested build. Trackpad verification uses browser event sequences, not a physical Mac.
+
 2026-10-06 remembered login: 761 full unit/integration cases passed (6,241 assertions, 57 files), eight desktop/mobile login cases and six existing session-URL browser cases passed across focused runs, and types, Vite/PWA build and diff checks passed. Private storage, restart/expiry, password change, token rotation, durable logout, failed writes and metadata preservation were verified. Final desktop light/mobile dark captures passed independent review; the scoped mechanical UI check returned no findings. A preflight using the running service configuration preserved its existing credential/profile/history data through remembered login, restart and logout. Live health, exact HTML/entry/service-worker bytes, unchanged authentication configuration, 30-day remembered login and logout revocation passed after deployment.
 
 2026-10-05 automatic retry/mobile errors: 749 full unit/integration cases passed (6,151 assertions, 55 files), 16 focused desktop/mobile browser cases passed, and Vue/server types, Vite/PWA build and diff check passed. Captures and geometry assertions verify mobile full-width error text and trailing actions. Retry classification, persistence, count/limit/cancel, native/current-turn checks and preserved Stop behavior were verified. Scoped mechanical UI check returned no findings. Local health and served frontend bytes match the build.
@@ -51,6 +57,8 @@ Terminal unobserved steers can be removed as hints or returned to the draft. Lon
 682 full unit/integration cases passed (5,889 assertions, 51 files) with the unblocked update banner in the tree; the focused banner case asserts an enabled button during work, one call for duplicate clicks and a real retry after failure. Vue/server typechecks passed. 34 focused desktop/mobile browser cases passed against the previous staged build; this change has no browser or deployment verification yet — no Vite/PWA build, backend restart or served-hash check. Vue/server typechecks, Vite/PWA build, diff check and live asset hashes passed. Captures for portable settings, directory actions, HTML, subagent identity, colored diffs and compact Session ID were inspected. Mobile coverage is browser emulation; no physical handset check. Earlier full-browser results are historical, not a full-suite run for this release.
 
 ## Running service
+
+Local frontend updated at 2026-10-06T16:24:02Z for task-center time ranges and restored-history/trackpad scrolling. Served HTML, entry, task-center chunk, service worker and health were verified. The existing Bun backend continues running. `.local/task-range-history-deployment.json` records the release and static rollback location.
 
 Local frontend/backend updated at 2026-10-06T01:26:01Z for remembered login and the related completed Remote UI changes. Bun PID 1399410 uses the existing 0.0.0.0:3000 configuration and configured access password/origin/credential path. Live health, served bytes and authentication checks passed. `.local/remember-login-deployment.json` records hashes and rollback paths; the temporary environment snapshot and credential preflight copy were removed. Source publication to origin/master is separate from this verified local rollout.
 

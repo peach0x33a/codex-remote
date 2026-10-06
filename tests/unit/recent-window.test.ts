@@ -56,6 +56,13 @@ describe('recent session window', () => {
     expect(result.limited).toBe(true); expect(result.nextCursor).toBe('next-next-first')
     expect(rpc.calls).toHaveLength(2)
   })
+  test('all-time reads retain older and undated conversations instead of applying the recent window', async () => {
+    const rpc = reader(params => params.cursor ? { data: [row('old', at(1)), { id: 'undated' }], nextCursor: null }
+      : { data: [row('latest', at(29))], nextCursor: 'older' })
+    const result = await fetchRecentThreads(rpc.request, { allTime: true })
+    expect(result.data.map(thread => thread.id)).toEqual(['latest', 'old', 'undated'])
+    expect(result.window).toBeNull(); expect(rpc.calls).toHaveLength(2)
+  })
   test('rejects repeated cursors and malformed data, and honors cancellation', async () => {
     const repeated = reader(() => ({ data: [row('a', at(29))], nextCursor: 'same' }))
     await expect(fetchRecentThreads(repeated.request)).rejects.toThrow('重复')
