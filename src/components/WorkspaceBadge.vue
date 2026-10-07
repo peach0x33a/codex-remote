@@ -2,11 +2,12 @@
 import { computed } from 'vue'
 import { PhGitBranch, PhGitFork } from '@phosphor-icons/vue'
 import { describeGitContext, type GitContext } from '../lib/git-context'
-const props = defineProps<{ context: GitContext | null }>()
+const props = defineProps<{ context: GitContext | null; fromCommand?: boolean }>()
 const info = computed(() => props.context ? describeGitContext(props.context) : null)
+const title = computed(() => info.value ? (props.fromCommand ? '最近命令 · ' : '') + info.value.title : '')
 </script>
 <template>
-  <span v-if="info" class="workspace-badge" :class="{ 'is-linked': info.linked }" role="status" :aria-label="info.title" :title="info.title">
+  <span v-if="info" class="workspace-badge" :class="{ 'is-linked': info.linked }" role="status" :aria-label="title" :title="title">
     <PhGitFork v-if="info.linked" :size="15" aria-hidden="true" /><PhGitBranch v-else :size="15" aria-hidden="true" />
     <span class="workspace-badge-text">{{ info.text }}</span>
   </span>

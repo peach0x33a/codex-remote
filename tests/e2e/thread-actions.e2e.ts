@@ -45,6 +45,64 @@ test.beforeEach(async ({ page, request }) => {
   await expect(page.locator('.message-list')).toContainText('这是保存在远端的会话。')
 })
 
+test('renames directly when the slash command includes a name', async ({ page, request }) => {
+  await editor(page).fill('/rename 解包BFV资源')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.conversation-title')).toHaveText('解包BFV资源')
+  await expect(editor(page)).toBeEmpty()
+  await expect(page.getByRole('dialog', { name: '重命名对话', exact: true })).toHaveCount(0)
+  const calls = (await metrics(request)).requests
+  expect(calls.filter(call => call.method === 'thread/name/set').map(call => call.params)).toEqual([{ threadId: 'existing-thread', name: '解包BFV资源' }])
+  expect(generationCalls(calls)).toHaveLength(0)
+  await showSidebar(page)
+  await expect(page.locator('.sidebar').getByRole('button', { name: '解包BFV资源', exact: true })).toBeVisible()
+})
+
+test('opens a themed name field only when the rename command has no name', async ({ page, request }, testInfo) => {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await editor(page).fill('/rename')
+  await page.keyboard.press('Enter')
+  const dialog = page.getByRole('dialog', { name: '重命名对话', exact: true })
+  const name = dialog.getByRole('textbox', { name: '对话名称', exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(name).toHaveValue('已有项目分析')
+  await expect(name).toBeFocused()
+  await name.fill('解包BFV资源')
+  await dialog.screenshot({ path: testInfo.outputPath('rename-dialog-dark.png') })
+  await dialog.getByRole('button', { name: '保存名称', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.locator('.conversation-title')).toHaveText('解包BFV资源')
+  expect(generationCalls((await metrics(request)).requests)).toHaveLength(0)
+})
+
+test('keeps the rename command available to retry when saving fails', async ({ page, request }) => {
+  let rejectNextRename = true
+  await page.routeWebSocket(/\/api\/socket(?:\?|$)/, socket => {
+    const upstream = socket.connectToServer()
+    socket.onMessage(raw => {
+      const message = JSON.parse(String(raw))
+      if (message.method === 'thread/name/set' && rejectNextRename) {
+        rejectNextRename = false
+        socket.send(JSON.stringify({ id: message.id, error: { code: -32603, message: '名称保存失败，请重试。' } }))
+      } else upstream.send(raw)
+    })
+    upstream.onMessage(raw => socket.send(raw))
+  })
+  await page.reload()
+  await expect(page.getByTestId('selected-device')).toContainText('已连接')
+  await expect(page.locator('.conversation-title')).toHaveText('已有项目分析')
+  await editor(page).fill('/rename 解包BFV资源')
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('名称保存失败，请重试。', { exact: true })).toBeVisible()
+  await expect(editor(page)).toHaveText('/rename 解包BFV资源')
+  await expect(page.locator('.conversation-title')).toHaveText('已有项目分析')
+  await expect(page.getByRole('dialog', { name: '重命名对话', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect(page.locator('.conversation-title')).toHaveText('解包BFV资源')
+  await expect(editor(page)).toBeEmpty()
+  expect(generationCalls((await metrics(request)).requests)).toHaveLength(0)
+})
+
 test('copies Session ID only from context capacity and follows conversation switches', async ({ page, request }) => {
   await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as any).__copiedSession = text } }, configurable: true }) })
   await (await actions(page)).getByRole('menuitem', { name: '复制', exact: true }).click()

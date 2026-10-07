@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { createRenderer, nextTick, ref, type App } from 'vue'
 import { useGitContext } from '../../src/composables/useGitContext'
 import type { GitRun } from '../../src/lib/git-context'
+import type { Thread } from '../../shared/protocol'
 
 type Host = { children: Host[]; parent?: Host }
 const renderer = createRenderer<Host, Host>({
@@ -15,8 +16,11 @@ const apps = new Set<App<Host>>()
 afterEach(() => { for (const app of apps) app.unmount(); apps.clear() })
 
 type Call = { cwd: string; signal?: AbortSignal; resolve: (branch: string | null) => void }
+function workspaceThread(id: string, commandCwd?: string): Thread {
+  return { id, cwd: '/work/a', preview: '', createdAt: 0, updatedAt: 0, turns: [{ id: 'turn-' + id, status: 'inProgress', items: commandCwd ? [{ id: 'command', type: 'commandExecution', cwd: commandCwd, status: 'inProgress' }] : [] }] }
+}
 function setup(initial = { cwd: '/work/a', connected: true }) {
-  const cwd = ref(initial.cwd), deviceId = ref('one'), connected = ref(initial.connected), busy = ref(false)
+  const cwd = ref(initial.cwd), thread = ref<Thread | null>(null), deviceId = ref('one'), connected = ref(initial.connected), busy = ref(false)
   const calls: Call[] = []
   const run: GitRun = (params, options) => new Promise(resolve => {
     const args = (params.command as string[])
@@ -26,10 +30,10 @@ function setup(initial = { cwd: '/work/a', connected: true }) {
     calls.push(call)
   })
   let result!: ReturnType<typeof useGitContext>
-  const app = renderer.createApp({ setup() { result = useGitContext({ cwd, deviceId, connected, busy, run }); return () => null } })
+  const app = renderer.createApp({ setup() { result = useGitContext({ cwd, thread, deviceId, connected, busy, run }); return () => null } })
   apps.add(app); app.mount({ children: [] })
   const settle = async (branch: string | null, from = 0) => { for (const call of calls.splice(from)) call.resolve(branch); await new Promise(r => setTimeout(r, 0)); await nextTick() }
-  return { ...result, cwd, deviceId, connected, busy, calls, settle }
+  return { ...result, cwd, thread, deviceId, connected, busy, calls, settle }
 }
 
 describe('useGitContext', () => {
@@ -91,5 +95,57 @@ describe('useGitContext', () => {
     for (const app of apps) app.unmount()
     apps.clear()
     expect(pending.every(call => call.signal?.aborted)).toBe(true)
+  })
+
+  test('follows the live command worktree while the turn is still running', async () => {
+    const view = setup()
+    await view.settle('main')
+    view.busy.value = true
+    view.thread.value = workspaceThread('ready', 'file:///work/ready/sdk')
+    expect(view.context.value).toBeNull()
+    expect(view.calls.every(call => call.cwd === '/work/ready/sdk')).toBe(true)
+    await view.settle('research/ready')
+    expect(view.context.value?.branch).toBe('research/ready')
+    expect(view.commandCwd.value).toBe('/work/ready/sdk')
+    expect(view.cwd.value).toBe('/work/a')
+    expect(view.busy.value).toBe(true)
+  })
+
+  test('refreshes a completed command even when its directory and the running turn are unchanged', async () => {
+    const view = setup()
+    view.thread.value = workspaceThread('switch', '/work/a')
+    view.busy.value = true
+    await view.settle('before')
+    view.thread.value.turns[0]!.items[0]!.status = 'completed'
+    expect(view.calls.length).toBeGreaterThan(0)
+    await view.settle('after')
+    expect(view.context.value?.branch).toBe('after')
+    expect(view.busy.value).toBe(true)
+  })
+
+  test('clears and re-reads when switching conversations with the same directory', async () => {
+    const view = setup()
+    view.thread.value = workspaceThread('one')
+    await view.settle('before')
+    view.thread.value = workspaceThread('two')
+    expect(view.context.value).toBeNull()
+    expect(view.calls.length).toBeGreaterThan(0)
+    await view.settle('after')
+    expect(view.context.value?.branch).toBe('after')
+  })
+
+  test('ignores a late worktree result after returning to another conversation', async () => {
+    const view = setup()
+    await view.settle('main')
+    view.thread.value = workspaceThread('ready', '/work/ready/sdk')
+    const pending = view.calls.splice(0)
+    view.thread.value = workspaceThread('audit')
+    expect(pending.every(call => call.signal?.aborted)).toBe(true)
+    await view.settle('audit')
+    for (const call of pending) call.resolve('research/ready')
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(view.context.value?.branch).toBe('audit')
+    expect(view.commandCwd.value).toBe('')
   })
 })

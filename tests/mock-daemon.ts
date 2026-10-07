@@ -186,6 +186,10 @@ const server = Bun.serve<Peer>({
       }
       return Response.json({ ok: true })
     }
+    if (path === '/test/scenario' && new URL(request.url).searchParams.get('name') === 'worktree-activity') {
+      threads.get('second-thread')!.cwd = '/test/project'
+      threads.get('existing-thread')!.turns[0]!.items.push({ id: 'saved-worktree-command', type: 'commandExecution', command: 'git status --short', cwd: 'file:///test/worktrees/ready/sdk/udp', status: 'completed' })
+    }
     if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'file-links') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '[说明文档](/test/files/README.md) · [AppImage](/test/files/build.AppImage) · [目录](/test/files) · [源代码](src/main.ts:2) · [图片](file:///test/files/pixel.gif) · [网站](https://example.com) · [慢文件](/test/files/slow.md) · [不存在](/test/files/missing.md)' }; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario === 'task-time-range') {
       threads.get('existing-thread')!.updatedAt = new Date(2026, 8, 29, 18).getTime() / 1000
       threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000
@@ -269,6 +273,14 @@ const server = Bun.serve<Peer>({
           else respond(reply)
         } else respond({ exitCode: 128, stdout: '', stderr: 'not a Git repository' })
         return
+      }
+      if (method === 'command/exec' && scenario === 'worktree-activity') {
+        const command = Array.isArray(p.command) ? p.command as string[] : []
+        const linked = String(p.cwd).startsWith('/test/worktrees/ready/')
+        const root = linked ? '/test/worktrees/ready/sdk' : '/test/project'
+        if (command.includes('symbolic-ref')) { respond({ exitCode: 0, stdout: 'refs/heads/' + (linked ? 'research/bfv-ready-packet-20261007' : 'main') + '\n', stderr: '' }); return }
+        if (command.includes('rev-parse')) { respond({ exitCode: 0, stdout: ['true', linked ? '/repo/.git/worktrees/ready-sdk' : '.git', linked ? '/repo/.git' : '.git', root, ''].join('\n'), stderr: '' }); return }
+        respond({ exitCode: 1, stdout: '', stderr: 'unsupported' }); return
       }
       if (method === 'command/exec' && (scenario === 'worktree' || scenario === 'branch')) {
         const command = Array.isArray(p.command) ? p.command as string[] : []
@@ -474,6 +486,11 @@ const server = Bun.serve<Peer>({
         const turn: Turn = { id: crypto.randomUUID(), status: 'inProgress', items: [user] }
         thread.preview ||= text; thread.turns.push(turn); thread.status = { type: 'active' }
         emit(thread.id, 'turn/started', { turn }); emit(thread.id, 'item/completed', { turnId: turn.id, item: user }); respond({ turn })
+        if (scenario === 'worktree-activity') {
+          const command: Item = { id: 'live-worktree-command', type: 'commandExecution', command: 'git status --short', cwd: 'file:///test/worktrees/ready/sdk/udp', status: 'inProgress' }
+          turn.items.push(command); emit(thread.id, 'item/started', { turnId: turn.id, item: command })
+          return
+        }
         emit(thread.id, 'thread/tokenUsage/updated', { turnId: turn.id, tokenUsage: { total: { totalTokens: 45000, inputTokens: 42000, cachedInputTokens: 21000, cacheWriteInputTokens: 100, outputTokens: 3000, reasoningOutputTokens: 1000 }, last: { totalTokens: 19100, inputTokens: 19000, cachedInputTokens: 13330, cacheWriteInputTokens: 100, outputTokens: 100, reasoningOutputTokens: 40 }, modelContextWindow: 1000000 } })
         if (scenario.startsWith('async-question')) {
           if (text.startsWith('<send_user_message_question_reply>')) { finish(thread, turn, '回答已收到。'); return }

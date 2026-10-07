@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describeGitContext, readGitContext, type GitRun } from '../../src/lib/git-context'
+import { describeGitContext, latestGitCommand, normalizeGitCwd, readGitContext, type GitRun } from '../../src/lib/git-context'
+import type { Thread } from '../../shared/protocol'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
@@ -105,5 +106,31 @@ describe('git context', () => {
     expect(describeGitContext({ root: '/w', branch: 'feat', head: null, linked: true }).title).toBe('工作树 · /w · 分支 feat')
     expect(describeGitContext({ root: '/w', branch: null, head: 'abc1234', linked: true }).text).toBe('已分离 abc1234')
     expect(describeGitContext({ root: '/w', branch: null, head: null, linked: false }).text).toBe('无提交')
+  })
+
+  test('normalizes local command directory URLs without accepting remote or malformed paths', () => {
+    expect(normalizeGitCwd('/work/ready/sdk')).toBe('/work/ready/sdk')
+    expect(normalizeGitCwd('file:///work/ready%20packet/sdk')).toBe('/work/ready packet/sdk')
+    expect(normalizeGitCwd('file://localhost/work/ready/sdk')).toBe('/work/ready/sdk')
+    for (const path of [undefined, '', 'relative', 'file://other-host/work/sdk', 'file:///work/%ZZ', 'file:///work/%00sdk', 'file:///work/sdk?query', '/work/\nsdk', 'https://example.com/sdk']) {
+      expect(normalizeGitCwd(path)).toBeNull()
+    }
+  })
+
+  test('uses the newest command directory across turns, ignoring message paths and invalid directories', () => {
+    const thread: Thread = { id: 'ready', cwd: '/work/project', preview: '', createdAt: 0, updatedAt: 0, turns: [
+      { id: 'older', status: 'completed', items: [{ id: 'old-command', type: 'commandExecution', cwd: '/work/project' }] },
+      { id: 'latest', status: 'inProgress', items: [
+        { id: 'command', type: 'commandExecution', cwd: 'file:///work/ready/sdk', status: 'completed' },
+        { id: 'reply', type: 'agentMessage', text: 'A path /work/unrelated is only text', cwd: '/work/unrelated' },
+        { id: 'invalid', type: 'commandExecution', cwd: 'relative/path' },
+      ] },
+    ] }
+    expect(latestGitCommand(thread)).toEqual({ cwd: '/work/ready/sdk', revision: 'latest\0command\0completed' })
+    expect(thread.cwd).toBe('/work/project')
+    thread.turns.unshift({ id: 'earlier-page', status: 'completed', items: [{ id: 'early-command', type: 'commandExecution', cwd: '/work/old' }] })
+    expect(latestGitCommand(thread)?.cwd).toBe('/work/ready/sdk')
+    expect(latestGitCommand(null)).toBeNull()
+    expect(latestGitCommand({ ...thread, turns: [] })).toBeNull()
   })
 })

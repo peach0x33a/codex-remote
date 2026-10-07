@@ -1,9 +1,36 @@
 import { git, remoteEnv } from './worktree-changes'
+import type { Thread } from '../../shared/protocol'
 
 export type GitContext = { root: string; branch: string | null; head: string | null; linked: boolean }
 export type GitRun = (params: Record<string, unknown>, options?: { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown>
 
 const CAP = 4096
+
+export function normalizeGitCwd(value: string | undefined): string | null {
+  if (!value) return null
+  if (value.startsWith('file:')) {
+    try {
+      const url = new URL(value)
+      if (url.protocol !== 'file:' || url.hostname && url.hostname !== 'localhost' || url.search || url.hash) return null
+      value = decodeURIComponent(url.pathname)
+    } catch { return null }
+  }
+  return value.startsWith('/') && !/[\x00-\x1f\x7f]/.test(value) ? value : null
+}
+
+export function latestGitCommand(thread: Thread | null) {
+  if (!thread) return null
+  for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex--) {
+    const turn = thread.turns[turnIndex]!
+    for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex--) {
+      const item = turn.items[itemIndex]!
+      if (item.type !== 'commandExecution') continue
+      const cwd = normalizeGitCwd(item.cwd)
+      if (cwd) return { cwd, revision: [turn.id, item.id, item.status || ''].join('\0') }
+    }
+  }
+  return null
+}
 
 function resolve(cwd: string, path: string): string {
   const parts: string[] = []
