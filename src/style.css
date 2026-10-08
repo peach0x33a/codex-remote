@@ -367,9 +367,10 @@
   .markdown .markdown-code-block { margin: var(--space-4) 0; min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--sidebar); }
   .markdown .markdown-code-block:first-child { margin-top: 0; }
   .markdown .markdown-code-block:last-child { margin-bottom: 0; }
-  .markdown-code-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4); color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; }
+  .markdown-code-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 0 var(--space-2) 0 var(--space-4); color: var(--muted); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; }
   .markdown-code-language { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .markdown-code-copy { flex-shrink: 0; min-width: 44px; min-height: 44px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); color: var(--muted); }
+  .markdown-code-copy { flex-shrink: 0; min-width: 44px; min-height: 32px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); color: var(--muted); }
+  @media (pointer: coarse) { .markdown-code-copy { min-height: 44px; } }
   .markdown-code-copy:hover { background: var(--hover); color: var(--ink); }
   .markdown-code-copy:active { background: var(--active); }
   .markdown-code-copy:focus-visible { outline-offset: -2px; }

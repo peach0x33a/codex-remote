@@ -4,11 +4,13 @@ import { randomId } from '../lib/random-id'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
 import { PhArchive, PhAt, PhBrain, PhChatCircle, PhCopy, PhCpu, PhCube, PhFile, PhFolder, PhGearSix, PhGitDiff, PhLightning, PhMagnifyingGlass, PhPencilSimple, PhPlus, PhQuestion, PhRobot, PhShieldCheck, PhTarget, PhTerminal } from '@phosphor-icons/vue'
 import ImagePreview from './ImagePreview.vue'
+import AudioContent from './AudioContent.vue'
+import BaseDialog from './BaseDialog.vue'
 import { captureComposerTrigger, composerSuggestionInsertion, type CapturedComposerToken, type ComposerTrigger } from '../lib/composer-trigger'
 import { isLongPaste, pastedTextLabel, type PromptPart } from '../lib/prompt'
 import { formatFileSize, type AttachmentPart, type FileAttachment } from '../lib/file-attachments'
 import { atEditorBoundary, createInputHistory } from '../lib/input-history'
-type ImagePart = Extract<PromptPart, { type: 'image' }>
+type ImagePart = Extract<PromptPart, { type: 'image' | 'audio' }>
 type SkillPart = Extract<PromptPart, { type: 'skill' }>
 type MentionPart = Extract<PromptPart, { type: 'mention' }>
 type TextPart = Extract<PromptPart, { type: 'text' }>
@@ -30,7 +32,7 @@ const attachments = new Map<string, FileAttachment>()
 const skills = new Map<string, SkillPart | MentionPart>()
 const pastedTexts = new Map<string, TextPart>()
 const preview = ref<{ image: ImagePart; anchor: DOMRect; pinned: boolean }>()
-const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? JSON.stringify(['text', p.text, p.pasteId]) : p.type === 'image' ? 'i:' + p.id : p.type === 'file' ? JSON.stringify([p.type, p.id, p.path, p.name, p.size, p.deviceId]) : JSON.stringify([p.type, p.id, p.name, p.path])).join('\0')
+const fingerprint = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? JSON.stringify(['text', p.text, p.pasteId]) : (p.type === 'image' || p.type === 'audio') ? 'i:' + p.id : p.type === 'file' ? JSON.stringify([p.type, p.id, p.path, p.name, p.size, p.deviceId]) : JSON.stringify([p.type, p.id, p.name, p.path])).join('\0')
 const trigger = shallowRef<CapturedComposerToken | null>(null)
 const menu = ref<HTMLDivElement>(), highlighted = ref(0), composing = ref(false)
 const menuId = fallbackId + '-suggestions'
@@ -187,12 +189,12 @@ function makeSkillChip(skill: SkillPart | MentionPart | FileAttachment) {
   chip.append(remove); return chip
 }
 function makeChip(image: ImagePart) {
-  const chip = document.createElement('span'); chip.className = 'inline-image editor-image-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = image.id; chip.tabIndex = 0; chip.setAttribute('role', 'button'); chip.setAttribute('aria-label', '预览图片 ' + image.name)
+  const chip = document.createElement('span'); chip.className = 'inline-image editor-image-chip'; chip.contentEditable = 'false'; chip.dataset.attachmentId = image.id; chip.tabIndex = 0; chip.setAttribute('role', 'button'); chip.setAttribute('aria-label', (image.type === 'audio' ? '播放音频 ' : '预览图片 ') + image.name)
   let thumb: HTMLElement | SVGElement
-  if (image.url) { const picture = document.createElement('img'); picture.src = image.url; picture.alt = ''; picture.draggable = false; thumb = picture }
+  if (image.type === 'image' && image.url) { const picture = document.createElement('img'); picture.src = image.url; picture.alt = ''; picture.draggable = false; thumb = picture }
   else { const placeholder = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); placeholder.setAttribute('viewBox', '0 0 24 24'); placeholder.setAttribute('width', '24'); placeholder.setAttribute('height', '24'); placeholder.setAttribute('aria-hidden', 'true'); const outline = document.createElementNS('http://www.w3.org/2000/svg', 'path'); outline.setAttribute('d', 'M4 4h16v16H4z M4 17l6-6 4 4 3-3 3 3'); outline.setAttribute('fill', 'none'); outline.setAttribute('stroke', 'currentColor'); outline.setAttribute('stroke-width', '1.5'); placeholder.append(outline); thumb = placeholder; chip.title = '远端图片附件，将原样保留' }
   const label = document.createElement('span'); label.textContent = image.name
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'image-chip-remove'; remove.dataset.imageRemove = image.id; remove.tabIndex = -1; remove.setAttribute('aria-label', '移除图片 ' + image.name)
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'image-chip-remove'; remove.dataset.imageRemove = image.id; remove.tabIndex = -1; remove.setAttribute('aria-label', (image.type === 'audio' ? '移除音频 ' : '移除图片 ') + image.name)
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('aria-hidden', 'true')
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M6 6l12 12M18 6L6 18'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-linecap', 'round'); svg.append(path); remove.append(svg)
   chip.append(thumb, label, remove); return chip
@@ -255,8 +257,8 @@ function render(parts: PromptPart[]) {
       else editor.value.append(document.createTextNode(part.text))
     }
     else {
-      if (part.type === 'image') images.set(part.id, part); else if (part.type === 'file') attachments.set(part.id, part); else skills.set(part.id, part)
-      const chip = part.type === 'image' ? makeChip(part) : makeSkillChip(part); editor.value.append(chip); ensureImageCarets(chip)
+      if (part.type === 'image' || part.type === 'audio') images.set(part.id, part); else if (part.type === 'file') attachments.set(part.id, part); else skills.set(part.id, part)
+      const chip = (part.type === 'image' || part.type === 'audio') ? makeChip(part) : makeSkillChip(part); editor.value.append(chip); ensureImageCarets(chip)
     }
   }
   lastFingerprint = fingerprint(parts)
@@ -289,9 +291,9 @@ function insertLineBreak() {
   publish()
 }
 function insertImage(image: ImagePart, insertion?: Range) { if (insertion && editor.value?.contains(insertion.commonAncestorContainer)) savedRange = insertion.cloneRange(); images.set(image.id, image); insertNode(makeChip(image)) }
-function insertAttachment(part: AttachmentPart, insertion?: Range) {
+function insertAttachment(part: AttachmentPart | Extract<PromptPart, { type: 'audio' }>, insertion?: Range) {
   if (props.disabled) return
-  if (part.type === 'image') { insertImage(part, insertion); return }
+  if (part.type === 'image' || part.type === 'audio') { insertImage(part, insertion); return }
   if (insertion && editor.value?.contains(insertion.commonAncestorContainer)) savedRange = insertion.cloneRange()
   attachments.set(part.id, part); insertNode(makeSkillChip(part))
 }
@@ -364,7 +366,7 @@ function drop(event: DragEvent) {
   else insertPaste(event.dataTransfer?.getData('text/plain') || '')
 }
 function chipAt(event: Event) { return (event.target as HTMLElement).closest<HTMLElement>('[data-attachment-id]') }
-function showImage(chip: HTMLElement, pinned: boolean) { const image = images.get(chip.dataset.attachmentId!); if (image?.url) preview.value = { image, anchor: chip.getBoundingClientRect(), pinned } }
+function showImage(chip: HTMLElement, pinned: boolean) { const image = images.get(chip.dataset.attachmentId!); if (image && (image.type === 'image' ? !!image.url : pinned && !!(image.url || image.source?.path))) preview.value = { image, anchor: chip.getBoundingClientRect(), pinned } }
 function openChip(chip: HTMLElement) {
   const part = pastedTexts.get(chip.dataset.attachmentId!)
   if (!part || props.disabled) { showImage(chip, true); return }
@@ -472,7 +474,8 @@ defineExpose({ focus, captureSelection, reserveInsertion, insertImage, insertAtt
       <p v-if="!suggestionsLoading && !suggestionsError && !selectable.length" class="prompt-suggestion-status" role="status">没有匹配结果</p>
     </div>
   </Teleport>
-  <ImagePreview :open="!!preview" :src="preview?.image.url || ''" :name="preview?.image.name || ''" :anchor="preview?.anchor" :pinned="preview?.pinned" @close="preview = undefined; focus()" />
+  <ImagePreview :open="!!preview && preview.image.type === 'image'" :src="preview?.image.url || ''" :name="preview?.image.name || ''" :anchor="preview?.anchor" :pinned="preview?.pinned" @close="preview = undefined; focus()" />
+  <BaseDialog :open="!!preview && preview.image.type === 'audio'" :title="preview?.image.name || '音频'" @close="preview = undefined; focus()"><AudioContent v-if="preview?.image.type === 'audio'" :src="preview.image.url || preview.image.source?.path || ''" :name="preview.image.name" /></BaseDialog>
 </template>
 <style scoped>
 .prompt-suggestions { position: fixed; z-index: 70; transform: translateY(-100%); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border-radius: var(--radius-lg); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-pop); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }

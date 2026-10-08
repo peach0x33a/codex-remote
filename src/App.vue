@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useHistoryScroll } from './composables/useHistoryScroll'
 import { PhArchive, PhArrowDown, PhArrowRight, PhArrowUp, PhArrowsClockwise, PhCheckCircle, PhChatCircle, PhCode, PhDesktop, PhDownloadSimple, PhImage, PhFolderOpen, PhList, PhMagnifyingGlass, PhNotePencil, PhPlus, PhPlusCircle, PhSidebarSimple, PhListNumbers, PhQuestion, PhSignOut, PhSparkle, PhSquare, PhSquaresFour, PhTerminal, PhWarningCircle, PhWifiSlash, PhX } from '@phosphor-icons/vue'
 import BaseDialog from './components/BaseDialog.vue'
@@ -9,6 +9,8 @@ import MessageItem from './components/MessageItem.vue'
 import WorkspaceFilePanel from './components/WorkspaceFilePanel.vue'
 import type { FileLinkTarget } from './lib/file-links'
 import type { WorkspaceRun } from './lib/workspace-files'
+import { resolveImageFileId } from './lib/tool-content'
+import { markdownImageContext } from './lib/markdown-images'
 import ToolActivityGroup from './components/ToolActivityGroup.vue'
 import ThreadInspector from './components/ThreadInspector.vue'
 import SubAgentBadge from './components/SubAgentBadge.vue'
@@ -164,6 +166,7 @@ const workspaceFileRun = computed<WorkspaceRun>(() => {
     return result
   }
 })
+provide(markdownImageContext, computed(() => ({ cwd: active.value?.cwd || workingDirectory.value || '', connected: connected.value, run: workspaceFileRun.value, resolveFileId: (id: string) => resolveImageFileId(items.value, id) })))
 watch([selectedId, () => active.value?.id, () => active.value?.cwd || workingDirectory.value], () => { workspaceFileTarget.value = null }, { flush: 'sync' })
 watch(workspaceFileTarget, target => { if (target) changesOpen.value = false })
 const retryingFailure = ref(false)

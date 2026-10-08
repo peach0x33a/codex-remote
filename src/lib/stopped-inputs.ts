@@ -46,6 +46,8 @@ export function stoppedResponseItem(input: StoppedInput) {
     if (part.type === 'text') content.push({ type: 'input_text', text: part.text || '' })
     else if (part.type === 'image') content.push({ type: 'input_image', ...(part.fileId ? { file_id: part.fileId } : { image_url: part.url }), detail: 'auto' })
     else if (part.type === 'localImage') content.push({ type: 'input_text', text: '[Image file: ' + JSON.stringify(part.path) + ']' })
+    else if (part.type === 'audio') content.push({ type: 'input_audio', audio_url: part.url })
+    else if (part.type === 'localAudio') content.push({ type: 'input_text', text: '[Audio file: ' + JSON.stringify(part.path) + ']' })
     else if (part.type === 'skill' || part.type === 'mention') content.push({ type: 'input_text', text: '[' + part.type + ': ' + JSON.stringify({ name: part.name, path: part.path }) + ']' })
     else throw new Error('这条插话包含暂不支持保存的内容。')
   }

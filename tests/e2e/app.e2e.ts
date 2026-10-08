@@ -70,15 +70,15 @@ test('interrupts a turn and retains its frozen work time through later messages 
   await expect(footer).toHaveText('已停止 · 工作了 2 分 18 秒')
 })
 
-test('sanitizes assistant Markdown and never loads remote images', async ({ page }) => {
-  const remote: string[] = []
-  page.on('request', request => { if (request.url().includes('tracker.example')) remote.push(request.url()) })
+test('sanitizes assistant Markdown while displaying safe remote images', async ({ page }) => {
+  await page.route('https://tracker.example/**', route => route.fulfill({ contentType: 'image/gif', body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64') }))
   await configure(page)
   await send(page, '安全测试')
-  await expect(page.locator('.image-label')).toBeVisible()
+  const image = page.getByRole('img', { name: '远程图片', exact: true })
+  await expect(image).toBeVisible()
+  await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0)
   expect(await page.evaluate(() => (window as Window & { __xss?: boolean }).__xss)).toBeUndefined()
-  await expect(page.locator('.markdown script, .markdown img, .markdown a[href^="javascript:"]')).toHaveCount(0)
-  expect(remote).toEqual([])
+  await expect(page.locator('.markdown script, .markdown a[href^="javascript:"]')).toHaveCount(0)
 })
 
 test('copies individual streamed code blocks exactly and supports HTTP fallback without a popup', async ({ page, request }, info) => {
@@ -113,7 +113,10 @@ test('copies individual streamed code blocks exactly and supports HTTP fallback 
   const button = first.getByRole('button', { name: '复制代码', exact: true })
   await button.scrollIntoViewIfNeeded()
   const before = await button.boundingBox()
-  expect(before!.height).toBeGreaterThanOrEqual(44)
+  const touch = await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
+  expect(before!.height).toBeGreaterThanOrEqual(touch ? 44 : 32)
+  const header = await first.locator('.markdown-code-header').boundingBox()
+  expect(header!.height).toBeLessThanOrEqual(touch ? 44 : 32)
   expect(before!.x + before!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
   await first.locator('pre').evaluate(pre => { pre.scrollLeft = pre.scrollWidth })
   expect((await button.boundingBox())!.x).toBe(before!.x)

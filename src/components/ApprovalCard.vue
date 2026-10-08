@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { PhArrowRight, PhShieldCheck } from '@phosphor-icons/vue'
 import { approvalTitle, type ApprovalDraft } from '../lib/approvals'
 import type { Approval } from '../../shared/protocol'
+import ElicitationForm from './ElicitationForm.vue'
 const props = defineProps<{ approval: Approval; disabled: boolean; compact?: boolean; draft?: ApprovalDraft }>()
 const emit = defineEmits<{ respond: [result: unknown] }>()
 const ownDraft = ref<ApprovalDraft>({ answers: {}, other: {} })
@@ -26,7 +27,8 @@ function submit() {
     <p v-if="approval.params.reason">{{ approval.params.reason }}</p>
     <p v-if="approval.params.cwd" class="activity-path">{{ approval.params.cwd }}</p>
     <pre v-if="approval.params.command"><code>{{ approval.params.command }}</code></pre>
-    <form v-if="isQuestion" @submit.prevent="submit">
+    <ElicitationForm v-if="approval.method === 'mcpServer/elicitation/request'" :approval="approval" :draft="draft" :disabled="disabled" @respond="emit('respond', $event)" />
+    <form v-else-if="isQuestion" @submit.prevent="submit">
       <div class="question-fields">
       <fieldset v-for="q in approval.params.questions" :key="q.id" :disabled="disabled"><legend>{{ q.question }}</legend>
         <template v-if="q.options?.length"><label v-for="option in q.options" :key="option.label" class="answer-option"><input v-model="answers[q.id]" type="radio" :name="String(approval.id) + q.id" :value="option.label" /><span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span></label><label v-if="q.isOther" class="answer-option"><input v-model="answers[q.id]" type="radio" :name="String(approval.id) + q.id" value="__other" />其他回答</label><input v-if="answers[q.id] === '__other'" v-model="other[q.id]" :aria-label="q.header + '，其他回答'" :type="q.isSecret ? 'password' : 'text'" placeholder="输入你的回答" autocomplete="off" /></template>

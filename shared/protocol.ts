@@ -20,6 +20,7 @@ export type Item = {
   tool?: string; server?: string; query?: string; result?: unknown; error?: unknown;
   delivery?: 'async' | null; questions?: AsyncUserInputQuestion[] | null;
   name?: string; namespace?: string | null; output?: unknown;
+  contentItems?: unknown[] | null; savedPath?: string; revisedPrompt?: string | null;
 }
 // Turn timestamps are Unix seconds; item timestamps use milliseconds.
 export type Turn = { id: string; status: string; items: Item[]; startedAt?: number | null; completedAt?: number | null; durationMs?: number | null; error?: { message: string; codexErrorInfo?: unknown; additionalDetails?: string | null } | null }

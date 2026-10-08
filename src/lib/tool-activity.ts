@@ -128,7 +128,7 @@ export function toolActivityTitle(item: Item): string {
   if (collab) return collab.title
   if (item.type === 'mcpToolCall') return [item.server, item.tool].filter(hasText).join(' · ') || '调用工具'
   if (item.type === 'dynamicToolCall') return [(item as Item & ActivityFields).namespace, item.tool].filter(hasText).join(' · ') || '调用工具'
-  return ({ fileChange: '文件变更', webSearch: '搜索网页', imageView: '查看图片' } as Record<string, string>)[item.type] || item.type
+  return ({ fileChange: '文件变更', webSearch: '搜索网页', imageView: '查看图片', imageGeneration: '生成图片', functionCallOutput: item.name ? '工具结果 · ' + item.name : '工具结果' } as Record<string, string>)[item.type] || item.type
 }
 
 export function summarizeToolActivity(items: Item[]) {

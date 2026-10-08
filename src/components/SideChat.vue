@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { PhArrowUp, PhListNumbers, PhSquare, PhX } from '@phosphor-icons/vue'
 import { useCodex } from '../composables/useCodex'
 import MessageItem from './MessageItem.vue'
@@ -8,6 +8,8 @@ import WorkspaceFilePanel from './WorkspaceFilePanel.vue'
 import SubAgentBadge from './SubAgentBadge.vue'
 import { subAgentIdentity } from '../lib/thread-insights'
 import type { FileLinkTarget } from '../lib/file-links'
+import { resolveImageFileId } from '../lib/tool-content'
+import { markdownImageContext } from '../lib/markdown-images'
 import ApprovalIsland from './ApprovalIsland.vue'
 import PromptEditor from './PromptEditor.vue'
 import QueuePane from './QueuePane.vue'
@@ -20,6 +22,7 @@ import type { TaskNotice } from '../lib/task-notifications'
 const props = defineProps<{ threadId: string; profile: ConnectionProfile; token: string }>()
 const emit = defineEmits<{ close: []; notice: [event: TaskNotice]; copy: [text: string]; busy: [boolean] }>()
 const codex = useCodex({ autoConnect: false, persistConnection: false })
+provide(markdownImageContext, computed(() => ({ cwd: codex.active.value?.cwd || props.profile.cwd, connected: codex.connected.value, run: codex.runWorkspaceCommand, resolveFileId: (id: string) => resolveImageFileId(codex.items.value, id) })))
 const agentIdentity = computed(() => subAgentIdentity(codex.active.value))
 const fileTarget = ref<FileLinkTarget | null>(null)
 const draft = ref<PromptPart[]>([]), ready = ref(false), inheritedIds = new Set<string>(), inheritedTurnIds = new Set<string>()

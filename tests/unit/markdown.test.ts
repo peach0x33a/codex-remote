@@ -79,11 +79,22 @@ describe('CJK Markdown emphasis compatibility', () => {
     expect(markdown.render(tick + '**验证：**最新' + tick)).toContain('<code>**验证：**最新</code>')
     expect(markdown.render(tick.repeat(3) + 'text\n**验证：**最新\n' + tick.repeat(3))).toContain('**验证：**最新\n</code>')
   })
-  test('does not change URL destinations or enable unsafe HTML/images', () => {
+  test('does not change URL destinations or enable unsafe HTML', () => {
     const href = 'https://example.com/path/**验证：**最新'
     expect(markdown.parseInline('[链接](' + href + ')', {})[0].children?.find(t => t.type === 'link_open')?.attrGet('href')).toContain('**')
     expect(markdown.render('<script>alert(1)</script> **验证：**通过')).not.toContain('<script>')
     expect(markdown.render('![远程图片](https://tracker.example/pixel)')).not.toContain('<img')
     expect(markdown.render('[危险](javascript:alert(1))')).not.toContain('href="javascript:')
   })
+})
+
+test('preserves local and remote image sources as escaped inert placeholders', () => {
+  for (const src of ['/tmp/bf1-server-search-preview.png', './preview.png', 'https://example.com/preview.png', 'file:///tmp/preview.png']) {
+    const html = markdown.render('![渲染预览](' + src + ')')
+    expect(html).toContain('data-markdown-image="' + src + '"')
+    expect(html).toContain('data-image-name="渲染预览"')
+    expect(html).not.toContain('<img')
+  }
+  expect(markdown.render('![危险](javascript:alert(1))')).not.toContain('data-markdown-image')
+  expect(markdown.render('![&quot; onerror=alert(1)](/tmp/a.png)')).toContain('data-image-name="&amp;quot; onerror=alert(1)"')
 })

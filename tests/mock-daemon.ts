@@ -1,3 +1,4 @@
+import { richPdf, richWav, richSvg, richMarkdown } from './rich-fixture'
 // Test-only protocol fixture. Never imported by the application or production server.
 import type { ServerWebSocket } from 'bun'
 import type { Item, MessageContent, RpcMessage, Thread, Turn } from '../shared/protocol'
@@ -33,12 +34,17 @@ let pending = new Map<number, { thread: Thread; turn: Turn; kind: string }>()
 const timers = new Map<string, ReturnType<typeof setInterval>>()
 let requestId = 10000
 const fileFixtureBytes = (path: string) => {
+  if (path === '/test/files/result.pdf') return new Uint8Array(Buffer.from(richPdf, 'base64'))
+  if (path === '/test/files/voice.wav') return new Uint8Array(Buffer.from(richWav, 'base64'))
+  if (path === '/test/files/result.svg') return new TextEncoder().encode(richSvg)
   if (uploadedFiles.has(path)) return new Uint8Array(readFileSync(path))
   if (createdEntries.get(path) === 'file') return new Uint8Array()
   if (path === '/test/files/build.AppImage') return Uint8Array.from({ length: 600123 }, (_, i) => i % 256)
+  if (path === '/tmp/bf1-server-search-preview.png') return new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAoAAAAFACAIAAACjr1pdAAAE+ElEQVR4nO3VQQ0AIBDAsLOFH/xLILhgD5pUwH6btQ8A8NjkBQDwIQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAEDBgAAgYMAAEDBoCAAQNAwIABIGDAABAwYAAIGDAABAwYAAIGDAABAwaAgAEDQMCAASBgwAAQMGAACBgwAAQMGAACBgwAAQMGgIABA0DAgAEgYMAAEDBgAAgYMAAELvQcqz0OdPK8AAAAAElFTkSuQmCC', 'base64'))
   if (path === '/test/files/pixel.gif') return Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
   const text: Record<string, string> = {
     '/test/files/README.md': '# 发布说明\n\n这是远端设备的 Markdown 文件。\n\n[下一页](./guide.md)\n\n<script>window.__filePreviewScript = true</script>\n\n' + codeMarkdown,
+    '/test/files/images.md': '# 图片说明\n\n![相对路径图片](./pixel.gif)',
     '/test/files/guide.md': '# 使用指南\n\n相对链接解析到文件所在目录。',
     '/test/files/slow.md': '# 延迟返回的旧文件',
     '/test/project/src/main.ts': 'const one = 1\nconst two = 2\nexport { one, two }\n',
@@ -76,7 +82,7 @@ function fileFixtureReport(command: string[]) {
   const bytes = fileFixtureBytes(path)
   if (!bytes) return { ok: false, code: 'read-failed', message: '文件不存在。' }
   if (operation === 'chunk') return { ok: true, path, fingerprint, size: bytes.length, offset: Number(offset), dataBase64: Buffer.from(bytes.slice(Number(offset), Number(offset) + 262144)).toString('base64') }
-  return { ok: true, file: { path, name, kind: 'file', size: bytes.length, fingerprint: '1:1:' + bytes.length + ':1:1', preview: path.endsWith('.AppImage') ? { kind: 'binary' } : path.endsWith('.gif') ? { kind: 'image', mime: 'image/gif' } : { kind: 'text', text: new TextDecoder().decode(bytes), mime: 'text/plain', truncated: false } } }
+  return { ok: true, file: { path, name, kind: 'file', size: bytes.length, fingerprint: '1:1:' + bytes.length + ':1:1', preview: path.endsWith('.pdf') ? { kind: 'pdf', mime: 'application/pdf' } : path.endsWith('.wav') ? { kind: 'audio', mime: 'audio/wav' } : path.endsWith('.svg') ? { kind: 'image', mime: 'image/svg+xml' } : path.endsWith('.AppImage') ? { kind: 'binary' } : path.endsWith('.gif') || path.endsWith('.png') ? { kind: 'image', mime: path.endsWith('.png') ? 'image/png' : 'image/gif' } : { kind: 'text', text: new TextDecoder().decode(bytes), mime: 'text/plain', truncated: false } } }
 }
 function reset() {
   uploadedFiles.clear(); rmSync(uploadRoot, { recursive: true, force: true }); mkdirSync(uploadRoot, { mode: 0o700 })
@@ -149,6 +155,15 @@ const server = Bun.serve<Peer>({
       ] }]
       return Response.json({ ok: true })
     }
+    if (path === '/test/elicitation') {
+      const thread = threads.get('existing-thread')!, turn: Turn = { id: 'elicitation-turn-' + (++requestId), status: 'inProgress', items: [] }
+      thread.turns.push(turn); thread.status = { type: 'active' }; emit(thread.id, 'turn/started', { turn })
+      const mode = new URL(request.url).searchParams.get('mode') || 'form', id = ++requestId
+      pending.set(id, { thread, turn, kind: 'elicitation' })
+      const params = mode === 'url' ? { mode, serverName: '测试服务', message: '请完成授权', url: 'https://auth.example/authorize', elicitationId: 'url-1' } : { mode: 'form', serverName: '测试服务', message: '请填写发布信息', requestedSchema: { type: 'object', required: ['title', 'count', 'confirm', 'labels'], properties: { title: { type: 'string', title: '标题', minLength: 2 }, count: { type: 'integer', title: '数量', minimum: 1, maximum: 3 }, confirm: { type: 'boolean', title: '公开发布' }, labels: { type: 'array', title: '标签', minItems: 1, items: { anyOf: [{ const: 'a', title: '标签甲' }, { const: 'b', title: '标签乙' }] } } } } }
+      emit(thread.id, 'mcpServer/elicitation/request', { turnId: turn.id, ...params }, id)
+      return Response.json({ ok: true })
+    }
     if (path === '/test/metrics') return Response.json({ received, approved, requests, resumed, forks: [...threads.values()].filter(thread => 'forkedFromId' in thread), nativeQueues: Object.fromEntries(nativeQueues), nativeSettings: Object.fromEntries(nativeSettings) })
     if (path === '/test/uploaded-file') {
       const file = new URL(request.url).searchParams.get('path') || ''
@@ -190,7 +205,7 @@ const server = Bun.serve<Peer>({
       threads.get('second-thread')!.cwd = '/test/project'
       threads.get('existing-thread')!.turns[0]!.items.push({ id: 'saved-worktree-command', type: 'commandExecution', command: 'git status --short', cwd: 'file:///test/worktrees/ready/sdk/udp', status: 'completed' })
     }
-    if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'file-links') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '[说明文档](/test/files/README.md) · [AppImage](/test/files/build.AppImage) · [目录](/test/files) · [源代码](src/main.ts:2) · [图片](file:///test/files/pixel.gif) · [网站](https://example.com) · [慢文件](/test/files/slow.md) · [不存在](/test/files/missing.md)' }; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario === 'task-time-range') {
+    if (path === '/test/scenario') { scenario = new URL(request.url).searchParams.get('name') || ''; if (scenario === 'rich-content') { const turn = threads.get('existing-thread')!.turns[0]!; turn.items = [{ id: 'native-image', type: 'userMessage', content: [{ type: 'localImage', path: '/test/files/pixel.gif', name: '历史图片' }, { type: 'localAudio', path: '/test/files/voice.wav', name: '历史音频' }] }, { id: 'rich-message', type: 'agentMessage', text: richMarkdown }, { id: 'rich-mcp', type: 'mcpToolCall', server: '测试媒体', tool: '展示结果', status: 'completed', result: { content: [{ type: 'text', text: '**工具返回内容**' }, { type: 'image', data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', mimeType: 'image/gif', name: '工具图片' }, { type: 'audio', data: richWav, mimeType: 'audio/wav' }] } }, { id: 'rich-dynamic', type: 'dynamicToolCall', tool: '动态媒体', status: 'completed', contentItems: [{ type: 'inputImage', imageUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }] }, { id: 'rich-generation', type: 'imageGeneration', status: 'completed', result: '', savedPath: '/test/files/pixel.gif' }] } if (scenario === 'markdown-images') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '渲染预览：\n\n![单列服务器列表预览](/tmp/bf1-server-search-preview.png)\n\n![远程图片](' + new URL(request.url).origin + '/test/background.png)\n\n![缺失图片](/tmp/missing.png)\n\n[图片说明](/test/files/images.md)' } if (scenario === 'file-links') { threads.get('existing-thread')!.turns[0]!.items.find(item => item.type === 'agentMessage')!.text = '[说明文档](/test/files/README.md) · [AppImage](/test/files/build.AppImage) · [目录](/test/files) · [源代码](src/main.ts:2) · [图片](file:///test/files/pixel.gif) · [网站](https://example.com) · [慢文件](/test/files/slow.md) · [不存在](/test/files/missing.md)' }; if (scenario === 'archive-pages') { for (let i = 0; i < 34; i++) { const archivedAt = Math.floor(Date.now() / 1000) - 700000 - i; archived.set('archive-page-' + i, { id: 'archive-page-' + i, name: '历史归档 ' + i, preview: '', cwd: '/test/history', createdAt: archivedAt, updatedAt: archivedAt, turns: [], status: { type: 'idle' } }) } }; if (scenario === 'recent-window') { const latest = new Date(2026, 8, 29, 18).getTime() / 1000; threads.get('existing-thread')!.updatedAt = latest; threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000; threads.set('old-thread', { id: 'old-thread', name: '旧项目会话', preview: '', cwd: '/test/old-project', createdAt: 1, updatedAt: new Date(2026, 8, 27, 23).getTime() / 1000, turns: [] }) }; if (scenario === 'task-time-range') {
       threads.get('existing-thread')!.updatedAt = new Date(2026, 8, 29, 18).getTime() / 1000
       threads.get('second-thread')!.updatedAt = new Date(2026, 8, 28, 0).getTime() / 1000
       for (const [id, name, date] of [['week-thread', '更早的项目会话', '2026-09-25'], ['month-thread', '月初项目会话', '2026-09-05'], ['ancient-thread', '上月项目会话', '2026-08-16']]) {
@@ -223,11 +238,12 @@ const server = Bun.serve<Peer>({
       if (!message.method && message.id !== undefined) {
         const job = pending.get(Number(message.id))
         if (!job) return
+        if (job.kind === 'elicitation') requests.push({ method: 'elicitation/response', params: { result: message.result } })
         pending.delete(Number(message.id)); approved++
         emit(job.thread.id, 'serverRequest/resolved', { requestId: message.id })
         const result = message.result as { decision?: string; answers?: Record<string, { answers: string[] }> }
         if ([...pending.values()].some(other => other.turn.id === job.turn.id && other.thread.id === job.thread.id)) return
-        finish(job.thread, job.turn, job.kind === 'question' ? '已收到你的选择：' + (result.answers?.approach?.answers[0] || '未回答') : result.decision === 'accept' ? '已获批准，操作完成。' : '已按你的要求拒绝执行。')
+        finish(job.thread, job.turn, job.kind === 'elicitation' ? '表单请求已处理。' : job.kind === 'question' ? '已收到你的选择：' + (result.answers?.approach?.answers[0] || '未回答') : result.decision === 'accept' ? '已获批准，操作完成。' : '已按你的要求拒绝执行。')
         return
       }
       const method = message.method || ''
@@ -265,7 +281,7 @@ const server = Bun.serve<Peer>({
         return
       }
       if (method === 'command/exec' && Array.isArray(p.command) && p.command[3] === 'codex-remote-directory') { respond({ exitCode: 0, stdout: '/mock-home/' + String(p.command[4]).replace(/^~\/?/, ''), stderr: '' }); return }
-      if (method === 'command/exec' && ['file-links', 'tool-previews'].includes(scenario)) {
+      if (method === 'command/exec' && ['file-links', 'tool-previews', 'markdown-images', 'rich-content'].includes(scenario)) {
         const command = Array.isArray(p.command) ? p.command as string[] : []
         if (command.some(part => part.startsWith('# codex-remote workspace files'))) {
           const reply = { exitCode: 0, stdout: JSON.stringify(fileFixtureReport(command)), stderr: '' }

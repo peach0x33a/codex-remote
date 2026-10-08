@@ -155,7 +155,9 @@ beforeAll(async () => {
     const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
     const script = compileScript(descriptor, { id: name, inlineTemplate: true })
     const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
-      .replace(/import InlineFile from ["']\.\/InlineFile\.vue["'];?/, 'const InlineFile = { render: () => null };')
+      .replace(/import (AudioContent|ToolContent) from ["']\.\/[^"']+\.vue["'];?/g, (_match, name) => 'const ' + name + ' = { render: () => null };')
+    .replace(/import MarkdownContent from ["']\.\/MarkdownContent\.vue["'];?/, 'const MarkdownContent = { props: ["text"], render() { return __hostH("div", { class: "markdown", innerHTML: this.text }) } };')
+    .replace(/import InlineFile from ["']\.\/InlineFile\.vue["'];?/, 'const InlineFile = { render: () => null };')
     .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
       .replace(/import PastedText from ["']\.\/PastedText\.vue["'];?/, 'const PastedText = { render: () => null };')
       .replace(/import FileChangeActivity from ["']\.\/FileChangeActivity\.vue["'];?/, 'const FileChangeActivity = { render: () => null };')
@@ -163,7 +165,7 @@ beforeAll(async () => {
         specifier === './MessageItem.vue' ? pathToFileURL(join(directory, 'MessageItem.mjs')).href
           : specifier.startsWith('.') ? new URL(specifier + '.ts', file).href : import.meta.resolve(specifier)))
     const path = join(directory, name + '.mjs')
-    await Bun.write(path, js)
+    await Bun.write(path, `import { h as __hostH } from ${JSON.stringify(import.meta.resolve('vue'))};\n${js}`)
     return (await import(pathToFileURL(path).href)).default
   }
   try { MessageItem = await compile('MessageItem'); ToolActivityGroup = await compile('ToolActivityGroup'); UpdateBanner = await compile('UpdateBanner') }

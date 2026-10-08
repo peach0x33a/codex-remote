@@ -17,7 +17,7 @@ watch(() => [props.open, props.pinned], async ([value]) => { if (value) { await 
 onBeforeUnmount(() => document.removeEventListener('keydown', key))
 </script>
 <template>
-  <Teleport to="body"><Transition name="image-preview" @before-leave="($event as Element).setAttribute('inert', '')" @leave-cancelled="($event as Element).removeAttribute('inert')"><div v-if="open && src" class="image-preview-layer" :class="{ pinned }" @click.self="emit('close')"><div ref="panel" class="image-preview-panel" :style="style" :role="pinned ? 'dialog' : 'tooltip'" :aria-label="name" :aria-modal="pinned || undefined" tabindex="-1"><button v-if="pinned" class="icon-button image-preview-close" type="button" aria-label="关闭图片预览" @click="emit('close')"><PhX :size="20" /></button><img :src="src" :alt="name" @load="place" /><span>{{ name }}</span></div></div></Transition></Teleport>
+  <Teleport to="body"><Transition name="image-preview" @before-leave="($event as Element).setAttribute('inert', '')" @leave-cancelled="($event as Element).removeAttribute('inert')"><div v-if="open && src" class="image-preview-layer" :class="{ pinned }" @click.self="emit('close')"><div ref="panel" class="image-preview-panel" :style="style" :role="pinned ? 'dialog' : 'tooltip'" :aria-label="name" :aria-modal="pinned || undefined" tabindex="-1"><button v-if="pinned" class="icon-button image-preview-close" type="button" aria-label="关闭图片预览" @click="emit('close')"><PhX :size="20" /></button><img :src="src" :alt="name" referrerpolicy="no-referrer" decoding="async" @load="place" /><span>{{ name }}</span></div></div></Transition></Teleport>
 </template>
 <style scoped>
 .image-preview-enter-active, .image-preview-leave-active { transition: opacity 160ms var(--ease); }

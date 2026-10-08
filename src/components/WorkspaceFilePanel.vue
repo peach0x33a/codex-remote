@@ -4,7 +4,10 @@ import { PhArrowUp, PhArrowsClockwise, PhCopy, PhDownloadSimple, PhFile, PhFileP
 import BaseDialog from './BaseDialog.vue'
 import { createWorkspaceFiles, validateWorkspaceName, type WorkspaceFile, type WorkspaceRun } from '../lib/workspace-files'
 import { fileLinkFromEvent, type FileLinkTarget } from '../lib/file-links'
-import { renderMarkdown } from '../lib/markdown'
+import MarkdownContent from './MarkdownContent.vue'
+import PdfPreview from './PdfPreview.vue'
+import AudioContent from './AudioContent.vue'
+import { svgImageUrl } from '../lib/svg-preview'
 import { codeBlockFromEvent } from '../lib/markdown-code'
 import { htmlPreviewDocument } from '../lib/html-preview'
 
@@ -24,9 +27,18 @@ const parent = computed(() => {
   return path.slice(0, path.lastIndexOf('/')) || '/'
 })
 const preview = computed(() => file.value?.preview)
+const imagePresentation = computed(() => {
+  const p = preview.value
+  if (p?.kind !== 'image' || !p.dataBase64) return { source: '', error: '' }
+  try {
+    const source = p.mime === 'image/svg+xml' ? svgImageUrl(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(p.dataBase64), c => c.charCodeAt(0)))) : 'data:' + p.mime + ';base64,' + p.dataBase64
+    return { source, error: '' }
+  } catch (cause) { return { source: '', error: cause instanceof Error ? cause.message : 'SVG 无法打开。' } }
+})
+const imageSource = computed(() => imagePresentation.value.source)
+const imageError = computed(() => imagePresentation.value.error)
 const downloadOnly = computed(() => file.value?.kind === 'file' && (!preview.value || preview.value.kind === 'binary'))
 const markdown = computed(() => preview.value?.kind === 'text' && /\.(?:md|markdown|mdown)$/i.test(file.value?.name || '') && !location.value?.line)
-const markdownHtml = computed(() => markdown.value ? renderMarkdown(preview.value?.text || '') : '')
 const htmlFile = computed(() => preview.value?.kind === 'text' && /\.html?$/i.test(file.value?.name || ''))
 const htmlPreview = ref(true)
 const htmlDocument = computed(() => htmlPreviewDocument(preview.value?.text || ''))
@@ -172,9 +184,10 @@ async function download() {
         <p v-if="file.truncated" class="field-hint">仅显示前 500 项。</p>
       </template>
       <template v-else-if="file?.kind === 'file'">
-        <img v-if="preview?.kind === 'image' && preview.dataBase64" class="workspace-file-image" :src="'data:' + preview.mime + ';base64,' + preview.dataBase64" :alt="file.name" />
-        <template v-else-if="preview?.kind === 'text'"><iframe v-if="htmlFile && htmlPreview && !preview.truncated" class="workspace-html-preview" :srcdoc="htmlDocument" title="HTML 页面预览" sandbox="" referrerpolicy="no-referrer" /><div v-else-if="markdown" class="markdown workspace-file-markdown" @click="onMarkdownClick" v-html="markdownHtml" /><pre v-else ref="source" class="workspace-file-source"><code>{{ sourceText.before }}<mark v-if="sourceText.selected">{{ sourceText.selected }}</mark>{{ sourceText.after }}</code></pre><p v-if="preview.truncated" class="field-hint">预览已截断，下载可获取完整文件。</p></template>
-        <div v-else class="workspace-file-state"><PhFile :size="32" /><p>{{ file.name }}</p><span>{{ sizeLabel(file.size) }} · 下载后打开</span></div>
+        <img v-if="preview?.kind === 'image' && imageSource" class="workspace-file-image" :src="imageSource" :alt="file.name" />
+        <PdfPreview v-else-if="preview?.kind === 'pdf' && preview.dataBase64" :data-base64="preview.dataBase64" :name="file.name" /><AudioContent v-else-if="preview?.kind === 'audio' && preview.dataBase64" :src="'data:' + preview.mime + ';base64,' + preview.dataBase64" :name="file.name" /><template v-else-if="preview?.kind === 'text'"><iframe v-if="htmlFile && htmlPreview && !preview.truncated" class="workspace-html-preview" :srcdoc="htmlDocument" title="HTML 页面预览" sandbox="" referrerpolicy="no-referrer" /><MarkdownContent v-else-if="markdown" class="workspace-file-markdown" :text="preview?.text || ''" :cwd="parent" @click="onMarkdownClick" /><pre v-else ref="source" class="workspace-file-source"><code>{{ sourceText.before }}<mark v-if="sourceText.selected">{{ sourceText.selected }}</mark>{{ sourceText.after }}</code></pre><p v-if="preview.truncated" class="field-hint">预览已截断，下载可获取完整文件。</p></template>
+        <p v-if="imageError" role="alert">{{ imageError }}</p>
+        <div v-else-if="!preview || preview.kind === 'binary'" class="workspace-file-state"><PhFile :size="32" /><p>{{ file.name }}</p><span>{{ sizeLabel(file.size) }} · 下载后打开</span></div>
       </template>
       <p v-else-if="file" class="workspace-file-state">此路径不是普通文件或文件夹。</p>
     </div>

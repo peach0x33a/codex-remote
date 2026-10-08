@@ -26,6 +26,8 @@ beforeAll(async () => {
   const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
   const script = compileScript(descriptor, { id: 'collab-tool-test', inlineTemplate: true })
   const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
+    .replace(/import (AudioContent|ToolContent) from ["']\.\/[^"']+\.vue["'];?/g, (_match, name) => 'const ' + name + ' = { render: () => null };')
+    .replace(/import MarkdownContent from ["']\.\/MarkdownContent\.vue["'];?/, 'const MarkdownContent = { props: ["text"], render() { return __hostH("div", { class: "markdown", innerHTML: this.text }) } };')
     .replace(/import \{ renderMarkdown \} from ["']\.\.\/lib\/markdown["'];?/, 'const renderMarkdown = (text) => text;')
     .replace(/import InlineFile from ["']\.\/InlineFile\.vue["'];?/, 'const InlineFile = { render: () => null };')
     .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
@@ -36,7 +38,7 @@ beforeAll(async () => {
   const directory = await mkdtemp(join(tmpdir(), 'codex-remote-collab-tool-'))
   try {
     const modulePath = join(directory, 'MessageItem.mjs')
-    await Bun.write(modulePath, js)
+    await Bun.write(modulePath, `import { h as __hostH } from ${JSON.stringify(import.meta.resolve('vue'))};\n${js}`)
     MessageItem = (await import(pathToFileURL(modulePath).href)).default
   } finally {
     await rm(directory, { recursive: true, force: true })

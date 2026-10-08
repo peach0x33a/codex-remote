@@ -1,8 +1,14 @@
+/// <reference path="../types/markdown-plugins.d.ts" />
 import MarkdownIt from 'markdown-it'
+import taskLists from 'markdown-it-task-lists'
+import texmath from 'markdown-it-texmath'
+import katex from 'katex'
 import { parseFileLink } from './file-links'
 import { highlightCode } from './code-highlight'
 
 export const markdownEngine = new MarkdownIt({ html: false, linkify: true, breaks: true, highlight: highlightCode })
+markdownEngine.use(taskLists, { enabled: false })
+markdownEngine.use(texmath, { engine: katex, delimiters: ['dollars', 'brackets', 'beg_end'], katexOptions: { trust: false, throwOnError: false, maxExpand: 1000, maxSize: 20 } })
 const validateLink = markdownEngine.validateLink
 markdownEngine.validateLink = href => /^file:/i.test(href) ? !!parseFileLink(href) : validateLink(href)
 type Token = ReturnType<typeof markdownEngine.parse>[number]
@@ -70,11 +76,16 @@ markdownEngine.renderer.rules.link_open = (tokens, index, options, env, renderer
   tokens[index].attrSet('rel', 'noopener noreferrer')
   return originalLink ? originalLink(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options)
 }
-markdownEngine.renderer.rules.image = (tokens, index) => '<span class="image-label">[图片：' + markdownEngine.utils.escapeHtml(tokens[index].content || '未命名') + ']</span>'
+// Keep sources inert until the image component resolves them on the correct device.
+markdownEngine.renderer.rules.image = (tokens, index) => {
+  const token = tokens[index]!, escape = markdownEngine.utils.escapeHtml
+  return '<span data-markdown-image="' + escape(String(token.attrGet('src') || '')) + '" data-image-name="' + escape(token.content || '图片') + '">[图片：' + escape(token.content || '未命名') + ']</span>'
+}
 
 for (const kind of ['fence', 'code_block'] as const) {
   const renderCode = markdownEngine.renderer.rules[kind]!
   markdownEngine.renderer.rules[kind] = (tokens, index, options, env, renderer) => {
+    if (kind === 'fence' && tokens[index]!.info.trim().toLowerCase() === 'mermaid') return '<div data-markdown-diagram="' + markdownEngine.utils.escapeHtml(encodeURIComponent(tokens[index]!.content)) + '"></div>\n'
     const language = markdownEngine.utils.escapeHtml(tokens[index].info.trim().split(/\s+/, 1)[0] || '代码')
     return '<div class="markdown-code-block"><div class="markdown-code-header"><span class="markdown-code-language">' + language
       + '</span><button type="button" class="markdown-code-copy" aria-label="复制代码">复制</button></div>'

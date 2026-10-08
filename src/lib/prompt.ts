@@ -3,7 +3,7 @@ import type { Item, MessageContent } from '../../shared/protocol'
 import { THREAD_REFERENCE_MARKER, threadReferenceContext, threadReferenceLink } from './mentions'
 import { asyncRepliesFromItem } from './async-questions'
 import { fileReference, parseFileReference, type FileAttachment } from './file-attachments'
-export type PromptPart = { type: 'text'; text: string; pasteId?: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | FileAttachment | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
+export type PromptPart = { type: 'text'; text: string; pasteId?: string } | { type: 'image'; id: string; name: string; url: string; size: number; source?: MessageContent } | { type: 'audio'; id: string; name: string; url: string; size: number; source?: MessageContent; path?: string } | FileAttachment | { type: 'skill'; id: string; name: string; path: string } | { type: 'mention'; id: string; name: string; path: string; kind: 'plugin' | 'thread' | 'agent' }
 export const pastedTextLabel = (text: string) => '粘贴的文本 (' + Array.from(text).length + '字符)'
 export const isLongPaste = (text: string) => text.length >= 1000 || text.split('\n').length >= 12
 export const promptText = (parts: PromptPart[]) => parts.map(p => p.type === 'text' ? p.text : p.type === 'skill' ? '$' + p.name : '[' + p.name + ']').join('')
@@ -27,6 +27,7 @@ export function toInputs(parts: PromptPart[], deviceId?: string): MessageContent
     }
     if (part.type === 'skill') { input.push(markedText('$' + part.name, part.name), { type: 'skill', name: part.name, path: part.path }); continue }
     if (part.type === 'text') { if (part.text) input.push(part.pasteId ? markedText(part.text, pastedTextLabel(part.text)) : { type: 'text', text: part.text, text_elements: [] }); continue }
+    if (part.type === 'audio') { input.push(part.source?.type === 'localAudio' && part.source.path ? { type: 'localAudio', path: part.source.path } : { type: 'audio', url: part.url }); continue }
     // text_elements is the App Server's native UI-placeholder mechanism. Keep filenames
     // in the recorded input without adding unsupported fields to the image union.
     const marker = '[Image: ' + part.name + ']'
@@ -58,6 +59,8 @@ export function messageParts(content: Item['content']): PromptPart[] {
       result.push({ type: 'mention', id: 'mention-' + i, name: part.name, path: part.path, kind: part.path.startsWith('plugin://') ? 'plugin' : 'thread' })
     } else if (part.type === 'skill' && part.name && part.path) {
       result.push({ type: 'skill', id: 'skill-' + i, name: part.name, path: part.path })
+    } else if (['audio', 'localAudio'].includes(part.type)) {
+      result.push({ type: 'audio', id: 'audio-' + i, name: part.name || part.path?.split(/[\\/]/).pop() || '音频', url: safeAudioUrl(part.url), size: 0, source: { ...part } })
     } else if (['image', 'localImage'].includes(part.type)) {
       imageIndex++
       result.push({ type: 'image', id: 'image-' + imageIndex, name: imageName || part.name || part.path?.split(/[\\/]/).pop() || '图片 ' + imageIndex, url: safeImageUrl(part.url), size: 0, source: { ...part } }); imageName = ''
@@ -67,6 +70,7 @@ export function messageParts(content: Item['content']): PromptPart[] {
   if (last?.type === 'text' && !last.pasteId) last.text = last.text.trimEnd()
   return result
 }
+export function safeAudioUrl(url?: string) { return url && (/^data:audio\/(wav|x-wav|mpeg|mp3|ogg|flac|mp4|webm);base64,[a-z0-9+/=]+$/i.test(url) || /^https?:\/\//i.test(url)) ? url : '' }
 export function safeImageUrl(url?: string) { return url && (/^data:image\/(png|jpeg|webp|gif);base64,/i.test(url) || /^https?:\/\//i.test(url)) ? url : '' }
 export function textFragment(value: unknown): string {
   if (typeof value === 'string') return value
@@ -104,6 +108,7 @@ export function messageEditError(item: Item): string | undefined {
     if (part.type === 'skill' && part.name && part.path) continue
     if (part.type === 'mention' && part.name && part.path && /^(plugin|thread):\/\//.test(part.path)) continue
     if (part.type === 'localImage' && part.path || part.type === 'image' && (part.fileId || safeImageUrl(part.url))) continue
+    if (part.type === 'localAudio' && part.path || part.type === 'audio' && safeAudioUrl(part.url)) continue
     return '这条消息包含暂不支持编辑的附件类型。'
   }
   return undefined

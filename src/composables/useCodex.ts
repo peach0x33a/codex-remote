@@ -1669,10 +1669,9 @@ export function useCodex(options: { autoConnect?: boolean; persistConnection?: b
     if (taskNotice) emitTaskNotice(taskNotice)
     const method = message.method || '', p = message.params || {}
     if (message.id !== undefined && method) {
-      if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'tool/requestUserInput'].includes(method)) {
+      if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'tool/requestUserInput', 'mcpServer/elicitation/request'].includes(method)) {
         if (!approvals.value.some(a => a.id === message.id)) approvals.value.push({ id: message.id, method, params: p as Approval['params'] })
-      } else if (method === 'mcpServer/elicitation/request') {
-        client?.respond(message.id, { action: 'decline', content: null }); toast('此客户端暂不支持 MCP 表单，该请求已拒绝。')
+
       } else { client?.unsupported(message.id); toast('收到暂不支持的请求：' + method) }
       return
     }

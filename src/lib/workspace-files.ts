@@ -5,17 +5,19 @@ export type WorkspaceFile = WorkspaceEntry & {
   fingerprint: string
   entries?: WorkspaceEntry[]
   truncated?: boolean
-  preview?: { kind: 'text' | 'image' | 'binary'; text?: string; dataBase64?: string; mime?: string; truncated?: boolean }
+  preview?: { kind: 'text' | 'image' | 'pdf' | 'audio' | 'binary'; text?: string; dataBase64?: string; mime?: string; truncated?: boolean }
 }
 
 export const FILE_CHUNK_BYTES = 256 * 1024
 const TEXT_BYTES = 128 * 1024
 const IMAGE_BYTES = 8 * 1024 * 1024
+const MEDIA_BYTES = 32 * 1024 * 1024
 const OUTPUT_BYTES = 960 * 1024
 const MAX_ENTRIES = 500
 const encoder = new TextEncoder()
 const controls = /[\x00-\x1f\x7f-\x9f\ud800-\udfff]/u
-const imageMimes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+const imageMimes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
+const audioMimes = new Set(['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/mp4', 'audio/webm'])
 
 class WorkspaceFilesError extends Error {
   constructor(public code: string, message: string) { super(message); this.name = 'WorkspaceFilesError' }
@@ -48,6 +50,7 @@ import base64, codecs, json, os, stat, sys
 CHUNK = 262144
 TEXT = 131072
 IMAGE = 8388608
+MEDIA = 33554432
 OUTPUT = 983040
 MAX_SIZE = 9007199254740991
 
@@ -147,9 +150,26 @@ def inspect(path, initial):
         return result
     data = read_bytes(path, initial, 0, min(TEXT, initial.st_size))
     mime = image_mime(data)
+    if not mime and path.lower().endswith(".svg") and (data.lstrip().startswith(b"<svg") or data.lstrip().startswith(b"<?xml")):
+        mime = "image/svg+xml"
+    media_kind = "image"
+    if data.startswith(b"%PDF-"):
+        mime, media_kind = "application/pdf", "pdf"
+    elif data.startswith(b"RIFF") and data[8:12] == b"WAVE":
+        mime, media_kind = "audio/wav", "audio"
+    elif data.startswith(b"ID3") or (len(data) > 3 and data[0] == 255 and data[1] & 224 == 224 and data[1] & 24 != 8 and data[1] & 6 != 0 and data[2] & 240 not in (0, 240) and data[2] & 12 != 12):
+        mime, media_kind = "audio/mpeg", "audio"
+    elif data.startswith(b"OggS"):
+        mime, media_kind = "audio/ogg", "audio"
+    elif data.startswith(b"fLaC"):
+        mime, media_kind = "audio/flac", "audio"
+    elif data[4:8] == b"ftyp" and path.lower().endswith((".m4a", ".mp4")):
+        mime, media_kind = "audio/mp4", "audio"
+    elif data.startswith(b"\x1a\x45\xdf\xa3") and path.lower().endswith((".weba", ".webm")):
+        mime, media_kind = "audio/webm", "audio"
     if mime:
         # Small images are assembled by the client with fingerprinted chunks.
-        result["preview"] = {"kind": "image", "mime": mime} if initial.st_size <= IMAGE else {"kind": "binary"}
+        result["preview"] = {"kind": media_kind, "mime": mime} if initial.st_size <= (IMAGE if media_kind == "image" else MEDIA) else {"kind": "binary"}
     else:
         truncated = initial.st_size > TEXT
         try:
@@ -252,9 +272,9 @@ function parseFile(value: unknown): WorkspaceFile {
       const bytes = encoder.encode(preview.text).length
       if (bytes > TEXT_BYTES || bytes > file.size || preview.truncated !== (file.size > TEXT_BYTES) || (!preview.truncated && bytes !== file.size)) return malformed()
       file.preview = { kind: 'text', text: preview.text, mime: 'text/plain', truncated: preview.truncated }
-    } else if (preview.kind === 'image') {
-      if (file.size === 0 || file.size > IMAGE_BYTES || typeof preview.mime !== 'string' || !imageMimes.has(preview.mime) || preview.dataBase64 !== undefined || preview.text !== undefined || preview.truncated !== undefined) return malformed()
-      file.preview = { kind: 'image', mime: preview.mime }
+    } else if (preview.kind === 'image' || preview.kind === 'pdf' || preview.kind === 'audio') {
+      if (file.size === 0 || file.size > (preview.kind === 'image' ? IMAGE_BYTES : MEDIA_BYTES) || typeof preview.mime !== 'string' || !(preview.kind === 'image' ? imageMimes.has(preview.mime) : preview.kind === 'pdf' ? preview.mime === 'application/pdf' : audioMimes.has(preview.mime)) || preview.dataBase64 !== undefined || preview.text !== undefined || preview.truncated !== undefined) return malformed()
+      file.preview = { kind: preview.kind, mime: preview.mime }
     } else if (preview.kind === 'binary') {
       if (preview.text !== undefined || preview.dataBase64 !== undefined || preview.mime !== undefined || preview.truncated !== undefined) return malformed()
       file.preview = { kind: 'binary' }
@@ -334,7 +354,7 @@ export function createWorkspaceFiles(run: WorkspaceRun, { cwd }: { cwd: string }
     if (!validPath(path)) fail('unsafe-path', '请提供不含控制字符的非空 Unix 路径。')
     const report = await command(['inspect', cwd, path], options.signal)
     const file = parseFile(report.file)
-    if (file.preview?.kind === 'image') {
+    if (file.preview && ['image', 'pdf', 'audio'].includes(file.preview.kind)) {
       // At most 8 MiB total, never a >1 MiB base64 command response.
       const bytes = new Uint8Array(file.size)
       for (let offset = 0; offset < file.size; offset += FILE_CHUNK_BYTES) bytes.set(await readChunk(file, offset, options), offset)

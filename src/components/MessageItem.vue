@@ -2,13 +2,16 @@
 import { computed, ref } from 'vue'
 import { PhArrowCounterClockwise, PhPencilSimple, PhX, PhCode, PhCopy, PhFileText, PhGlobe, PhImage, PhSparkle, PhTerminal, PhArrowsIn } from '@phosphor-icons/vue'
 import InlineImage from './InlineImage.vue'
+import AudioContent from './AudioContent.vue'
+import ToolContent from './ToolContent.vue'
+import { toolContent } from '../lib/tool-content'
 import InlineFile from './InlineFile.vue'
 import PastedText from './PastedText.vue'
 import FileChangeActivity from './FileChangeActivity.vue'
 import { messageParts, reasoningText } from '../lib/prompt'
 import { asyncRepliesFromItem, displayAsyncQuestionReply } from '../lib/async-questions'
 import type { Item } from '../../shared/protocol'
-import { renderMarkdown } from '../lib/markdown'
+import MarkdownContent from './MarkdownContent.vue'
 import { codeBlockFromEvent } from '../lib/markdown-code'
 import { fileLinkFromEvent, type FileLinkTarget } from '../lib/file-links'
 import { parseCollabTool } from '../lib/collab-tool'
@@ -40,8 +43,6 @@ const reasoningLabel = computed(() => {
   if (reasoningElapsed.value !== undefined) return `${thinking ? '思考中' : '已思考'} ${reasoningElapsed.value}秒`
   return thinking ? '思考中' : '思考过程'
 })
-const html = computed(() => renderMarkdown(props.item.text || ''))
-const summaryHtml = computed(() => renderMarkdown(reasoning.value))
 const collab = computed(() => parseCollabTool(props.item))
 const commandHtml = computed(() => highlightCommand(props.item.command || ''))
 const commandKind = computed(() => commandActivityKind(props.item))
@@ -50,20 +51,21 @@ const activityTitle = computed(() => props.readDetailsOnly ? '执行详情' : to
 const viewedImagePath = computed(() => props.item.type === 'imageView' && typeof props.item.path === 'string' && props.item.path.trim() ? props.item.path : '')
 const viewedImageName = computed(() => viewedImagePath.value.split(/[\\/]/).filter(Boolean).at(-1) || '图片')
 const activityState = computed(() => toolActivityState(props.item))
+const mediaContent = computed(() => toolContent(props.item))
 const activityError = computed(() => toolActivityError(props.item))
 </script>
 
 <template>
-  <article v-if="item.type === 'userMessage'" class="message message-user" aria-label="你的消息"><div class="user-bubble"><template v-for="(part, index) in parts" :key="index"><PastedText v-if="part.type === 'text' && part.pasteId" :text="part.text" /><span v-else-if="part.type === 'text'" class="user-text">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineFile v-else-if="part.type === 'file'" :file="part" @open="emit('openFile', { path: $event })" /><InlineImage v-else :src="part.url" :name="part.name" /></template></div><div v-if="!item.stoppedInput" class="user-message-actions"><button type="button" class="icon-button small" aria-label="编辑消息" :title="actionHint || '编辑消息'" :disabled="actionsDisabled || editDisabled" @click="emit('edit', item.id)"><PhPencilSimple :size="16" /></button><button type="button" class="icon-button small" aria-label="撤回消息" title="撤回消息" :disabled="actionsDisabled" @click="emit('withdraw', item.id)"><PhArrowCounterClockwise :size="16" /></button></div></article>
+  <article v-if="item.type === 'userMessage'" class="message message-user" aria-label="你的消息"><div class="user-bubble"><template v-for="(part, index) in parts" :key="index"><PastedText v-if="part.type === 'text' && part.pasteId" :text="part.text" /><span v-else-if="part.type === 'text'" class="user-text">{{ part.text }}</span><span v-else-if="(part.type === 'skill' || part.type === 'mention')" class="inline-skill" :title="part.path"><PhSparkle :size="14" />{{ part.name }}</span><InlineFile v-else-if="part.type === 'file'" :file="part" @open="emit('openFile', { path: $event })" /><AudioContent v-else-if="part.type === 'audio'" :src="part.url || part.source?.path || ''" :name="part.name" /><InlineImage v-else :src="part.url" :name="part.name" :source="part.source" /></template></div><div v-if="!item.stoppedInput" class="user-message-actions"><button type="button" class="icon-button small" aria-label="编辑消息" :title="actionHint || '编辑消息'" :disabled="actionsDisabled || editDisabled" @click="emit('edit', item.id)"><PhPencilSimple :size="16" /></button><button type="button" class="icon-button small" aria-label="撤回消息" title="撤回消息" :disabled="actionsDisabled" @click="emit('withdraw', item.id)"><PhArrowCounterClockwise :size="16" /></button></div></article>
   <article v-else-if="item.type === 'functionCallOutput' && questionAnswerText" class="message message-user" aria-label="你的回答"><div class="user-bubble"><span class="user-text">{{ questionAnswerText }}</span></div></article>
   <article v-else-if="item.type === 'agentMessage' || item.type === 'plan'" class="message message-agent" aria-label="Codex 回复">
     <div class="agent-avatar"><PhTerminal :size="18" weight="bold" /></div>
-    <div class="agent-content"><div class="message-author">Codex <span v-if="item.type === 'plan'">计划</span><span v-else-if="item.phase === 'commentary'">进展</span></div><div class="markdown" @click="onMarkdownClick" v-html="html" /><div v-if="item.text" class="agent-message-actions"><button type="button" class="icon-button copy-button" aria-label="复制回复" @click="emit('copy', item.text || '')"><PhCopy :size="16" /></button><span v-if="workDurationLabel" class="work-duration">{{ workDurationLabel }}</span></div></div>
+    <div class="agent-content"><div class="message-author">Codex <span v-if="item.type === 'plan'">计划</span><span v-else-if="item.phase === 'commentary'">进展</span></div><MarkdownContent :text="item.text || ''" @click="onMarkdownClick" /><div v-if="item.text" class="agent-message-actions"><button type="button" class="icon-button copy-button" aria-label="复制回复" @click="emit('copy', item.text || '')"><PhCopy :size="16" /></button><span v-if="workDurationLabel" class="work-duration">{{ workDurationLabel }}</span></div></div>
   </article>
   <template v-else-if="item.type === 'reasoning'">
     <template v-if="reasoning && (item.status !== 'inProgress' || item.completedAtMs != null)">
-    <div v-if="singleLineReasoning" class="activity reasoning-inline" :title="reasoningLabel"><PhSparkle :size="16" aria-hidden="true" /><div class="markdown" @click="onMarkdownClick" v-html="summaryHtml" /><span v-if="reasoningElapsed !== undefined" class="reasoning-inline-time">{{ reasoningElapsed }}秒</span></div>
-    <details v-else v-animated-details="(open: boolean) => expanded = open" class="activity reasoning" @toggle="expanded = ($event.target as HTMLDetailsElement).open"><summary><PhSparkle :size="16" /><span>{{ reasoningLabel }}</span></summary><div v-if="expanded" class="markdown" @click="onMarkdownClick" v-html="summaryHtml" /></details>
+    <div v-if="singleLineReasoning" class="activity reasoning-inline" :title="reasoningLabel"><PhSparkle :size="16" aria-hidden="true" /><MarkdownContent :text="reasoning" @click="onMarkdownClick" /><span v-if="reasoningElapsed !== undefined" class="reasoning-inline-time">{{ reasoningElapsed }}秒</span></div>
+    <details v-else v-animated-details="(open: boolean) => expanded = open" class="activity reasoning" @toggle="expanded = ($event.target as HTMLDetailsElement).open"><summary><PhSparkle :size="16" /><span>{{ reasoningLabel }}</span></summary><MarkdownContent v-if="expanded" :text="reasoning" @click="onMarkdownClick" /></details>
     </template>
   </template>
   <div v-else-if="item.type === 'contextCompaction' && item.status !== 'inProgress'" class="activity compaction-activity"><PhArrowsIn :size="16" /><span>{{ item.status === 'failed' ? '上下文压缩失败' : '上下文已压缩' }}</span></div>
@@ -83,6 +85,7 @@ const activityError = computed(() => toolActivityError(props.item))
       <div v-if="collab.agents.length" class="collab-section"><strong>代理（{{ collab.agents.length }}）</strong><ul class="collab-agents"><li v-for="agent in collab.agents" :key="agent.id || agent.path"><div class="collab-agent-heading"><span v-if="agent.path" class="activity-path">{{ agent.path }}</span><span v-if="agent.id" class="activity-path">{{ agent.id }}</span><span class="collab-agent-state" :class="{ failed: agent.failed }">{{ agent.status }}</span></div><p v-if="agent.message" class="collab-text"><span class="collab-message-label">{{ agent.messageLabel }}：</span>{{ agent.message }}</p></li></ul></div>
     </div>
     <div v-else-if="viewedImagePath" class="viewed-image"><button type="button" class="inline-image" :aria-label="'查看图片 ' + viewedImageName" :title="viewedImagePath" @click="emit('openFile', { path: viewedImagePath })"><PhImage :size="20" /><span>{{ viewedImageName }}</span></button><p class="activity-path viewed-image-path">{{ viewedImagePath }}</p></div>
+    <ToolContent v-else-if="mediaContent.length" :item="item" @open-file="emit('openFile', $event)" @copy="emit('copy', $event)" />
     <pre v-else><code>{{ JSON.stringify(item.result || item.error || item, null, 2) }}</code></pre>
     <p v-if="activityError" class="activity-error" role="status">{{ activityError }}</p>
     </template>

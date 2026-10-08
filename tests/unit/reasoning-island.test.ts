@@ -11,7 +11,7 @@ let ApprovalIsland: Component
 beforeAll(async () => {
   const directory = await mkdtemp(join(tmpdir(), 'codex-reasoning-island-'))
   try {
-    for (const name of ['PastedText', 'ApprovalCard', 'ApprovalIsland']) {
+    for (const name of ['PastedText', 'ElicitationForm', 'ApprovalCard', 'ApprovalIsland']) {
       const file = new URL('../../src/components/' + name + '.vue', import.meta.url)
       const { descriptor } = parse(await Bun.file(file).text(), { filename: file.pathname })
       const script = compileScript(descriptor, { id: name, inlineTemplate: true })
@@ -19,6 +19,7 @@ beforeAll(async () => {
       // and CSS animation wrappers are stubbed; the host has no browser/layout engine.
       let wrappers = ''
       const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.content)
+        .replace(/import AudioContent from ["']\.\/AudioContent\.vue["'];?/, 'const AudioContent = { render: () => null };')
         .replace(/import InlineFile from ["']\.\/InlineFile\.vue["'];?/, 'const InlineFile = { render: () => null };')
     .replace(/import InlineImage from ["']\.\/InlineImage\.vue["'];?/, 'const InlineImage = { render: () => null };')
         .replace(/\b(TransitionGroup|Transition) as (\w+),?/g, (_match, name, alias) => {

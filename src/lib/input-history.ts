@@ -5,7 +5,7 @@ import { messageParts } from './prompt'
 export function conversationInputs(turns: Turn[]): PromptPart[][] {
   return turns.flatMap(turn => turn.items.filter(item => item.type === 'userMessage').map(item => messageParts(item.content))).filter(hasPrompt).slice(-100)
 }
-const copy = (parts: PromptPart[]) => parts.map(part => part.type === 'image' && part.source ? { ...part, source: { ...part.source } } : { ...part })
+const copy = (parts: PromptPart[]) => parts.map(part => (part.type === 'image' || part.type === 'audio') && part.source ? { ...part, source: { ...part.source } } : { ...part })
 
 /** A navigation session snapshots history and the unsubmitted draft. */
 export function createInputHistory() {

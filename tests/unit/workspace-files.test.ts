@@ -39,6 +39,19 @@ async function fixture(files: Record<string, string | Uint8Array> = {}) {
   return { cwd, run, calls, service: createWorkspaceFiles(run, { cwd }) }
 }
 
+test('reads PDF/audio through bounded chunks and refuses previews above 32 MiB', async () => {
+  const { richPdf, richWav } = await import('../rich-fixture')
+  const { service, cwd, calls } = await fixture({ 'doc.pdf': Buffer.from(richPdf, 'base64'), 'voice.wav': Buffer.from(richWav, 'base64'), 'fake.wav': 'text only' })
+  expect((await service.inspect('doc.pdf')).preview).toEqual({ kind: 'pdf', mime: 'application/pdf', dataBase64: richPdf })
+  expect((await service.inspect('voice.wav')).preview).toEqual({ kind: 'audio', mime: 'audio/wav', dataBase64: richWav })
+  expect((await service.inspect('fake.wav')).preview?.kind).toBe('text')
+  const file = await open(join(cwd, 'doc.pdf'), 'r+')
+  try { await file.truncate(32 * 1024 * 1024 + 1) } finally { await file.close() }
+  const before = calls.length
+  expect((await service.inspect('doc.pdf')).preview).toEqual({ kind: 'binary' })
+  expect(calls.length - before).toBe(1)
+})
+
 test('creates remote directories and empty files with literal names and refreshable listings', async () => {
   const { cwd, service, calls } = await fixture({ 'keep.txt': 'unchanged' })
   const name = "项目 ' $(touch SHOULD_NOT_EXIST)"
@@ -214,11 +227,12 @@ describe('bounded directory and file previews', () => {
     expect(calls.every(call => Buffer.byteLength(call.result.stdout) <= OUTPUT_BYTES)).toBe(true)
   })
 
-  test('treats invalid UTF-8 and control bytes as binary, and HTML/SVG as inert plain text', async () => {
+  test('treats invalid UTF-8 and control bytes as binary, HTML as text and SVG as an image source', async () => {
     const files = { 'null.bin': Buffer.from([0, 1, 2]), 'invalid.bin': Buffer.from([255, 254]), 'ansi.txt': '\x1b[31mred', 'unfinished.txt': Buffer.from([0xe2, 0x82]), 'page.html': '<script>alert(1)</script>', 'icon.svg': '<svg onload="alert(1)"></svg>', 'pretend.png': '<html>not an image</html>' }
     const { service } = await fixture(files)
     for (const name of ['null.bin', 'invalid.bin', 'ansi.txt', 'unfinished.txt']) expect((await service.inspect(name)).preview).toEqual({ kind: 'binary' })
-    for (const name of ['page.html', 'icon.svg', 'pretend.png']) expect((await service.inspect(name)).preview).toMatchObject({ kind: 'text', mime: 'text/plain' })
+    for (const name of ['page.html', 'pretend.png']) expect((await service.inspect(name)).preview).toMatchObject({ kind: 'text', mime: 'text/plain' })
+    expect((await service.inspect('icon.svg')).preview).toMatchObject({ kind: 'image', mime: 'image/svg+xml', dataBase64: Buffer.from(files['icon.svg']).toString('base64') })
   })
 
   test('only admits PNG/JPEG/GIF/WebP raster signatures and assembles their bytes through chunks', async () => {

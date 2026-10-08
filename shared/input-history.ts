@@ -36,6 +36,8 @@ export function parseHistoryInput(value: unknown): MessageContent[] {
       if (!/^data:image\/(png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(url) && !/^https?:\/\//i.test(url)) throw invalid()
       return { type: 'image', url }
     }
+    if (part.type === 'audio') { const url = field(part.url, INPUT_HISTORY_BODY_LIMIT); if (!/^data:audio\/(wav|x-wav|mpeg|mp3|ogg|flac|mp4|webm);base64,[a-z0-9+/=]+$/i.test(url) && !/^https?:\/\//i.test(url)) throw invalid(); return { type: 'audio', url } }
+    if (part.type === 'localAudio') return { type: 'localAudio', path: field(part.path) }
     if (part.type === 'localImage') return { type: 'localImage', path: field(part.path) }
     if (part.type === 'skill' || part.type === 'mention') return { type: part.type, name: field(part.name), path: field(part.path) }
     throw invalid()

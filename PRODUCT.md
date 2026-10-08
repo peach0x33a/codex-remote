@@ -41,7 +41,7 @@ Device profiles, the selected device and accepted input history are persisted by
 
 The application login offers a remember-password choice, enabled by default, which keeps an opaque HttpOnly login credential for 30 days. Only password-bound credential hashes persist in the private Bun store, so remembered login survives service restarts. Explicit logout revokes it; changing the application access password invalidates existing credentials. Disabling the choice uses a browser session cookie with a maximum 12-hour server lifetime. The browser stores the choice, never the application access password.
 
-Codex transport tokens are distinct from model-provider API credentials. Model-provider authentication belongs to the Codex environment. The client respects server permissions and capability availability; unsupported operations report their limitation explicitly. The web client does not start, stop or upgrade the daemon. MCP elicitation forms and client-provided dynamic tools are outside the current implemented scope.
+Codex transport tokens are distinct from model-provider API credentials. Model-provider authentication belongs to the Codex environment. The client respects server permissions and capability availability; unsupported operations report their limitation explicitly. The web client does not start, stop or upgrade the daemon. Standard MCP elicitation forms and explicit URL confirmations are supported; fields that cannot be validated remain blocked with an explanation and user-controlled decline/cancel. Client-provided dynamic tool execution and native device attestation are outside the current implemented scope.
 
 ## Brand Commitments
 
